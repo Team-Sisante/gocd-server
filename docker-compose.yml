@@ -4,7 +4,7 @@ services:
   gocd-server:
     build: .
     container_name: gocd-server
-    restart: none
+    restart: unless-stopped
     ports:
       - "8153:8153"
       - "8154:8154"
@@ -30,7 +30,7 @@ services:
       context: .
       dockerfile: Dockerfile.agent
     container_name: gocd-agent-1
-    restart: none
+    restart: unless-stopped
     environment:
       - GO_SERVER_URL=http://gocd-server:8153/go
       - AGENT_AUTO_REGISTER_KEY=default
@@ -50,7 +50,7 @@ services:
       context: .
       dockerfile: Dockerfile.agent
     container_name: gocd-agent-2
-    restart: none
+    restart: unless-stopped
     environment:
       - GO_SERVER_URL=http://gocd-server:8153/go
       - AGENT_AUTO_REGISTER_KEY=default
@@ -70,7 +70,7 @@ services:
       context: .
       dockerfile: Dockerfile.agent.solvpn
     container_name: gocd-agent-3
-    restart: none
+    restart: unless-stopped
     env_file:
       - .env.docker
     environment:

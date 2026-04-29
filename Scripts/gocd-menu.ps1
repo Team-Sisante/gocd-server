@@ -52,7 +52,8 @@ do {
     switch ($choice) {
         # Container Management
         "1.1" { 
-            npm run up
+            docker compose build
+            docker compose up -d
             Write-Host "Press Enter to continue..." -ForegroundColor Yellow
             Read-Host
         }
@@ -270,4 +271,4 @@ do {
             Read-Host
         }
     }
-} while ($choice -ne "5")
+} while ($choice -ne "6")

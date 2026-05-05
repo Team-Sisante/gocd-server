@@ -24,3 +24,4 @@ certs/
 diff.txt
 temp/
 env.passphrase.txt
+secrets/

@@ -13,6 +13,9 @@ git config --global core.editor "notepad"
 
 # Linux/WSL
 git config --global core.editor "nano"
+
+# Google Cloud Shell
+git config --global core.editor "cloudshell edit --wait"
 ```
 
 ---
@@ -55,12 +58,40 @@ git rebase -i f8f4cbed~1
 
 In the editor, change `pick` to `edit` on `f8f4cbe`, save and close.
 
+---
+
+## Troubleshooting
+
+### 1. "Permission denied" during rebase
+If you see `error: unable to create file ... Permission denied` (e.g., for `secrets/gcp-key.json`) when continuing or aborting a rebase, it is usually because the directory has become owned by `root` due to Docker volume mounts.
+
+Run this to fix ownership:
+```bash
+sudo chown -R $USER:$USER ~/gocd-server
+```
+
+### 2. "Untracked working tree files would be overwritten"
+If `git rebase --abort` fails because files like `Scripts/go.sh` would be overwritten:
+1. Manually delete the files listed in the error message (e.g., `rm Scripts/go.sh`).
+2. Run `git rebase --abort` again.
+Git will then successfully restore the original versions of those files from history.
+
+---
+
+## Managing the Rebase
+
 ```bash
 # If you messed up the file, abort and start over
 git rebase --abort
 
 # If you accidentally closed the editor, continue
 git rebase --continue
+
+# If you have work-in-progress you don't want to lose before rebasing:
+git stash
+
+# To get your stashed work back after the rebase:
+git stash pop
 ```
 
 ---

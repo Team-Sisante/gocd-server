@@ -36,6 +36,7 @@ do {
     Write-Host "   4.5. Clean up Docker resources" -ForegroundColor White
     Write-Host "   4.6. Print Project Folder Structure" -ForegroundColor White
     Write-Host "   4.7. Sync Master with Feature Branch" -ForegroundColor White
+    Write-Host "   4.8. Fix NODE_OPTIONS error" -ForegroundColor White
     Write-Host ""
     Write-Host "5. TROUBLE-SHOOT CONTAINERS" -ForegroundColor Cyan
     Write-Host "   5.1. Rebuild and Re-start gocd-server container" -ForegroundColor White
@@ -225,6 +226,13 @@ do {
             Write-Host "Press Enter to continue..." -ForegroundColor Yellow
             Read-Host
         }
+
+        "4.8" { 
+            Write-Host "   4.8. Fix NODE_OPTIONS error" -ForegroundColor White
+            Remove-Item Env:\NODE_OPTIONS
+            Write-Host "Press Enter to continue..." -ForegroundColor Yellow
+            Read-Host
+        }
         
         # Troubleshoot Containers
         "5.1" { 
@@ -262,7 +270,7 @@ do {
             Read-Host
         }
          
-        "6" { 
+        "0" { 
             Write-Host "Exiting..." -ForegroundColor Green
             exit
         }
@@ -271,4 +279,4 @@ do {
             Read-Host
         }
     }
-} while ($choice -ne "6")
+} while ($choice -ne "0")

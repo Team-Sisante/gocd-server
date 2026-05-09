@@ -5,10 +5,7 @@ FROM gocd/gocd-agent-alpine:v25.4.0
 USER root
 
 # Install base dependencies
-RUN apk add --no-cache ca-certificates openssl curl docker gnupg python3 bash
-
-# Add go user to docker group for permissions on /var/run/docker.sock
-RUN addgroup go docker
+RUN apk add --no-cache ca-certificates openssl curl docker gnupg python3 bash gosu
 
 # Install jq
 RUN apk add --no-cache jq
@@ -27,12 +24,20 @@ RUN apk add --no-cache docker-compose
 RUN apk add --no-cache nodejs npm
 
 # Install Google Cloud SDK
-RUN curl -sSL https://sdk.cloud.google.com | bash
-ENV PATH $PATH:/root/google-cloud-sdk/bin
+RUN curl -sSL https://sdk.cloud.google.com > /tmp/gcloud-install.sh && \
+    bash /tmp/gcloud-install.sh --install-dir=/usr/local --disable-prompts && \
+    ln -s /usr/local/google-cloud-sdk/bin/gcloud /usr/local/bin/gcloud && \
+    rm /tmp/gcloud-install.sh
+ENV PATH $PATH:/usr/local/google-cloud-sdk/bin
+
+# Set global environment variables for SSL/TLS
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+    CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # Add entrypoint script
 COPY Scripts/agent-entrypoint.sh /usr/local/bin/agent-entrypoint.sh
 RUN chmod +x /usr/local/bin/agent-entrypoint.sh
 
-USER go
 ENTRYPOINT ["agent-entrypoint.sh"]

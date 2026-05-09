@@ -7,10 +7,7 @@ FROM ghcr.io/xmione/solvpn-build-base:latest
 USER root
 
 # Install GoCD agent dependencies
-RUN apk add --no-cache ca-certificates openssl curl docker gnupg jq docker-compose nodejs npm
-
-# Add go user to docker group for permissions on /var/run/docker.sock
-RUN addgroup go docker
+RUN apk add --no-cache ca-certificates openssl curl docker gnupg jq docker-compose nodejs npm gosu
 
 # Install GitHub CLI
 RUN apk add --no-cache git && \
@@ -23,5 +20,4 @@ RUN apk add --no-cache git && \
 COPY Scripts/agent-entrypoint.sh /usr/local/bin/agent-entrypoint.sh
 RUN chmod +x /usr/local/bin/agent-entrypoint.sh
 
-USER go
 ENTRYPOINT ["agent-entrypoint.sh"]

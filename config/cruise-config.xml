@@ -115,7 +115,7 @@
                   echo "CLEANING UP badminton_court" &amp;&amp;
                   echo "========================================================" &amp;&amp;
                   cd /badminton_court &amp;&amp;
-                  docker-compose --env-file .env.docker down -v --rmi all &amp;&amp;
+                  docker compose --env-file .env.docker down -v --rmi all &amp;&amp;
                   docker volume rm badminton_court_poste_data badminton_court_postgres_data badminton_court_postgres_test_data badminton_court_mariadb_data 2>/dev/null || true &amp;&amp;
                   docker system prune -a --volumes -f
                 </arg>
@@ -129,7 +129,7 @@
                   echo "BUILDING badminton_court" &amp;&amp;
                   echo "========================================================" &amp;&amp;
                   cd /badminton_court &amp;&amp;
-                  docker-compose --env-file .env.docker --profile dev --progress=plain build --no-cache
+                  docker compose --env-file .env.docker --profile dev --progress=plain build --no-cache
                 </arg>
               </exec>
 
@@ -140,7 +140,7 @@
                   echo "STARTING badminton_court" &amp;&amp;
                   echo "========================================================" &amp;&amp;
                   cd /badminton_court &amp;&amp;
-                  docker-compose --env-file .env.docker --profile dev up -d
+                  docker compose --env-file .env.docker --profile dev up -d
                 </arg>
               </exec>
 
@@ -151,15 +151,18 @@
       <stage name="deploy_to_gcp">
         <jobs>
           <job name="remote_deploy">
+            <resources>
+              <resource>docker</resource>
+              <resource>badminton_court</resource>
+            </resources>
             <tasks>
-              <exec command="gcloud">
-                <arg>compute</arg>
-                <arg>ssh</arg>
-                <arg>__GCP_VM_NAME__</arg>
-                <arg>--zone</arg>
-                <arg>__GCP_ZONE__</arg>
-                <arg>--command</arg>
-                <arg>cd /app/badminton_court &amp;&amp; git pull &amp;&amp; docker-compose up -d --build</arg>
+              <exec command="ssh">
+                <arg>-i</arg>
+                <arg>/home/go/.ssh/google_compute_engine</arg>
+                <arg>-o</arg>
+                <arg>StrictHostKeyChecking=no</arg>
+                <arg>deployer@34.61.224.47</arg>
+                <arg>sudo mkdir -p /app &amp;&amp; sudo chown deployer:deployer /app &amp;&amp; (cd /app/badminton_court || (cd /app &amp;&amp; git clone https://__GITHUB_TOKEN__@github.com/xmione/badminton_court.git)) &amp;&amp; cd /app/badminton_court &amp;&amp; git pull &amp;&amp; node Scripts/decryptenvfiles.js &amp;&amp; sudo docker compose --env-file .env.docker --profile dev up -d --build</arg>
               </exec>
             </tasks>
           </job>

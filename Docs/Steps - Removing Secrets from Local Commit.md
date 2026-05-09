@@ -76,6 +76,19 @@ If `git rebase --abort` fails because files like `Scripts/go.sh` would be overwr
 2. Run `git rebase --abort` again.
 Git will then successfully restore the original versions of those files from history.
 
+### 3. "cannot lock ref" / Hash Mismatch
+If `git rebase --continue` fails with an error like `cannot lock ref ... is at <hash1> but expected <hash2>`:
+1. Identify the **expected** hash from the error message.
+2. Remove the specific branch lock:
+   ```bash
+   rm -f .git/refs/heads/[branch-name].lock
+   ```
+3. Manually align the reference to the expected hash:
+   ```bash
+   git update-ref refs/heads/[branch-name] [expected-hash]
+   ```
+4. Run `git rebase --continue` again.
+
 ---
 
 ## Managing the Rebase
@@ -110,7 +123,7 @@ git commit --amend --no-edit
 
 ```bash
 git rebase --continue
-git push origin feature-stats-logging --force
+git push origin [branch-name] --force-with-lease
 ```
 
 ---

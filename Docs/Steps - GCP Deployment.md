@@ -12,18 +12,14 @@ This document outlines the steps for deploying GoCD pipelines to a GCP Compute E
 - GoCD agent with `google-cloud-sdk` installed.
 - Service Account with `Compute Instance Admin` permissions.
 
-> [!TIP]
-> **Finding your Project ID:** You can find your Project ID in the GCP Console Dashboard under "Project info" or by running `gcloud config get-value project` in your terminal.
->
-> **If Project is (unset):** If `gcloud config get-value project` returns `(unset)`, your CLI isn't pointed at a project yet. Find your ID with `gcloud projects list` and then run:
-> ```bash
-> gcloud config set project [YOUR_PROJECT_ID]
-> ```
->
-> **Renaming Projects:** To distinguish this from other generic "My First Project" entries, rename it:
-> ```bash
-> gcloud projects update project-39c0ea08-238b-47b5-915 --name="GoCD-App-Hosting"
-> ```
+### Initializing GCloud Project
+Before running any GCP commands in a new terminal session, ensure your CLI is pointed at the project:
+```bash
+gcloud config set project project-39c0ea08-238b-47b5-915
+```
+
+*Tip: You can verify your current project at any time with `gcloud config get-value project`.*
+
 ---
 
 ## Installing GCloud CLI in a GoCD Agent
@@ -140,11 +136,11 @@ GCloud handles SSH key generation and propagation automatically when you run `gc
 
 ---
 
-## SQLite Data Safety
+## Multi-App Hosting & Data Safety
 
-Since we are using Compute Engine:
-- Ensure the app's Docker volume maps to a persistent directory on the VM host (e.g., `/mnt/state/db`).
-- The VM's 30GB persistent disk ensures the SQLite file survives container restarts.
+The `gocd-deploy-target` VM acts as a unified host for all services:
+- **Persistence:** Map Docker volumes to host directories (e.g., `/app/data/badminton`) to ensure SQLite databases survive container rebuilds.
+- **Isolation:** Use Docker Compose profiles or separate compose files to manage Pearl, Python, and Node.js apps independently.
 
 ---
 

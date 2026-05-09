@@ -80,7 +80,7 @@ do {
         }
         "1.5" { 
             Write-Host "Stopping all GoCD containers..." -ForegroundColor Yellow
-            docker-compose down
+            docker compose down
             Write-Host "All containers stopped." -ForegroundColor Green
             Write-Host "Press Enter to continue..." -ForegroundColor Yellow
             Read-Host
@@ -237,35 +237,35 @@ do {
         # Troubleshoot Containers
         "5.1" { 
             Write-Host "Rebuilding and starting gocd-server container..." -ForegroundColor Yellow
-            docker-compose build gocd-server        # rebuilds only gocd-server, uses cache
-            docker-compose up -d gocd-server        # restarts it
+            docker compose build gocd-server        # rebuilds only gocd-server, uses cache
+            docker compose up -d gocd-server        # restarts it
             Write-Host "Press Enter to continue..." -ForegroundColor Yellow
             Read-Host
         }
         "5.2" { 
             Write-Host "Rebuilding and starting gocd-agent-1 container..." -ForegroundColor Yellow
-            docker-compose build --no-cache gocd-agent-1   # forced rebuild to use new mirror
-            docker-compose up -d gocd-agent-1        # restarts it
+            docker compose build --no-cache gocd-agent-1   # forced rebuild to use new mirror
+            docker compose up -d gocd-agent-1        # restarts it
             Write-Host "Press Enter to continue..." -ForegroundColor Yellow
             Read-Host
         }
         "5.3" { 
             Write-Host "Rebuilding and starting gocd-agent-2 container..." -ForegroundColor Yellow
-            docker-compose build --no-cache gocd-agent-2   # forced rebuild to use new mirror
-            docker-compose up -d gocd-agent-2        # restarts it
+            docker compose build --no-cache gocd-agent-2   # forced rebuild to use new mirror
+            docker compose up -d gocd-agent-2        # restarts it
             Write-Host "Press Enter to continue..." -ForegroundColor Yellow
             Read-Host
         }
         "5.4" { 
             Write-Host "Rebuilding and starting gocd-agent-3 container..." -ForegroundColor Yellow
-            docker-compose build --no-cache gocd-agent-3   # forced rebuild to use new mirror
-            docker-compose up -d gocd-agent-3        # restarts it
+            docker compose build --no-cache gocd-agent-3   # forced rebuild to use new mirror
+            docker compose up -d gocd-agent-3        # restarts it
             Write-Host "Press Enter to continue..." -ForegroundColor Yellow
             Read-Host
         }
         "5.5" { 
             Write-Host "Viewing container logs..." -ForegroundColor Yellow
-            docker-compose logs gocd-server
+            docker compose logs gocd-server
             Write-Host "Press Enter to continue..." -ForegroundColor Yellow
             Read-Host
         }

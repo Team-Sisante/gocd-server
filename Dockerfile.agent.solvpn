@@ -9,6 +9,9 @@ USER root
 # Install GoCD agent dependencies
 RUN apk add --no-cache ca-certificates openssl curl docker gnupg jq docker-compose nodejs npm
 
+# Add go user to docker group for permissions on /var/run/docker.sock
+RUN addgroup go docker
+
 # Install GitHub CLI
 RUN apk add --no-cache git && \
     wget -O gh.tar.gz https://github.com/cli/cli/releases/download/v2.40.1/gh_2.40.1_linux_amd64.tar.gz && \

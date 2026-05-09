@@ -7,6 +7,9 @@ USER root
 # Install base dependencies
 RUN apk add --no-cache ca-certificates openssl curl docker gnupg python3 bash
 
+# Add go user to docker group for permissions on /var/run/docker.sock
+RUN addgroup go docker
+
 # Install jq
 RUN apk add --no-cache jq
 

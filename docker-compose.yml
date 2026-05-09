@@ -1,4 +1,5 @@
 # gocd-server/docker-compose.yml
+version: '3.3'
 
 services:
   gocd-server:
@@ -31,6 +32,8 @@ services:
       dockerfile: Dockerfile.agent
     container_name: gocd-agent-1
     restart: unless-stopped
+    env_file:
+      - .env.docker
     environment:
       - GO_SERVER_URL=http://gocd-server:8153/go
       - AGENT_AUTO_REGISTER_KEY=default
@@ -41,6 +44,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./certs/ca.crt:/usr/local/share/ca-certificates/ca.crt:ro
       - ../pearl-hello-world:/pearl-hello-world:rw
+      - ./secrets:/secret:ro
       - ./certs:/certs:ro
     depends_on:
       - gocd-server
@@ -51,6 +55,8 @@ services:
       dockerfile: Dockerfile.agent
     container_name: gocd-agent-2
     restart: unless-stopped
+    env_file:
+      - .env.docker
     environment:
       - GO_SERVER_URL=http://gocd-server:8153/go
       - AGENT_AUTO_REGISTER_KEY=default
@@ -61,6 +67,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./certs/ca.crt:/usr/local/share/ca-certificates/ca.crt:ro
       - ../badminton_court:/badminton_court:rw
+      - ./secrets:/secret:ro
       - ./certs:/certs:ro
     depends_on:
       - gocd-server
@@ -83,6 +90,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./certs/ca.crt:/usr/local/share/ca-certificates/ca.crt:ro
       - ../solvpn:/solvpn:rw  # Assumes your repo is adjacent to the gocd-server folder
+      - ./secrets:/secret:ro
       - ./certs:/certs:ro
     depends_on:
       - gocd-server

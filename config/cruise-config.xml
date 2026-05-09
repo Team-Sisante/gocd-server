@@ -146,6 +146,23 @@
           </job>
         </jobs>
       </stage>
+      <stage name="deploy_to_gcp">
+        <jobs>
+          <job name="remote_deploy">
+            <tasks>
+              <exec command="gcloud">
+                <arg>compute</arg>
+                <arg>ssh</arg>
+                <arg>__GCP_VM_NAME__</arg>
+                <arg>--zone</arg>
+                <arg>__GCP_ZONE__</arg>
+                <arg>--command</arg>
+                <arg>cd /app/badminton_court &amp;&amp; git pull &amp;&amp; docker-compose up -d --build</arg>
+              </exec>
+            </tasks>
+          </job>
+        </jobs>
+      </stage>
     </pipeline>
 
     <pipeline name="solvpn-deployment">

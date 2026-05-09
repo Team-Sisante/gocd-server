@@ -1,5 +1,9 @@
 # Azure Deployment Steps
 
+> [!CAUTION]
+> **DEPRECATED:** As of 2026-05-05, we have migrated our primary hosting strategy to GCP Compute Engine. 
+> This document is maintained for legacy reference only. Please refer to `Docs/Steps - GCP Deployment.md`.
+
 This document outlines the steps for deploying GoCD pipelines to Azure VMs using Azure CLI.
 
 ---

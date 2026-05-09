@@ -5,7 +5,7 @@ FROM gocd/gocd-agent-alpine:v25.4.0
 USER root
 
 # Install base dependencies
-RUN apk add --no-cache ca-certificates openssl curl docker gnupg
+RUN apk add --no-cache ca-certificates openssl curl docker gnupg python3 bash
 
 # Install jq
 RUN apk add --no-cache jq
@@ -22,6 +22,10 @@ RUN apk add --no-cache docker-compose
 
 # Install Node.js
 RUN apk add --no-cache nodejs npm
+
+# Install Google Cloud SDK
+RUN curl -sSL https://sdk.cloud.google.com | bash
+ENV PATH $PATH:/root/google-cloud-sdk/bin
 
 # Add entrypoint script
 COPY Scripts/agent-entrypoint.sh /usr/local/bin/agent-entrypoint.sh

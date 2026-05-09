@@ -7,7 +7,7 @@ and Git repository configuration.
 
 ## Required Environment Variables
 
-Create `.env.docker` in `C:\repo\gocd-server\`:
+Create `.env.docker` in the root of the `gocd-server` directory:
 
 ```dotenv
 # .env.docker
@@ -27,6 +27,11 @@ GIT_REPO_USERNAME=xmione
 GIT_REPO_REPONAME=badminton_court
 GIT_PEARL_HELLO_WORLD_REPONAME=pearl-hello-world
 GIT_SOLVPN_REPONAME=solvpn
+
+# GCP Settings
+GCP_PROJECT_ID=project-39c0ea08-238b-47b5-915
+GCP_ZONE=us-west1-b
+GCP_VM_NAME=gocd-deploy-target
 ```
 
 ---
@@ -92,6 +97,9 @@ from `.env.docker` (loaded via `env_file` in `docker-compose.yml`) and:
    - `__GIT_REPO_URL_WITH_CREDENTIALS__` → badminton_court URL
    - `__PEARL_REPO_URL_WITH_CREDENTIALS__` → pearl-hello-world URL
    - `__SOLVPN_REPO_URL_WITH_CREDENTIALS__` → solvpn URL
+   - `__GCP_PROJECT_ID__` → GCP Project ID from .env.docker
+   - `__GCP_ZONE__` → GCP Zone from .env.docker
+   - `__GCP_VM_NAME__` → GCP VM Name from .env.docker
 
 3. Hashes `GOCD_ADMIN_PASSWORD` using bcrypt and writes it to `password.properties`
 

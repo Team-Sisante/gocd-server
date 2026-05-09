@@ -48,6 +48,7 @@ cd gocd-server
 ### 2. Install Dependencies
 
 - Docker Desktop (Windows) with Linux containers enabled
+- **Cloud Shell Note:** Docker and Node.js are pre-installed.
 - Node.js 18+ and npm
 - PowerShell 7+
 
@@ -112,7 +113,7 @@ recompiling OpenSSL every time.
 
 ### 6. Build and Run
 
-```powershell
+```bash
 npm run menu
 ```
 

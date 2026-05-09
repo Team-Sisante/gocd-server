@@ -24,7 +24,7 @@ function uuidv4() {
 
 function replaceInFile(filePath, search, replace) {
   const content = fs.readFileSync(filePath, 'utf8');
-  fs.writeFileSync(filePath, content.split(search).join(replace));
+  fs.writeFileSync(filePath, content.replaceAll(search, replace));
 }
 
 // ---------------------------------------------------------------------------
@@ -90,7 +90,8 @@ replaceInFile(CRUISE_CONFIG, '__SERVER_ID__', SERVER_ID);
 log('Injected server ID.');
 
 const { GITHUB_TOKEN, GIT_REPO_PROTOCOL, GIT_REPO_DOMAIN, GIT_REPO_USERNAME,
-        GIT_REPO_REPONAME, GIT_PEARL_HELLO_WORLD_REPONAME, GIT_SOLVPN_REPONAME } = process.env;
+        GIT_REPO_REPONAME, GIT_PEARL_HELLO_WORLD_REPONAME, GIT_SOLVPN_REPONAME,
+        GCP_PROJECT_ID, GCP_ZONE, GCP_VM_NAME } = process.env;
 
 log('STEP 3: Checking env vars...');
 log(`  GIT_REPO_PROTOCOL             : ${GIT_REPO_PROTOCOL || 'MISSING'}`);
@@ -100,36 +101,47 @@ log(`  GITHUB_TOKEN                  : ${GITHUB_TOKEN ? 'SET' : 'MISSING'}`);
 log(`  GIT_REPO_REPONAME             : ${GIT_REPO_REPONAME || 'MISSING'}`);
 log(`  GIT_PEARL_HELLO_WORLD_REPONAME: ${GIT_PEARL_HELLO_WORLD_REPONAME || 'MISSING'}`);
 log(`  GIT_SOLVPN_REPONAME           : ${GIT_SOLVPN_REPONAME || 'MISSING'}`);
+log(`  GCP_PROJECT_ID                : ${GCP_PROJECT_ID || 'MISSING'}`);
+log(`  GCP_ZONE                      : ${GCP_ZONE || 'MISSING'}`);
+log(`  GCP_VM_NAME                   : ${GCP_VM_NAME || 'MISSING'}`);
 
-if (!GITHUB_TOKEN || !GIT_REPO_PROTOCOL || !GIT_REPO_DOMAIN || !GIT_REPO_USERNAME) {
-  log('ERROR: One or more required Git environment variables are missing. Exiting.');
+if (!GITHUB_TOKEN || !GIT_REPO_PROTOCOL || !GIT_REPO_DOMAIN || !GIT_REPO_USERNAME || !GCP_PROJECT_ID) {
+  log('ERROR: Required Git or GCP environment variables are missing. Exiting.');
   process.exit(1);
 }
 
 const makeUrl = (repo) =>
   `${GIT_REPO_PROTOCOL}://${GITHUB_TOKEN}@${GIT_REPO_DOMAIN}/${GIT_REPO_USERNAME}/${repo}.git`;
 
-log('STEP 4: Injecting Git URLs...');
+// Inject GCP details
+log('Injecting GCP deployment metadata...');
+replaceInFile(CRUISE_CONFIG, '__GCP_PROJECT_ID__', GCP_PROJECT_ID);
+replaceInFile(CRUISE_CONFIG, '__GCP_ZONE__', GCP_ZONE || 'us-west1-b');
+replaceInFile(CRUISE_CONFIG, '__GCP_VM_NAME__', GCP_VM_NAME || 'gocd-deploy-target');
 
-if (GIT_REPO_REPONAME) {
-  replaceInFile(CRUISE_CONFIG, '__GIT_REPO_URL_WITH_CREDENTIALS__', makeUrl(GIT_REPO_REPONAME));
-  log('Injected URL for badminton_court.');
-} else {
-  log('WARNING: GIT_REPO_REPONAME is missing, skipping badminton_court.');
-}
+log('STEP 4: Processing dynamic app injections from apps.json...');
+const APPS_JSON = '/tmp/apps.json';
 
-if (GIT_PEARL_HELLO_WORLD_REPONAME) {
-  replaceInFile(CRUISE_CONFIG, '__PEARL_REPO_URL_WITH_CREDENTIALS__', makeUrl(GIT_PEARL_HELLO_WORLD_REPONAME));
-  log('Injected URL for pearl-hello-world.');
+if (fs.existsSync(APPS_JSON)) {
+  try {
+    const appsData = JSON.parse(fs.readFileSync(APPS_JSON, 'utf8'));
+    if (appsData.apps && Array.isArray(appsData.apps)) {
+      appsData.apps.forEach(app => {
+        const repoName = process.env[app.env_var];
+        if (repoName && app.placeholder) {
+          replaceInFile(CRUISE_CONFIG, app.placeholder, makeUrl(repoName));
+          log(`Successfully injected URL for: ${app.name}`);
+        } else {
+          log(`Skipping ${app.name}: Env var ${app.env_var} is empty or placeholder missing.`);
+        }
+      });
+    }
+  } catch (err) {
+    log(`ERROR parsing apps.json: ${err.message}`);
+    process.exit(1);
+  }
 } else {
-  log('WARNING: GIT_PEARL_HELLO_WORLD_REPONAME is missing, skipping pearl-hello-world.');
-}
-
-if (GIT_SOLVPN_REPONAME) {
-  replaceInFile(CRUISE_CONFIG, '__SOLVPN_REPO_URL_WITH_CREDENTIALS__', makeUrl(GIT_SOLVPN_REPONAME));
-  log('Injected URL for solvpn.');
-} else {
-  log('WARNING: GIT_SOLVPN_REPONAME is missing, skipping solvpn.');
+  log('WARNING: apps.json not found at /tmp/apps.json. Skipping dynamic injections.');
 }
 
 log('Credential injection complete.');
@@ -155,8 +167,8 @@ if (GOCD_ADMIN_PASSWORD) {
 // FIX PERMISSIONS
 // ---------------------------------------------------------------------------
 
-log('STEP 6: Fixing permissions on /godata/config...');
-sh('chown -R 1000:1000 /godata/config');
+log('STEP 6: Fixing permissions on /godata volume...');
+sh('chown -R 1000:1000 /godata');
 log('Permissions set.');
 
 // ---------------------------------------------------------------------------

@@ -13,8 +13,14 @@ function DecryptEnvFile {
         [string]$outputFile = $null 
     )
 
-    $passphrase = .\Scripts\get-gh-variable.ps1 
-    Write-Host "Using passphrase: $passphrase"
+    $passphrase = ./Scripts/get-gh-variable.ps1 
+    
+    if ([string]::IsNullOrWhiteSpace($passphrase)) {
+        Write-Error "Could not retrieve decryption passphrase. Aborting."
+        return
+    }
+
+    Write-Host "Using passphrase: [REDACTED]"
     if (-not (Test-Path $encryptedFile)) {
         Write-Error "Encrypted file not found: $encryptedFile"
         return

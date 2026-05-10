@@ -89,11 +89,12 @@ log('Template copied successfully.');
 replaceInFile(CRUISE_CONFIG, '__SERVER_ID__', SERVER_ID);
 log('Injected server ID.');
 
-const { GITHUB_TOKEN, GIT_REPO_PROTOCOL, GIT_REPO_DOMAIN, GIT_REPO_USERNAME,
+const { GITHUB_TOKEN, SITE_URL, GIT_REPO_PROTOCOL, GIT_REPO_DOMAIN, GIT_REPO_USERNAME,
         GIT_REPO_REPONAME, GIT_PEARL_HELLO_WORLD_REPONAME, GIT_SOLVPN_REPONAME,
         GCP_PROJECT_ID, GCP_ZONE, GCP_VM_NAME } = process.env;
 
 log('STEP 3: Checking env vars...');
+log(`  SITE_URL                      : ${SITE_URL || 'MISSING'}`);
 log(`  GIT_REPO_PROTOCOL             : ${GIT_REPO_PROTOCOL || 'MISSING'}`);
 log(`  GIT_REPO_DOMAIN               : ${GIT_REPO_DOMAIN || 'MISSING'}`);
 log(`  GIT_REPO_USERNAME             : ${GIT_REPO_USERNAME || 'MISSING'}`);
@@ -112,6 +113,16 @@ if (!GITHUB_TOKEN || !GIT_REPO_PROTOCOL || !GIT_REPO_DOMAIN || !GIT_REPO_USERNAM
 
 const makeUrl = (repo) =>
   `${GIT_REPO_PROTOCOL}://${GITHUB_TOKEN}@${GIT_REPO_DOMAIN}/${GIT_REPO_USERNAME}/${repo}.git`;
+
+// Inject Site URL for 415 fix
+if (SITE_URL) {
+  log('Injecting Site URL...');
+  replaceInFile(CRUISE_CONFIG, '__SITE_URL__', SITE_URL);
+}
+
+// Inject standalone GitHub Token (for SSH tasks)
+log('Injecting standalone GitHub Token...');
+replaceInFile(CRUISE_CONFIG, '__GITHUB_TOKEN__', GITHUB_TOKEN);
 
 // Inject GCP details
 log('Injecting GCP deployment metadata...');

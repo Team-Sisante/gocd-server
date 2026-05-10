@@ -1,0 +1,169 @@
+<!-- config/cruise-config.xml -->
+<cruise schemaVersion="139">
+  <server agentAutoRegisterKey="default" serverId="__SERVER_ID__" tokenGenerationKey="__TOKEN_GENERATION_KEY__">
+    <security>
+      <authConfigs>
+        <authConfig id="password_file" pluginId="cd.go.authentication.passwordfile">
+          <property>
+            <key>PasswordFilePath</key>
+            <value>/godata/config/password.properties</value>
+          </property>
+        </authConfig>
+      </authConfigs>
+      <roles>
+        <role name="gocd-system-administrators">
+          <users>
+            <user>admin</user>
+          </users>
+        </role>
+      </roles>
+      <admins>
+        <user>admin</user>
+      </admins>
+    </security>
+    <artifacts>
+      <artifactsDir>artifacts</artifactsDir>
+    </artifacts>
+  </server>
+
+  <pipelines group="defaultGroup">
+
+    <pipeline name="pearl-hello-world">
+      <materials>
+        <git url="__PEARL_REPO_URL_WITH_CREDENTIALS__" branch="master" />
+      </materials>
+      <stage name="build">
+        <jobs>
+          <job name="build_job">
+            <resources>
+              <resource>docker</resource>
+              <resource>pearl-hello-world</resource>
+            </resources>
+            <tasks>
+              <exec command="bash">
+                <arg>-c</arg>
+                <arg><![CDATA[docker rm -f pearl-hello-world || true && docker rmi -f pearl-hello-world || true && docker image prune -f]]></arg>
+              </exec>
+              <exec command="bash">
+                <arg>-c</arg>
+                <arg><![CDATA[cd /pearl-hello-world && docker build -t pearl-hello-world .]]></arg>
+              </exec>
+              <exec command="docker">
+                <arg>run</arg><arg>-d</arg><arg>--name</arg><arg>pearl-hello-world</arg><arg>-p</arg><arg>9292:9292</arg><arg>pearl-hello-world</arg>
+              </exec>
+            </tasks>
+          </job>
+        </jobs>
+      </stage>
+      <stage name="deploy_to_gcp">
+        <jobs>
+          <job name="remote_deploy">
+            <resources>
+              <resource>docker</resource>
+              <resource>pearl-hello-world</resource>
+            </resources>
+            <tasks>
+              <exec command="bash">
+                <arg>-c</arg>
+                <arg><![CDATA[gcloud compute ssh "__GCP_VM_NAME__" --project "__GCP_PROJECT_ID__" --zone "__GCP_ZONE__" --command "docker rm -f pearl-hello-world || true && docker run -d --name pearl-hello-world -p 9292:9292 pearl-hello-world"]]></arg>
+              </exec>
+            </tasks>
+          </job>
+        </jobs>
+      </stage>
+    </pipeline>
+
+    <pipeline name="solvpn-deployment">
+      <materials>
+        <git url="__SOLVPN_REPO_URL_WITH_CREDENTIALS__" branch="master" />
+      </materials>
+      <stage name="Build_and_Package">
+        <jobs>
+          <job name="compile_windows_dist">
+            <resources>
+              <resource>docker</resource>
+              <resource>solvpn</resource>
+            </resources>
+            <tasks>
+              <exec command="bash">
+                <arg>-c</arg><arg><![CDATA[cd /solvpn/Scripts && ./build_solvpn.sh]]></arg>
+              </exec>
+            </tasks>
+          </job>
+        </jobs>
+      </stage>
+    </pipeline>
+
+  </pipelines>
+
+  <pipelines group="badminton_court_group">
+    
+    <pipeline name="badminton_court-artifacts">
+      <materials>
+        <git url="__GIT_REPO_URL_WITH_CREDENTIALS__" branch="master" />
+      </materials>
+      <stage name="build_and_push">
+        <jobs>
+          <job name="artifact_generation">
+            <resources>
+              <resource>docker</resource>
+              <resource>badminton_court</resource>
+            </resources>
+            <tasks>
+              <exec command="bash">
+                <arg>-c</arg>
+                <arg><![CDATA[gcloud compute ssh "__GCP_VM_NAME__" --project "__GCP_PROJECT_ID__" --zone "__GCP_ZONE__" --quiet --command "export GITHUB_TOKEN='__GITHUB_TOKEN__' && sudo chown -R \$USER /app/badminton_court && git config --global --add safe.directory /app/badminton_court && cd /app/badminton_court && git pull && node Scripts/generate-env.js development .env.docker && node Scripts/compile.js && echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin && sudo docker build -t ghcr.io/xmione/badminton_court-web:latest -f Dockerfile.binary . && sudo docker push ghcr.io/xmione/badminton_court-web:latest && sudo docker build -t ghcr.io/xmione/badminton_court-mail:latest -f Dockerfile.posteio . && sudo docker push ghcr.io/xmione/badminton_court-mail:latest"]]></arg>
+              </exec>
+            </tasks>
+          </job>
+        </jobs>
+      </stage>
+    </pipeline>
+
+    <pipeline name="badminton_court-staging">
+      <materials>
+        <pipeline pipelineName="badminton_court-artifacts" stageName="build_and_push" />
+      </materials>
+      <stage name="deploy_staging">
+        <jobs>
+          <job name="remote_deploy">
+            <resources>
+              <resource>docker</resource>
+              <resource>badminton_court</resource>
+            </resources>
+            <tasks>
+              <exec command="bash">
+                <arg>-c</arg>
+                <arg><![CDATA[gcloud compute ssh "__GCP_VM_NAME__" --project "__GCP_PROJECT_ID__" --zone "__GCP_ZONE__" --quiet --command "export GITHUB_TOKEN='__GITHUB_TOKEN__' && sudo chown -R \$USER /app/badminton_court && git config --global --add safe.directory /app/badminton_court && cd /app/badminton_court && git pull && node Scripts/generate-env.js development .env.staging && echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin && sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging pull && sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging up -d --build"]]></arg>
+              </exec>
+            </tasks>
+          </job>
+        </jobs>
+      </stage>
+    </pipeline>
+
+    <pipeline name="badminton_court-production">
+      <materials>
+        <pipeline pipelineName="badminton_court-staging" stageName="deploy_staging" />
+      </materials>
+      <stage name="deploy_production">
+        <approval type="manual" />
+        <jobs>
+          <job name="remote_deploy">
+            <resources>
+              <resource>docker</resource>
+              <resource>badminton_court</resource>
+            </resources>
+            <tasks>
+              <exec command="bash">
+                <arg>-c</arg>
+                <arg><![CDATA[gcloud compute ssh "__GCP_VM_NAME__" --project "__GCP_PROJECT_ID__" --zone "__GCP_ZONE__" --quiet --command "export GITHUB_TOKEN='__GITHUB_TOKEN__' && sudo chown -R \$USER /app/badminton_court && git config --global --add safe.directory /app/badminton_court && cd /app/badminton_court && git pull && node Scripts/generate-env.js docker-production .env.production && echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin && sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production pull && sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production up -d --build"]]></arg>
+              </exec>
+            </tasks>
+          </job>
+        </jobs>
+      </stage>
+    </pipeline>
+
+  </pipelines>
+</cruise>

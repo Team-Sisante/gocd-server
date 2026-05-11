@@ -28,7 +28,7 @@ RUN curl -sSL https://sdk.cloud.google.com > /tmp/gcloud-install.sh && \
     bash /tmp/gcloud-install.sh --install-dir=/usr/local --disable-prompts && \
     ln -s /usr/local/google-cloud-sdk/bin/gcloud /usr/local/bin/gcloud && \
     rm /tmp/gcloud-install.sh
-ENV PATH $PATH:/usr/local/google-cloud-sdk/bin
+ENV PATH=$PATH:/usr/local/google-cloud-sdk/bin
 
 # Set global environment variables for SSL/TLS
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \

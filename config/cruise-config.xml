@@ -1,6 +1,6 @@
 <!-- config/cruise-config.xml -->
 <cruise schemaVersion="139">
-  <server agentAutoRegisterKey="default" serverId="__SERVER_ID__" tokenGenerationKey="__TOKEN_GENERATION_KEY__">
+  <server agentAutoRegisterKey="default" serverId="__SERVER_ID__" tokenGenerationKey="__TOKEN_GENERATION_KEY__" siteUrl="__SITE_URL__">
     <security>
       <authConfigs>
         <authConfig id="password_file" pluginId="cd.go.authentication.passwordfile">
@@ -26,60 +26,23 @@
     </artifacts>
   </server>
 
-  <pipelines group="defaultGroup">
-
-    <pipeline name="pearl-hello-world">
+  <pipelines group="badminton_court_group">
+    
+    <pipeline name="badminton_court-artifacts">
       <materials>
-        <git url="__PEARL_REPO_URL_WITH_CREDENTIALS__" branch="master" />
+        <git url="__GIT_REPO_URL_WITH_CREDENTIALS__" branch="master" />
       </materials>
-      <stage name="build">
+      <stage name="build_and_push">
         <jobs>
-          <job name="build_job">
+          <job name="artifact_generation">
             <resources>
               <resource>docker</resource>
-              <resource>pearl-hello-world</resource>
+              <resource>badminton_court</resource>
             </resources>
             <tasks>
-              <!-- CLEANUP BLOCK -->
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>
-                  echo "========================================================" &amp;&amp;
-                  echo "CLEANING UP pearl-hello-world" &amp;&amp;
-                  echo "========================================================" &amp;&amp;
-                  docker rm -f pearl-hello-world || echo "Container 'pearl-hello-world' not found." &amp;&amp;
-                  docker rmi -f pearl-hello-world || echo "Image 'pearl-hello-world' not found." &amp;&amp;
-                  docker image prune -f
-                </arg>
-              </exec>
-
-              <!-- Debug task to verify directory -->
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>cd /pearl-hello-world &amp;&amp; pwd &amp;&amp; ls -la</arg>
-              </exec>
-              <!-- Build new image from the correct directory -->
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>cd /pearl-hello-world &amp;&amp; docker build -t pearl-hello-world .</arg>
-              </exec>
-              <!-- Run container -->
-              <exec command="docker">
-                <arg>run</arg>
-                <arg>-d</arg>
-                <arg>--name</arg>
-                <arg>pearl-hello-world</arg>
-                <arg>-p</arg>
-                <arg>9292:9292</arg>
-                <arg>pearl-hello-world</arg>
-              </exec>
-              <!-- Health check using Docker host IP -->
-              <exec command="sleep">
-                <arg>10</arg>
-              </exec>
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>curl -f http://$(ip route | grep default | awk '{print $3}'):9292/health || curl -f http://host.docker.internal:9292/health || echo "Container is running but health check failed"</arg>
+                <arg><![CDATA[export GITHUB_TOKEN='__GITHUB_TOKEN__' && node Scripts/generate-env.js development .env.docker && node Scripts/compile.js && echo '__GITHUB_TOKEN__' | docker login ghcr.io -u xmione --password-stdin && docker build -t ghcr.io/xmione/badminton_court-web:latest -f Dockerfile.binary . && docker push ghcr.io/xmione/badminton_court-web:latest && docker build -t ghcr.io/xmione/badminton_court-mail:latest -f Dockerfile.posteio . && docker push ghcr.io/xmione/badminton_court-mail:latest]]></arg>
               </exec>
             </tasks>
           </job>
@@ -87,66 +50,11 @@
       </stage>
     </pipeline>
 
-    <pipeline name="badminton_court">
+    <pipeline name="badminton_court-staging">
       <materials>
-        <git url="__GIT_REPO_URL_WITH_CREDENTIALS__" branch="master" />
+        <pipeline pipelineName="badminton_court-artifacts" stageName="build_and_push" />
       </materials>
-      <stage name="build">
-        <jobs>
-          <job name="build_job">
-            <resources>
-              <resource>docker</resource>
-              <resource>badminton_court</resource>
-            </resources>
-            <tasks>
-              <!-- STEP 1: Decrypt Environment files -->
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>cd /badminton_court &amp;&amp; node Scripts/docker-menu.js 13.7</arg>
-              </exec>
-
-              <!-- STEP 2: Clean up Containers and Images -->
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>
-                  echo "========================================================" &amp;&amp;
-                  echo "CLEANING UP badminton_court" &amp;&amp;
-                  echo "========================================================" &amp;&amp;
-                  cd /badminton_court &amp;&amp;
-                  docker compose --env-file .env.docker down -v --rmi all &amp;&amp;
-                  docker volume rm badminton_court_poste_data badminton_court_postgres_data badminton_court_postgres_test_data badminton_court_mariadb_data 2>/dev/null || true &amp;&amp;
-                  docker system prune -a --volumes -f
-                </arg>
-              </exec>
-
-              <!-- STEP 3: Build and start dev profile containers -->
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>
-                  echo "========================================================" &amp;&amp;
-                  echo "BUILDING badminton_court" &amp;&amp;
-                  echo "========================================================" &amp;&amp;
-                  cd /badminton_court &amp;&amp;
-                  docker compose --env-file .env.docker --profile dev --progress=plain build --no-cache
-                </arg>
-              </exec>
-
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>
-                  echo "========================================================" &amp;&amp;
-                  echo "STARTING badminton_court" &amp;&amp;
-                  echo "========================================================" &amp;&amp;
-                  cd /badminton_court &amp;&amp;
-                  docker compose --env-file .env.docker --profile dev up -d
-                </arg>
-              </exec>
-
-            </tasks>
-          </job>
-        </jobs>
-      </stage>
-      <stage name="deploy_to_gcp">
+      <stage name="deploy_staging">
         <jobs>
           <job name="remote_deploy">
             <resources>
@@ -154,13 +62,9 @@
               <resource>badminton_court</resource>
             </resources>
             <tasks>
-              <exec command="ssh">
-                <arg>-i</arg>
-                <arg>/home/go/.ssh/google_compute_engine</arg>
-                <arg>-o</arg>
-                <arg>StrictHostKeyChecking=no</arg>
-                <arg>deployer@34.61.224.47</arg>
-                <arg>sudo mkdir -p /app &amp;&amp; sudo chown deployer:deployer /app &amp;&amp; (cd /app/badminton_court || (cd /app &amp;&amp; git clone https://__GITHUB_TOKEN__@github.com/xmione/badminton_court.git)) &amp;&amp; cd /app/badminton_court &amp;&amp; git pull &amp;&amp; node Scripts/decryptenvfiles.js &amp;&amp; sudo docker compose --env-file .env.docker --profile dev up -d --build</arg>
+              <exec command="bash">
+                <arg>-c</arg>
+                <arg><![CDATA[gcloud compute ssh "__GCP_VM_NAME__" --project "__GCP_PROJECT_ID__" --zone "__GCP_ZONE__" --quiet --command "export GITHUB_TOKEN='__GITHUB_TOKEN__' && sudo chown -R \$USER /app/badminton_court && git config --global --add safe.directory /app/badminton_court && cd /app/badminton_court && git pull && node Scripts/generate-env.js development .env.staging && echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin && sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging pull && sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging up -d --build"]]></arg>
               </exec>
             </tasks>
           </job>
@@ -168,88 +72,48 @@
       </stage>
     </pipeline>
 
-    <pipeline name="solvpn-deployment">
+    <pipeline name="badminton_court-production">
       <materials>
-        <git url="__SOLVPN_REPO_URL_WITH_CREDENTIALS__" branch="master" />
+        <pipeline pipelineName="badminton_court-staging" stageName="deploy_staging" />
       </materials>
-
-      <stage name="Build_and_Package">
+      <stage name="deploy_production">
+        <approval type="manual" />
         <jobs>
-          <job name="compile_windows_dist">
+          <job name="remote_deploy">
             <resources>
               <resource>docker</resource>
-              <resource>solvpn</resource>
+              <resource>badminton_court</resource>
             </resources>
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>cd /solvpn/Scripts &amp;&amp; ./build_solvpn.sh</arg>
-              </exec>
-            </tasks>
-            <artifacts>
-              <artifact type="build" src="build/*" dest="solvpn_windows_release/" />
-            </artifacts>
-          </job>
-        </jobs>
-      </stage>
-
-      <stage name="Create_Installer">
-        <jobs>
-          <job name="build_installer">
-            <resources>
-              <resource>docker</resource>
-              <resource>solvpn</resource>
-            </resources>
-            <tasks>
-              <fetchartifact artifactOrigin="gocd" pipeline="solvpn-deployment" stage="Build_and_Package" job="compile_windows_dist" srcdir="solvpn_windows_release" dest="build" />
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>cd /solvpn/Scripts &amp;&amp; ./create_installer.sh</arg>
-              </exec>
-            </tasks>
-            <artifacts>
-              <artifact type="build" src="installer_output/*" dest="solvpn_installer/" />
-            </artifacts>
-          </job>
-        </jobs>
-      </stage>
-
-      <stage name="Publish_Release">
-        <jobs>
-          <job name="publish_github_release">
-            <resources>
-              <resource>docker</resource>
-              <resource>solvpn</resource>
-            </resources>
-            <tasks>
-              <fetchartifact artifactOrigin="gocd" pipeline="solvpn-deployment" stage="Create_Installer" job="build_installer" srcdir="solvpn_installer" dest="installer_output" />
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>cd /solvpn/Scripts &amp;&amp; ./publish_release.sh</arg>
+                <arg><![CDATA[gcloud compute ssh "__GCP_VM_NAME__" --project "__GCP_PROJECT_ID__" --zone "__GCP_ZONE__" --quiet --command "export GITHUB_TOKEN='__GITHUB_TOKEN__' && sudo chown -R \$USER /app/badminton_court && git config --global --add safe.directory /app/badminton_court && cd /app/badminton_court && git pull && node Scripts/generate-env.js docker-production .env.production && echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin && sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production pull && sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production up -d --build"]]></arg>
               </exec>
             </tasks>
           </job>
         </jobs>
       </stage>
-
-      <stage name="Deploy_Website">
-        <jobs>
-          <job name="build_and_push_web_image">
-            <resources>
-              <resource>docker</resource>
-              <resource>solvpn</resource>
-            </resources>
-            <tasks>
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>cd /solvpn/Scripts &amp;&amp; ./deploy_web_image.sh</arg>
-              </exec>
-            </tasks>
-          </job>
-        </jobs>
-      </stage>
-
     </pipeline>
 
   </pipelines>
+  <agents>
+    <agent hostname="gocd-agent-1" ipaddress="172.18.0.3" uuid="fe58a97f-3aa2-4951-9de7-9baba6a3cef2">
+      <resources>
+        <resource>docker</resource>
+        <resource>badminton_court</resource>
+      </resources>
+    </agent>
+    <agent hostname="gocd-agent-2" ipaddress="172.18.0.4" uuid="8a2fc391-f8a7-4d52-a8fe-6b225e161984">
+      <resources>
+        <resource>docker</resource>
+        <resource>badminton_court</resource>
+      </resources>
+    </agent>
+    <agent hostname="gocd-agent-3" ipaddress="172.18.0.5" uuid="d38d1d66-de3b-4f19-8f2d-d15242725040">
+      <resources>
+        <resource>docker</resource>
+        <resource>badminton_court</resource>
+      </resources>
+    </agent>
+  </agents>
 </cruise>

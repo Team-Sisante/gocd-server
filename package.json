@@ -4,16 +4,16 @@
   "description": "Automates the creation of a GOCD Docker Container.",
   "main": "index.js",
   "scripts": {
-    "go": "echo 'Recreating docker containers...' && pwsh -ExecutionPolicy Bypass -File Scripts/go.ps1 ",
-    "geterror": "echo 'Getting docker container errors...' && pwsh -ExecutionPolicy Bypass -File Scripts/geterror.ps1 ",
-    "validate": "echo 'Validating GoCD environment...' && pwsh -ExecutionPolicy Bypass -File Scripts/validate.ps1",
-    "menu": "echo 'Opening GoCD management menu...' && pwsh -ExecutionPolicy Bypass -File Scripts/gocd-menu.ps1",
-    "pfs": "echo 'Print the Project Folder Structure..' && pwsh -ExecutionPolicy Bypass -Command \". ./Scripts/pfs.ps1\"",
-    "encryptenvfiles": "echo 'Encrypting .env files...' && pwsh -ExecutionPolicy Bypass -Command \". ./Scripts/encryptenvfiles.ps1\"",
-    "decryptenvfiles": "echo 'Decrypting .env files...' && pwsh -ExecutionPolicy Bypass -Command \". ./Scripts/decryptenvfiles.ps1\"",
+    "go": "node Scripts/go.js",
+    "geterror": "docker ps -a --filter 'status=exited'",
+    "validate": "node Scripts/validate.js",
+    "menu": "node Scripts/gocd-menu.js",
+    "pfs": "node Scripts/pfs.js",
+    "encryptenvfiles": "node Scripts/encryptenvfiles.js",
+    "decryptenvfiles": "node Scripts/decryptenvfiles.js",
     "test": "echo 'Error: no test specified' && exit 1",
-    "setup-base-image": "echo 'Setting up SolVPN build base image...' && pwsh -ExecutionPolicy Bypass -File Scripts/setup-base-image.ps1",
-    "master-feature-git-sync": "echo 'Syncing master with feature branch...' && pwsh -ExecutionPolicy Bypass -File Scripts/master-feature-git-sync.ps1"
+    "setup-base-image": "bash Scripts/setup-base-image.sh",
+    "master-feature-git-sync": "bash Scripts/master-feature-git-sync.sh"
   },
   "repository": {
     "type": "git",

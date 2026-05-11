@@ -1,6 +1,5 @@
 # gocd-server/docker-compose.yml
-version: '3.3'
-
+# Note to AI: Do not use version here because it is obsolete
 services:
   gocd-server:
     build: .
@@ -94,6 +93,12 @@ services:
       - ./certs:/certs:ro
     depends_on:
       - gocd-server
+
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1460
 
 volumes:
   gocd_data:

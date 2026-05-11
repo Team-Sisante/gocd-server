@@ -19,10 +19,14 @@ fi
 
 # Configure gcloud for the 'go' user
 if [ -n "$GCP_PROJECT_ID" ]; then
-    echo "Configuring gcloud for project: $GCP_PROJECT_ID"
-    gosu go bash -c "gcloud config set project \"$GCP_PROJECT_ID\" --quiet && \
-                     gcloud config set core/custom_ca_certs_file \"$SYSTEM_CERT_FILE\" --quiet && \
-                     gcloud config set core/disable_usage_reporting true --quiet"
+    if gosu go command -v gcloud >/dev/null 2>&1; then
+        echo "Configuring gcloud for project: $GCP_PROJECT_ID"
+        gosu go bash -c "gcloud config set project \"$GCP_PROJECT_ID\" --quiet && \
+                         gcloud config set core/custom_ca_certs_file \"$SYSTEM_CERT_FILE\" --quiet && \
+                         gcloud config set core/disable_usage_reporting true --quiet"
+    else
+        echo "Skipping gcloud configuration: gcloud command not found."
+    fi
 fi
 
 if [ -f "/secret/gcp-key.json" ]; then

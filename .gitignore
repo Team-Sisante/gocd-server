@@ -25,3 +25,4 @@ diff.txt
 temp/
 env.passphrase.txt
 secrets/
+node_modules/

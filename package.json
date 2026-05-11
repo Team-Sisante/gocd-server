@@ -13,7 +13,17 @@
     "decryptenvfiles": "node Scripts/decryptenvfiles.js",
     "test": "echo 'Error: no test specified' && exit 1",
     "setup-base-image": "bash Scripts/setup-base-image.sh",
-    "master-feature-git-sync": "bash Scripts/master-feature-git-sync.sh"
+    "master-feature-git-sync": "node Scripts/master-feature-git-sync.js"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0",
+    "dotenv": "^17.2.3",
+    "inquirer": "^12.9.6",
+    "sudo-prompt": "^9.2.1"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "sudo-prompt": "^9.2.1"
   },
   "repository": {
     "type": "git",

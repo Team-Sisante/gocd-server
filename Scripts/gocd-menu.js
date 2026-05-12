@@ -207,6 +207,7 @@ async function showMenu() {
         console.log('   6.6. Monitor VM status');
         console.log('   6.7. Check VM running & reachable');
         console.log('   6.8. Grant agent VM read access (one‑time setup)');
+        console.log('   6.9. Install Tools on VM (one‑time setup)');
         console.log('');
         console.log('\x1b[36m0. Exit\x1b[0m');
         console.log('');
@@ -370,7 +371,16 @@ async function showMenu() {
                 const sa = `gocd-agent-secrets@${GCP_PROJECT_ID}.iam.gserviceaccount.com`;
                 sh(`gcloud projects add-iam-policy-binding ${GCP_PROJECT_ID} --member="serviceAccount:${sa}" --role="roles/compute.viewer"`);
                 sh(`gcloud projects add-iam-policy-binding ${GCP_PROJECT_ID} --member="serviceAccount:${sa}" --role="roles/compute.instanceAdmin.v1"`);
+                sh(`gcloud projects add-iam-policy-binding ${GCP_PROJECT_ID} --member="serviceAccount:${sa}" --role="roles/compute.securityAdmin"`);
                 sh(`gcloud iam service-accounts add-iam-policy-binding 575810712323-compute@developer.gserviceaccount.com --member="serviceAccount:${sa}" --role="roles/iam.serviceAccountUser"`);
+                log('Agent granted all required permissions (including project‑level SSH metadata).', '\x1b[32m');
+                await pause();
+                break;
+            case '6.9':
+                // Install tools on VM (one-time setup)
+                sh('node Scripts/install-tools-on-vm.js');
+                await pause();
+                break;
                 log('Agent granted all required permissions.', '\x1b[32m');
                 await pause();
                 break;

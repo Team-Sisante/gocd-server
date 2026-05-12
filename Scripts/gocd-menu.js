@@ -110,10 +110,11 @@ async function showMenu() {
         console.log('');
         console.log('\x1b[36m6. GCP VM SETUP\x1b[0m');
         console.log('   6.1. Create deployment VM');
-        console.log('   6.2. Setup agent SSH keys');
-        console.log('   6.3. Configure firewall rules');
-        console.log('   6.4. Deploy application');
-        console.log('   6.5. Monitor VM status');
+        console.log('   6.2. Configure firewall rules');
+        console.log('   6.3. Setup agent SSH keys');
+        console.log('   6.4. Setup GCP Secret Manager access for agent');
+        console.log('   6.5. Deploy application');
+        console.log('   6.6. Monitor VM status');
         console.log('');
         console.log('\x1b[36m0. Exit\x1b[0m');
         console.log('');
@@ -255,21 +256,24 @@ async function showMenu() {
                 await pause();
                 break;
             case '6.2':
-                sh('node Scripts/setup-agent-ssh.js');
-                await pause();
-                break;
-            case '6.3':
                 sh('node Scripts/setup-firewall-rules.js');
                 await pause();
                 break;
+            case '6.3':
+                sh('node Scripts/setup-agent-ssh.js');
+                await pause();
+                break;
             case '6.4':
-                // Trigger the artifacts pipeline to deploy (build + push, then staging/prod will follow)
-                const deployPipeline = 'badminton_court-artifacts';
-                sh(`docker exec gocd-server curl -s -u "admin:badminton" -H "Confirm: true" -X POST http://localhost:8153/go/api/pipelines/${deployPipeline}/schedule`);
-                log('Pipeline triggered. Staging will start automatically after artifacts succeed.', '\x1b[32m');
+                sh('node Scripts/setup-gcp-secrets-access.js');
                 await pause();
                 break;
             case '6.5':
+                // Trigger the artifacts pipeline to start the deployment
+                sh(`docker exec gocd-server curl -s -u "admin:badminton" -H "Confirm: true" -X POST http://localhost:8153/go/api/pipelines/badminton_court-artifacts/schedule`);
+                log('Pipeline triggered. Staging will start automatically after artifacts succeed.', '\x1b[32m');
+                await pause();
+                break;
+            case '6.6':
                 sh('gcloud compute instances describe gocd-deploy-target --zone=us-west1-b --format="table[box](name, status, machineType, networkInterfaces[0].accessConfigs[0].natIP)"');
                 await pause();
                 break;

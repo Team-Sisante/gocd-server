@@ -1,6 +1,6 @@
 <!-- config/cruise-config.xml -->
 <cruise schemaVersion="139">
-  <server agentAutoRegisterKey="default" serverId="__SERVER_ID__" tokenGenerationKey="__TOKEN_GENERATION_KEY__">
+  <server agentAutoRegisterKey="default" serverId="__SERVER_ID__" tokenGenerationKey="__TOKEN_GENERATION_KEY__" siteUrl="__SITE_URL__">
     <security>
       <authConfigs>
         <authConfig id="password_file" pluginId="cd.go.authentication.passwordfile">
@@ -64,21 +64,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg><![CDATA[
-    ssh -i /secret/agent-key \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        sol-i@35.230.13.215 \
-        "export GITHUB_TOKEN='__GITHUB_TOKEN__' &&
-         sudo chown -R \$USER /app/badminton_court &&
-         git config --global --add safe.directory /app/badminton_court &&
-         cd /app/badminton_court &&
-         git pull &&
-         node Scripts/generate-env.js development .env.staging &&
-         echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&
-         sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging pull &&
-         sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging up -d --build"
-  ]]></arg>
+                <arg><![CDATA[gcloud compute ssh "__GCP_VM_NAME__" --project "__GCP_PROJECT_ID__" --zone "__GCP_ZONE__" --quiet --command "export GITHUB_TOKEN='__GITHUB_TOKEN__' && sudo chown -R \$USER /app/badminton_court && git config --global --add safe.directory /app/badminton_court && cd /app/badminton_court && git pull && node Scripts/generate-env.js development .env.staging && echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin && sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging pull && sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging up -d --build"]]></arg>
               </exec>
             </tasks>
           </job>
@@ -101,21 +87,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg><![CDATA[
-    ssh -i /secret/agent-key \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        sol-i@35.230.13.215 \
-        "export GITHUB_TOKEN='__GITHUB_TOKEN__' &&
-         sudo chown -R \$USER /app/badminton_court &&
-         git config --global --add safe.directory /app/badminton_court &&
-         cd /app/badminton_court &&
-         git pull &&
-         node Scripts/generate-env.js docker-production .env.production &&
-         echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&
-         sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production pull &&
-         sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production up -d --build"
-  ]]></arg>
+                <arg><![CDATA[gcloud compute ssh "__GCP_VM_NAME__" --project "__GCP_PROJECT_ID__" --zone "__GCP_ZONE__" --quiet --command "export GITHUB_TOKEN='__GITHUB_TOKEN__' && sudo chown -R \$USER /app/badminton_court && git config --global --add safe.directory /app/badminton_court && cd /app/badminton_court && git pull && node Scripts/generate-env.js docker-production .env.production && echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin && sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production pull && sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production up -d --build"]]></arg>
               </exec>
             </tasks>
           </job>
@@ -124,5 +96,24 @@
     </pipeline>
 
   </pipelines>
-
+  <agents>
+    <agent hostname="gocd-agent-1" ipaddress="172.18.0.3" uuid="fe58a97f-3aa2-4951-9de7-9baba6a3cef2">
+      <resources>
+        <resource>docker</resource>
+        <resource>badminton_court</resource>
+      </resources>
+    </agent>
+    <agent hostname="gocd-agent-2" ipaddress="172.18.0.4" uuid="8a2fc391-f8a7-4d52-a8fe-6b225e161984">
+      <resources>
+        <resource>docker</resource>
+        <resource>badminton_court</resource>
+      </resources>
+    </agent>
+    <agent hostname="gocd-agent-3" ipaddress="172.18.0.5" uuid="d38d1d66-de3b-4f19-8f2d-d15242725040">
+      <resources>
+        <resource>docker</resource>
+        <resource>badminton_court</resource>
+      </resources>
+    </agent>
+  </agents>
 </cruise>

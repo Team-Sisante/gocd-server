@@ -119,14 +119,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg><![CDATA[
-                  gcloud compute ssh gocd-deploy-target \
-                    --project __GCP_PROJECT_ID__ \
-                    --zone __GCP_ZONE__ \
-                    --ssh-key-file=/secret/agent-key \
-                    --quiet \
-                    --command "cd /app/badminton_court && git pull && node Scripts/deploy-staging.js '__GITHUB_TOKEN__'"
-                ]]></arg>
+                <arg>/badminton_court/Scripts/deploy.js staging __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -149,66 +142,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>cd /solvpn/Scripts &amp;&amp; ./build_solvpn.sh</arg>
-              </exec>
-            </tasks>
-            <artifacts>
-              <artifact type="build" src="build/*" dest="solvpn_windows_release/" />
-            </artifacts>
-          </job>
-        </jobs>
-      </stage>
-
-      <stage name="Create_Installer">
-        <jobs>
-          <job name="build_installer">
-            <resources>
-              <resource>docker</resource>
-              <resource>solvpn</resource>
-            </resources>
-            <tasks>
-              <fetchartifact artifactOrigin="gocd" pipeline="solvpn-deployment" stage="Build_and_Package" job="compile_windows_dist" srcdir="solvpn_windows_release" dest="build" />
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>cd /solvpn/Scripts &amp;&amp; ./create_installer.sh</arg>
-              </exec>
-            </tasks>
-            <artifacts>
-              <artifact type="build" src="installer_output/*" dest="solvpn_installer/" />
-            </artifacts>
-          </job>
-        </jobs>
-      </stage>
-
-      <stage name="Publish_Release">
-        <jobs>
-          <job name="publish_github_release">
-            <resources>
-              <resource>docker</resource>
-              <resource>solvpn</resource>
-            </resources>
-            <tasks>
-              <fetchartifact artifactOrigin="gocd" pipeline="solvpn-deployment" stage="Create_Installer" job="build_installer" srcdir="solvpn_installer" dest="installer_output" />
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>cd /solvpn/Scripts &amp;&amp; ./publish_release.sh</arg>
-              </exec>
-            </tasks>
-          </job>
-        </jobs>
-      </stage>
-
-      <stage name="Deploy_Website">
-        <jobs>
-          <job name="build_and_push_web_image">
-            <resources>
-              <resource>docker</resource>
-              <resource>solvpn</resource>
-            </resources>
-            <tasks>
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>cd /solvpn/Scripts &amp;&amp; ./deploy_web_image.sh</arg>
+                <arg>/badminton_court/Scripts/deploy.js production __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>

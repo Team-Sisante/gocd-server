@@ -50,7 +50,10 @@ const GOCD_PROTO = process.env.GOCD_SERVER_URL_PROTOCOL;
 const GOCD_HOST  = process.env.GOCD_SERVER_URL_HOST;
 const GOCD_PORT  = process.env.GOCD_SERVER_PORT;
 const GOCD_BASE  = `${GOCD_PROTO}://${GOCD_HOST}:${GOCD_PORT}`;
-
+// Ensure the GoCD server's password file matches GOCD_ADMIN_PASSWORD
+try {
+  execSync(`docker exec gocd-server sh -c "echo 'admin:${GOCD_PASS}' > /godata/config/password.properties"`, { stdio: 'pipe' });
+} catch {}
 // GCP VM settings
 const GCP_PROJECT_ID = process.env.GCP_PROJECT_ID;
 const GCP_ZONE       = process.env.GCP_ZONE;

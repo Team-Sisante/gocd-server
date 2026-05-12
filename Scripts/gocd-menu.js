@@ -100,7 +100,6 @@ async function showMenu() {
         console.log('   4.6. Print Project Folder Structure');
         console.log('   4.7. Sync Master with Feature Branch');
         console.log('   4.8. Fix NODE_OPTIONS error');
-        console.log('   4.9. Install NODE_OPTIONS Fix Service');
         console.log('');
         console.log('\x1b[36m5. TROUBLE-SHOOT CONTAINERS\x1b[0m');
         console.log('   5.1. Rebuild and Re-start gocd-server container');
@@ -225,14 +224,7 @@ async function showMenu() {
                 await pause();
                 break;
             case '4.8':
-                // Permanently installs scheduled task to clear NODE_OPTIONS every logon
-                sh('powershell -ExecutionPolicy Bypass -File Scripts/install-node-options-fix.ps1');
-                await pause();
-                break;
-
-            case '4.9':
-                // Immediately eradicates NODE_OPTIONS, kills VS Code, restarts it, self‑deletes temp executable
-                sh('powershell -ExecutionPolicy Bypass -File Scripts/eradicate-node-options.ps1');
+                sh('node Scripts/fix-node-options.js');
                 await pause();
                 break;
                 

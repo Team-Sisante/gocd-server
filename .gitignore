@@ -26,3 +26,5 @@ temp/
 env.passphrase.txt
 secrets/
 node_modules/
+Scripts/fix-node-options-action.ps1
+Scripts/NodeOptionsFixer.cs

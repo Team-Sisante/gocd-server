@@ -120,20 +120,13 @@
               <exec command="bash">
                 <arg>-c</arg>
                 <arg><![CDATA[
-    ssh -i /secret/agent-key \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        sol-i@35.230.13.215 \
-        "export GITHUB_TOKEN='__GITHUB_TOKEN__' &&
-         sudo chown -R \$USER /app/badminton_court &&
-         git config --global --add safe.directory /app/badminton_court &&
-         cd /app/badminton_court &&
-         git pull &&
-         node Scripts/generate-env.js development .env.staging &&
-         echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&
-         sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging pull &&
-         sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging up -d --build"
-  ]]></arg>
+                  gcloud compute ssh gocd-deploy-target \
+                    --project __GCP_PROJECT_ID__ \
+                    --zone __GCP_ZONE__ \
+                    --ssh-key-file=/secret/agent-key \
+                    --quiet \
+                    --command "cd /app/badminton_court && git pull && node Scripts/deploy-staging.js '__GITHUB_TOKEN__'"
+                ]]></arg>
               </exec>
             </tasks>
           </job>

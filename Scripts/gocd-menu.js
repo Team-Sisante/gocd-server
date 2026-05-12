@@ -112,6 +112,46 @@ function openUrl(url) {
     }
 }
 
+async function triggerPipelineInteractively() {
+  const inquirer = (await import('inquirer')).default;
+  const pipelineListUrl = `${GOCD_BASE}/go/api/pipelines`;
+
+  let pipelines;
+  try {
+    const raw = execSync(
+      `docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" "${pipelineListUrl}"`,
+      { encoding: 'utf8', stdio: 'pipe' }
+    );
+    const data = JSON.parse(raw);
+    if (!data._embedded || !data._embedded.pipelines) {
+      log('No pipelines found in response.', '\x1b[31m');
+      return;
+    }
+    // Filter for badminton_court_group
+    pipelines = data._embedded.pipelines
+      .filter(p => p.group === 'badminton_court_group')
+      .map(p => p.name);
+  } catch (e) {
+    log('Could not fetch pipelines. Check the GoCD server and credentials.', '\x1b[31m');
+    return;
+  }
+
+  if (pipelines.length === 0) {
+    log('No pipelines in badminton_court_group.', '\x1b[31m');
+    return;
+  }
+
+  const { selectedPipeline } = await inquirer.prompt({
+    type: 'list',
+    name: 'selectedPipeline',
+    message: 'Select a pipeline to trigger:',
+    choices: pipelines
+  });
+
+  sh(`docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" -H "Confirm: true" -X POST ${GOCD_BASE}/go/api/pipelines/${selectedPipeline}/schedule`);
+  log(`Pipeline ${selectedPipeline} triggered.`, '\x1b[32m');
+}
+
 async function showMenu() {
     while (true) {
         if (isWindows) { sh('cls'); } else { sh('clear'); }
@@ -200,11 +240,10 @@ async function showMenu() {
                 break;
 
             case '2.1':
-                const pipelineToTrigger = await ask('Enter pipeline name (default: badminton_court-artifacts): ') || 'badminton_court-artifacts';
-                sh(`docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" -H "Confirm: true" -X POST ${GOCD_BASE}/go/api/pipelines/${pipelineToTrigger}/schedule`);
-                log(`Pipeline ${pipelineToTrigger} triggered.`, '\x1b[32m');
+                await triggerPipelineInteractively();
                 await pause();
                 break;
+
             case '2.2':
                 const pipelineToView = await ask('Enter pipeline name (default: badminton_court-artifacts): ') || 'badminton_court-artifacts';
                 openUrl(`${GOCD_BASE}/go/pipelines/${pipelineToView}`);
@@ -324,7 +363,12 @@ async function showMenu() {
                 await pause();
                 break;
             case '6.8':
-                sh(`gcloud projects add-iam-policy-binding ${GCP_PROJECT_ID} --member="serviceAccount:gocd-agent-secrets@${GCP_PROJECT_ID}.iam.gserviceaccount.com" --role="roles/compute.viewer"`);
+                // Grant all required roles for gcloud compute ssh
+                const sa = `gocd-agent-secrets@${GCP_PROJECT_ID}.iam.gserviceaccount.com`;
+                sh(`gcloud projects add-iam-policy-binding ${GCP_PROJECT_ID} --member="serviceAccount:${sa}" --role="roles/compute.viewer"`);
+                sh(`gcloud projects add-iam-policy-binding ${GCP_PROJECT_ID} --member="serviceAccount:${sa}" --role="roles/compute.instanceAdmin.v1"`);
+                sh(`gcloud iam service-accounts add-iam-policy-binding 575810712323-compute@developer.gserviceaccount.com --member="serviceAccount:${sa}" --role="roles/iam.serviceAccountUser"`);
+                log('Agent granted all required permissions.', '\x1b[32m');
                 await pause();
                 break;
 

@@ -100,6 +100,7 @@ async function showMenu() {
         console.log('   4.6. Print Project Folder Structure');
         console.log('   4.7. Sync Master with Feature Branch');
         console.log('   4.8. Fix NODE_OPTIONS error');
+        console.log('   4.9. Install NODE_OPTIONS Fix Service');
         console.log('');
         console.log('\x1b[36m5. TROUBLE-SHOOT CONTAINERS\x1b[0m');
         console.log('   5.1. Rebuild and Re-start gocd-server container');
@@ -115,6 +116,7 @@ async function showMenu() {
         console.log('   6.4. Setup GCP Secret Manager access for agent');
         console.log('   6.5. Deploy application');
         console.log('   6.6. Monitor VM status');
+        console.log('   6.7. Check VM running & reachable'); 
         console.log('');
         console.log('\x1b[36m0. Exit\x1b[0m');
         console.log('');
@@ -223,16 +225,17 @@ async function showMenu() {
                 await pause();
                 break;
             case '4.8':
-                if (isWindows) {
-                    log('Fixing NODE_OPTIONS error...', '\x1b[33m');
-                    sh('set NODE_OPTIONS=', { stdio: 'inherit' });
-                    log('✓ NODE_OPTIONS cleared.', '\x1b[32m');
-                } else {
-                    log('This fix is only relevant for Windows environments.', '\x1b[33m');
-                }
+                // Permanently installs scheduled task to clear NODE_OPTIONS every logon
+                sh('powershell -ExecutionPolicy Bypass -File Scripts/install-node-options-fix.ps1');
                 await pause();
                 break;
 
+            case '4.9':
+                // Immediately eradicates NODE_OPTIONS, kills VS Code, restarts it, self‑deletes temp executable
+                sh('powershell -ExecutionPolicy Bypass -File Scripts/eradicate-node-options.ps1');
+                await pause();
+                break;
+                
             case '5.1':
                 sh('docker compose build gocd-server && docker compose up -d gocd-server');
                 await pause();
@@ -277,6 +280,10 @@ async function showMenu() {
                 sh('gcloud compute instances describe gocd-deploy-target --zone=us-west1-b --format="table[box](name, status, machineType, networkInterfaces[0].accessConfigs[0].natIP)"');
                 await pause();
                 break;
+            case '6.7':
+                sh('node Scripts/check-vm-reachability.js');
+                await pause();
+                break;                
 
             case '0':
                 rl.close();

@@ -8,3 +8,5 @@ secrets/
 node_modules/
 Scripts/fix-node-options-action.ps1
 Scripts/NodeOptionsFixer.cs
+Scripts/fix-node-options-cleanup.ps1
+Scripts/save-open-folders.ps1

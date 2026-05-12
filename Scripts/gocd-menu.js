@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * Scripts/gocd-menu.js
- * 
+ *
  * Cross-platform GoCD Management Menu.
- * Full 1:1 feature parity with original gocd-menu.ps1.
+ * Requires all necessary variables in .env.docker – no defaults.
  */
 
 const { execSync } = require('child_process');
@@ -11,6 +11,53 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const os = require('os');
+const dotenv = require('dotenv');
+
+// Load environment variables from .env.docker
+const envPath = path.join(__dirname, '..', '.env.docker');
+dotenv.config({ path: envPath });
+
+// ----- Validate required environment variables -----
+const requiredVars = [
+  'GOCD_ADMIN_USERNAME',
+  'GOCD_ADMIN_PASSWORD',
+  'GOCD_SERVER_URL_PROTOCOL',
+  'GOCD_SERVER_URL_HOST',
+  'GOCD_SERVER_PORT',
+  'GCP_PROJECT_ID',
+  'GCP_ZONE',
+  'GCP_VM_NAME'
+];
+
+const missingVars = requiredVars.filter(v => !process.env[v]);
+
+if (missingVars.length > 0) {
+  console.error(
+    '\x1b[31mERROR: The following required environment variables are missing in .env.docker:\x1b[0m\n' +
+    missingVars.map(v => `  - ${v}`).join('\n') +
+    '\n\nPlease define them before running this script.'
+  );
+
+  process.exit(1);
+}
+
+// ----- Configuration from environment -----
+const GOCD_USER = process.env.GOCD_ADMIN_USERNAME;
+const GOCD_PASS = process.env.GOCD_ADMIN_PASSWORD;
+
+// GoCD base URL
+const GOCD_PROTO = process.env.GOCD_SERVER_URL_PROTOCOL;
+const GOCD_HOST  = process.env.GOCD_SERVER_URL_HOST;
+const GOCD_PORT  = process.env.GOCD_SERVER_PORT;
+const GOCD_BASE  = `${GOCD_PROTO}://${GOCD_HOST}:${GOCD_PORT}`;
+
+// GCP VM settings
+const GCP_PROJECT_ID = process.env.GCP_PROJECT_ID;
+const GCP_ZONE       = process.env.GCP_ZONE;
+const GCP_VM_NAME    = process.env.GCP_VM_NAME;
+
+// Optional – not required for menu operation
+const SITE_URL = process.env.SITE_URL || '';
 
 const PROJECT_ROOT = path.join(__dirname, '..');
 const isWindows = os.platform() === 'win32';
@@ -21,11 +68,11 @@ function log(msg, color = '\x1b[36m') {
 
 function sh(cmd, options = {}) {
     try {
-        return execSync(cmd, { 
-            cwd: PROJECT_ROOT, 
-            encoding: 'utf8', 
+        return execSync(cmd, {
+            cwd: PROJECT_ROOT,
+            encoding: 'utf8',
             stdio: options.stdio || 'inherit',
-            ...options 
+            ...options
         });
     } catch (error) {
         if (!options.silent) {
@@ -68,7 +115,7 @@ function openUrl(url) {
 async function showMenu() {
     while (true) {
         if (isWindows) { sh('cls'); } else { sh('clear'); }
-        
+
         console.log('\x1b[32mGoCD Management Menu (.js)\x1b[0m');
         console.log('\x1b[32m===========================\x1b[0m');
         console.log('');
@@ -115,7 +162,8 @@ async function showMenu() {
         console.log('   6.4. Setup GCP Secret Manager access for agent');
         console.log('   6.5. Deploy application');
         console.log('   6.6. Monitor VM status');
-        console.log('   6.7. Check VM running & reachable'); 
+        console.log('   6.7. Check VM running & reachable');
+        console.log('   6.8. Grant agent VM read access (one‑time setup)');
         console.log('');
         console.log('\x1b[36m0. Exit\x1b[0m');
         console.log('');
@@ -153,18 +201,18 @@ async function showMenu() {
 
             case '2.1':
                 const pipelineToTrigger = await ask('Enter pipeline name (default: badminton_court-artifacts): ') || 'badminton_court-artifacts';
-                sh(`docker exec gocd-server curl -s -u "admin:badminton" -H "Confirm: true" -X POST http://localhost:8153/go/api/pipelines/${pipelineToTrigger}/schedule`);
+                sh(`docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" -H "Confirm: true" -X POST ${GOCD_BASE}/go/api/pipelines/${pipelineToTrigger}/schedule`);
                 log(`Pipeline ${pipelineToTrigger} triggered.`, '\x1b[32m');
                 await pause();
                 break;
             case '2.2':
                 const pipelineToView = await ask('Enter pipeline name (default: badminton_court-artifacts): ') || 'badminton_court-artifacts';
-                openUrl(`http://localhost:8153/go/pipelines/${pipelineToView}`);
+                openUrl(`${GOCD_BASE}/go/pipelines/${pipelineToView}`);
                 await pause();
                 break;
             case '2.3':
                 const pipelineToUnlock = await ask('Enter pipeline name (default: badminton_court-artifacts): ') || 'badminton_court-artifacts';
-                sh(`docker exec gocd-server curl -s -u "admin:badminton" -H "Confirm: true" -X POST http://localhost:8153/go/api/pipelines/${pipelineToUnlock}/unlock`);
+                sh(`docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" -H "Confirm: true" -X POST ${GOCD_BASE}/go/api/pipelines/${pipelineToUnlock}/unlock`);
                 log(`Pipeline ${pipelineToUnlock} unlock requested.`, '\x1b[32m');
                 await pause();
                 break;
@@ -174,13 +222,13 @@ async function showMenu() {
                 break;
 
             case '3.1':
-                sh('docker exec gocd-server curl -s -u "admin:badminton" http://localhost:8153/go/api/agents | jq ".[] | {hostname, status, resources}"');
+                sh(`docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" ${GOCD_BASE}/go/api/agents | jq ".[] | {hostname, status, resources}"`);
                 await pause();
                 break;
             case '3.2':
                 const agentToEnable = await ask('Enter agent UUID: ');
                 if (agentToEnable) {
-                    sh(`docker exec gocd-server curl -s -u "admin:badminton" -X PATCH -H "Accept: application/vnd.go.cd.v1+json" -H "Content-Type: application/json" -d "{\\"agent_config_state\\": \\"Enabled\\"}" http://localhost:8153/go/api/agents/${agentToEnable}`);
+                    sh(`docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" -X PATCH -H "Accept: application/vnd.go.cd.v1+json" -H "Content-Type: application/json" -d "{\\"agent_config_state\\": \\"Enabled\\"}" ${GOCD_BASE}/go/api/agents/${agentToEnable}`);
                     log(`Agent ${agentToEnable} enabled.`, '\x1b[32m');
                 }
                 await pause();
@@ -188,7 +236,7 @@ async function showMenu() {
             case '3.3':
                 const agentToDisable = await ask('Enter agent UUID: ');
                 if (agentToDisable) {
-                    sh(`docker exec gocd-server curl -s -u "admin:badminton" -X PATCH -H "Accept: application/vnd.go.cd.v1+json" -H "Content-Type: application/json" -d "{\\"agent_config_state\\": \\"Disabled\\"}" http://localhost:8153/go/api/agents/${agentToDisable}`);
+                    sh(`docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" -X PATCH -H "Accept: application/vnd.go.cd.v1+json" -H "Content-Type: application/json" -d "{\\"agent_config_state\\": \\"Disabled\\"}" ${GOCD_BASE}/go/api/agents/${agentToDisable}`);
                     log(`Agent ${agentToDisable} disabled.`, '\x1b[32m');
                 }
                 await pause();
@@ -203,7 +251,7 @@ async function showMenu() {
                 await pause();
                 break;
             case '4.3':
-                openUrl('http://localhost:8153/go');
+                openUrl(`${GOCD_BASE}/go`);
                 await pause();
                 break;
             case '4.4':
@@ -227,7 +275,7 @@ async function showMenu() {
                 sh('node Scripts/fix-node-options.js');
                 await pause();
                 break;
-                
+
             case '5.1':
                 sh('docker compose build gocd-server && docker compose up -d gocd-server');
                 await pause();
@@ -263,19 +311,22 @@ async function showMenu() {
                 await pause();
                 break;
             case '6.5':
-                // Trigger the artifacts pipeline to start the deployment
-                sh(`docker exec gocd-server curl -s -u "admin:badminton" -H "Confirm: true" -X POST http://localhost:8153/go/api/pipelines/badminton_court-artifacts/schedule`);
+                sh(`docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" -H "Confirm: true" -X POST ${GOCD_BASE}/go/api/pipelines/badminton_court-artifacts/schedule`);
                 log('Pipeline triggered. Staging will start automatically after artifacts succeed.', '\x1b[32m');
                 await pause();
                 break;
             case '6.6':
-                sh('gcloud compute instances describe gocd-deploy-target --zone=us-west1-b --format="table[box](name, status, machineType, networkInterfaces[0].accessConfigs[0].natIP)"');
+                sh(`gcloud compute instances describe ${GCP_VM_NAME} --zone=${GCP_ZONE} --project=${GCP_PROJECT_ID} --format="table[box](name, status, machineType, networkInterfaces[0].accessConfigs[0].natIP)"`);
                 await pause();
                 break;
             case '6.7':
                 sh('node Scripts/check-vm-reachability.js');
                 await pause();
-                break;                
+                break;
+            case '6.8':
+                sh(`gcloud projects add-iam-policy-binding ${GCP_PROJECT_ID} --member="serviceAccount:gocd-agent-secrets@${GCP_PROJECT_ID}.iam.gserviceaccount.com" --role="roles/compute.viewer"`);
+                await pause();
+                break;
 
             case '0':
                 rl.close();

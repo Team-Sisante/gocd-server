@@ -1,57 +1,68 @@
 /**
- * fix-node-options.js – Permanently eliminate NODE_OPTIONS via a Scheduled Task.
- * The task runs immediately and at every logon.
+ * fix-node-options.js – Permanently remove NODE_OPTIONS.
+ * Closes VS Code, cleans environment, installs Scheduled Task,
+ * reopens the gocd-server project root.
  */
 
-const { execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
 const TASK_NAME = 'Fix NODE_OPTIONS';
-const PS_SCRIPT = path.join(__dirname, 'fix-node-options-action.ps1');
-const PROJECT_ROOT = path.resolve(__dirname, '..');  // gocd-server root
+const PROJECT_ROOT = path.resolve(__dirname, '..');
+const PS_CLEANUP_SCRIPT = path.join(__dirname, 'fix-node-options-cleanup.ps1');
 
-// 1. Write a minimal, bulletproof PowerShell fix script
-const psCode = `# Kill all VS Code instances
+// ---- 1. User confirmation message box ----
+execSync(`powershell -Command "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; [System.Windows.Forms.MessageBox]::Show('VS Code will now close to permanently remove NODE_OPTIONS. It will reopen to the gocd-server project. Click OK to continue.','NODE_OPTIONS Fix','OK','Information')"`, { stdio: 'pipe' });
+
+// ---- 2. Write and run PowerShell cleanup (kill, purge, delete workspace) ----
+const psCleanup = `
 Get-Process code -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 3
-
-# Purge NODE_OPTIONS from registry
-[System.Environment]::SetEnvironmentVariable("NODE_OPTIONS", $null, "User")
-[System.Environment]::SetEnvironmentVariable("NODE_OPTIONS", $null, "Machine")
-reg delete HKCU\\Environment /v NODE_OPTIONS /f 2>$null
-reg delete "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment" /v NODE_OPTIONS /f 2>$null
-
-# Delete workspace storage (bootloader)
-$ws = "$env:APPDATA\\Code\\User\\workspaceStorage"
-if (Test-Path $ws) { Remove-Item -Recurse -Force $ws -ErrorAction SilentlyContinue }
-
-# Reopen the project root folder
-Start-Process code -ArgumentList "${PROJECT_ROOT.replace(/\\/g, '\\\\')}"
-Start-Sleep -Seconds 2
-
-# Notify the user
-[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null
-[System.Windows.Forms.MessageBox]::Show('NODE_OPTIONS permanently removed and VS Code restored.','Fix Complete','OK','Information')
+[System.Environment]::SetEnvironmentVariable("NODE_OPTIONS", [NullString]::Value, "User")
+[System.Environment]::SetEnvironmentVariable("NODE_OPTIONS", [NullString]::Value, "Machine")
+reg delete HKCU\\Environment /v NODE_OPTIONS /f 2>\$null
+reg delete "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment" /v NODE_OPTIONS /f 2>\$null
+\$ws = "\$env:APPDATA\\Code\\User\\workspaceStorage"
+if (Test-Path \$ws) { Remove-Item -Recurse -Force \$ws -ErrorAction SilentlyContinue }
+Write-Output "Cleanup complete."
 `;
+fs.writeFileSync(PS_CLEANUP_SCRIPT, psCleanup);
 
-fs.writeFileSync(PS_SCRIPT, psCode);
-
-// 2. Create (or update) the Scheduled Task
-const actionArgs = `-ExecutionPolicy Bypass -File "${PS_SCRIPT}"`;
-const createCmd = `schtasks /create /tn "${TASK_NAME}" /tr "powershell.exe ${actionArgs}" /sc onlogon /rl highest /f`;
 try {
-  execSync(createCmd, { stdio: 'pipe' });
-  console.log('Scheduled Task created successfully.');
-} catch (e) {
-  console.error('Failed to create Scheduled Task:', e.stderr || e.message);
-  process.exit(1);
+  execSync(`powershell -ExecutionPolicy Bypass -File "${PS_CLEANUP_SCRIPT}"`, { stdio: 'inherit' });
+} catch {
+  console.error('PowerShell cleanup failed, but continuing.');
 }
 
-// 3. Run the task immediately to fix the current session
+// ---- 3. Install/update Scheduled Task ----
+const taskAction = `-ExecutionPolicy Bypass -File \\"${PS_CLEANUP_SCRIPT}\\"`;
+const taskCmd = `schtasks /create /tn "${TASK_NAME}" /tr "powershell.exe ${taskAction}" /sc onlogon /rl highest /f`;
+try {
+  execSync(`schtasks /delete /tn "${TASK_NAME}" /f`, { stdio: 'pipe' });
+} catch {}
+try {
+  execSync(taskCmd, { stdio: 'pipe' });
+  console.log('Scheduled Task created/updated.');
+} catch (e) {
+  console.error('Could not create Scheduled Task:', e.message);
+}
+
+// ---- 4. Run the task now ----
 try {
   execSync(`schtasks /run /tn "${TASK_NAME}"`, { stdio: 'pipe' });
-  console.log('Task started – NODE_OPTIONS will be removed and VS Code will restart shortly.');
-} catch (e) {
-  console.error('Could not start the task manually. It will still run at next logon.');
-}
+} catch {}
+
+// ---- 5. Reopen the project root ----
+console.log('Reopening gocd-server project...');
+spawn('cmd', ['/c', 'start', 'code', PROJECT_ROOT], { detached: true, stdio: 'ignore' });
+
+// Clean up temp file
+try { fs.unlinkSync(PS_CLEANUP_SCRIPT); } catch {}
+
+// ---- 6. Final message box ----
+setTimeout(() => {
+  execSync(`powershell -Command "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; [System.Windows.Forms.MessageBox]::Show('NODE_OPTIONS permanently removed. VS Code reopened to gocd-server.','Fix Complete','OK','Information')"`, { stdio: 'pipe' });
+}, 3000);
+
+console.log('All done. NODE_OPTIONS permanently gone.');

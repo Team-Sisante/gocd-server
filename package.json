@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Automates the creation of a GOCD Docker Container.",
   "main": "index.js",
+  "type": "commonjs",
   "scripts": {
     "go": "node Scripts/go.js",
     "geterror": "docker ps -a --filter 'status=exited'",

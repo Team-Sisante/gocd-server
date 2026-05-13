@@ -73,6 +73,10 @@ function log(msg, color = '\x1b[36m') {
     console.log(`${color}%s\x1b[0m`, msg);
 }
 
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function sh(cmd, options = {}) {
     try {
         return execSync(cmd, {
@@ -131,7 +135,7 @@ async function triggerPipelineInteractively() {
     );
     const data = JSON.parse(raw);
     // Log raw response for debugging (you can remove this later)
-    // console.log('DEBUG pipelines response:', JSON.stringify(data, null, 2));
+    console.log('DEBUG pipelines response:', JSON.stringify(data, null, 2));
 
     // Try both possible locations of the pipeline list
     let pipelineList = data._embedded?.pipelines || data.pipelines || [];
@@ -184,6 +188,8 @@ async function showMenu() {
         console.log('   1.4. View container logs');
         console.log('   1.5. Stop all containers');
         console.log('   1.6. SYSTEM HARD RESET (Full Wipe via go.js)');
+        console.log('   1.7. Restart Docker Desktop (full restart)');
+        console.log('   1.8. Restart Docker Engine only');
         console.log('');
         console.log('\x1b[36m2. PIPELINE MANAGEMENT\x1b[0m');
         console.log('   2.1. Trigger badminton_court pipeline');
@@ -205,6 +211,7 @@ async function showMenu() {
         console.log('   4.6. Print Project Folder Structure');
         console.log('   4.7. Sync Master with Feature Branch');
         console.log('   4.8. Fix NODE_OPTIONS error');
+        console.log('   4.9. Reset GoCD admin password (from .env.docker)');
         console.log('');
         console.log('\x1b[36m5. TROUBLE-SHOOT CONTAINERS\x1b[0m');
         console.log('   5.1. Rebuild and Re-start gocd-server container');
@@ -254,11 +261,6 @@ async function showMenu() {
                 await pause();
                 break;
             case '1.4':
-            case '5.5':
-                const containerName = await ask('Enter container name (default: gocd-server): ') || 'gocd-server';
-                sh(`docker logs -f --tail 100 ${containerName}`);
-                await pause();
-                break;
             case '1.5':
                 sh('docker compose down');
                 await pause();
@@ -266,6 +268,209 @@ async function showMenu() {
             case '1.6':
                 const confirmReset = await ask('WARNING: This will wipe ALL Docker data. Are you sure? (y/N): ');
                 if (confirmReset.toLowerCase() === 'y') { sh('node Scripts/go.js'); }
+                await pause();
+                break;
+            case '1.7':
+                log('Restarting Docker Desktop (full restart)...', '\x1b[33m');
+                const confirmDesktop = await ask('This will fully restart Docker Desktop. Continue? (y/N): ');
+                if (confirmDesktop.toLowerCase() === 'y') {
+                    if (isWindows) {
+                        // 1. Stop Docker Desktop process if running
+                        log('Stopping Docker Desktop process...', '\x1b[33m');
+                        try {
+                            execSync('taskkill /F /IM "Docker Desktop.exe"', { stdio: 'pipe', timeout: 10000 });
+                        } catch (e) {
+                            log('Docker Desktop process was not running.', '\x1b[33m');
+                        }
+
+                        // 2. Launch Docker Desktop
+                        log('Starting Docker Desktop...', '\x1b[33m');
+                        try {
+                            execSync('start "" "C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"', { stdio: 'pipe', timeout: 10000 });
+                        } catch (e) {
+                            log('❌ Failed to start Docker Desktop. Check the installation path.', '\x1b[31m');
+                            await pause();
+                            break;
+                        }
+
+                        // 3. Wait for Docker Engine to be ready
+                        log('Waiting for Docker Engine to be ready...', '\x1b[33m');
+                        let engineReady = false;
+                        for (let attempt = 1; attempt <= 12; attempt++) {
+                            log(`  Attempt ${attempt}...`, '\x1b[36m');
+                            try {
+                                execSync('docker ps', { stdio: 'inherit', timeout: 10000 });
+                                engineReady = true;
+                                break;
+                            } catch (_) {
+                                if (attempt < 12) await sleep(5000);  // ← use async sleep instead of timeout command
+                            }
+                        }
+                        if (engineReady) {
+                            log('✅ Docker Desktop restarted and engine is ready.', '\x1b[32m');
+                        } else {
+                            log('❌ Docker Engine did not become ready within 60 seconds.', '\x1b[31m');
+                        }
+                    } else if (os.platform() === 'darwin') {
+                        sh('pkill -f "Docker Desktop"');
+                        sh('open -a Docker Desktop');
+                    } else {
+                        sh('systemctl restart docker');
+                    }
+                } else {
+                    log('Restart cancelled.', '\x1b[33m');
+                }
+                await pause();
+                break;
+                
+            case '1.8':
+                log('Restarting Docker Engine (admin required)...', '\x1b[33m');
+                const confirmEngine = await ask('This will stop all containers and restart the Docker Engine. Continue? (y/N): ');
+                if (confirmEngine.toLowerCase() === 'y') {
+                    if (isWindows) {
+                        // ---- 1. Graceful stop of containers (with timeout) ----
+                        log('Checking for running containers...', '\x1b[33m');
+                        let ids = '';
+                        try {
+                            ids = execSync('docker ps -q', { encoding: 'utf8', stdio: 'pipe', timeout: 10000 }).trim();
+                        } catch (e) {
+                            if (e.killed) {
+                                log('⚠ Docker daemon is unresponsive – skipping graceful container stop.', '\x1b[33m');
+                            } else {
+                                log('⚠ Could not list containers – proceeding with restart.', '\x1b[33m');
+                            }
+                        }
+
+                        if (ids) {
+                            const idList = ids.split(/\r?\n/).filter(Boolean);
+                            log(`Stopping ${idList.length} container(s)...`, '\x1b[33m');
+                            for (const id of idList) {
+                                try {
+                                    execSync(`docker stop ${id}`, { stdio: 'pipe', timeout: 15000 });
+                                } catch (e) {
+                                    log(`⚠ Failed to stop container ${id.substring(0, 12)} (may already be stopping).`, '\x1b[33m');
+                                }
+                            }
+                            log('Graceful stop completed (or timed out).', '\x1b[32m');
+                        }
+
+                        // ---- 2. Force stop Docker Desktop Service + WSL ----
+                        log('A UAC prompt will appear. Please click "Yes" to allow the restart.', '\x1b[33m');
+                        const psScriptPath = path.join(os.tmpdir(), 'restart_docker_engine.ps1');
+                        const resultFilePath = path.join(os.tmpdir(), 'restart_docker_result.txt');
+
+                        const runElevatedAction = (action) => {
+                            const psScript = action === 'stop'
+                                ? `
+$ErrorActionPreference = 'Stop'
+try {
+    $svc = Get-Service -Name 'Docker Desktop Service' -ErrorAction Stop
+    if ($svc.Status -eq 'Running') {
+        Stop-Service -Name 'Docker Desktop Service' -Force
+    }
+    # Terminate WSL2 VM to guarantee engine stops
+    wsl --shutdown
+    Write-Output 'STOPPED' | Out-File -FilePath '${resultFilePath.replace(/\\/g, '\\\\')}' -Encoding utf8
+} catch {
+    $_.Exception.Message | Out-File -FilePath '${resultFilePath.replace(/\\/g, '\\\\')}' -Encoding utf8
+    exit 1
+}
+`.trim()
+                                : `
+$ErrorActionPreference = 'Stop'
+try {
+    $svc = Get-Service -Name 'Docker Desktop Service' -ErrorAction Stop
+    if ($svc.Status -ne 'Running') {
+        Start-Service -Name 'Docker Desktop Service'
+    } else {
+        Restart-Service -Name 'Docker Desktop Service' -Force
+    }
+    Write-Output 'STARTED' | Out-File -FilePath '${resultFilePath.replace(/\\/g, '\\\\')}' -Encoding utf8
+} catch {
+    $_.Exception.Message | Out-File -FilePath '${resultFilePath.replace(/\\/g, '\\\\')}' -Encoding utf8
+    exit 1
+}
+`.trim();
+
+                            fs.writeFileSync(psScriptPath, psScript, 'utf8');
+                            try { fs.unlinkSync(resultFilePath); } catch (_) {}
+
+                            const elevateCmd = `powershell -Command "Start-Process -Verb RunAs -Wait -FilePath 'powershell' -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \\"${psScriptPath}\\"' "`;
+                            try {
+                                execSync(elevateCmd, { stdio: 'pipe', timeout: 30000 }); // wait max 30 sec for UAC
+                            } catch (e) {
+                                // If timed out or failed, return false
+                                return false;
+                            }
+
+                            let result = null;
+                            if (fs.existsSync(resultFilePath)) {
+                                result = fs.readFileSync(resultFilePath, 'utf8').trim();
+                                fs.unlinkSync(resultFilePath);
+                            }
+                            return result === 'STOPPED' || result === 'STARTED';
+                        };
+
+                        // Stop service + WSL
+                        log('Force stopping Docker Engine (service + WSL)...', '\x1b[33m');
+                        const stopped = runElevatedAction('stop');
+                        if (!stopped) {
+                            log('❌ Failed to stop Docker Engine (UAC declined or command failed).', '\x1b[31m');
+                            try { fs.unlinkSync(psScriptPath); } catch (_) {}
+                            await pause();
+                            break;
+                        }
+
+                        // Confirm engine is down
+                        log('Checking if Docker Engine is stopped...', '\x1b[33m');
+                        try {
+                            execSync('docker ps', { stdio: 'pipe', timeout: 5000 });
+                            log('⚠ Docker Engine still responding unexpectedly.', '\x1b[33m');
+                        } catch (_) {
+                            log('Docker Engine confirmed stopped.', '\x1b[32m');
+                        }
+
+                        // ---- 3. Start the service ----
+                        log('Starting Docker Desktop Service...', '\x1b[33m');
+                        const started = runElevatedAction('start');
+                        try { fs.unlinkSync(psScriptPath); } catch (_) {}
+                        if (!started) {
+                            log('❌ Failed to start Docker Engine.', '\x1b[31m');
+                            await pause();
+                            break;
+                        }
+
+                        // ---- 4. Wait for engine to become responsive ----
+                        log('Waiting for Docker Engine to become responsive...', '\x1b[33m');
+                        let engineReady = false;
+                        for (let attempt = 1; attempt <= 12; attempt++) {
+                            log(`  Attempt ${attempt}...`, '\x1b[36m');
+                            try {
+                                execSync('docker ps', { stdio: 'inherit', timeout: 10000 });
+                                engineReady = true;
+                                break;
+                            } catch (_) {
+                                if (attempt < 12) {
+                                    execSync('timeout /t 5', { stdio: 'pipe' });
+                                }
+                            }
+                        }
+
+                        if (engineReady) {
+                            log('✅ Docker Engine restarted and is ready.', '\x1b[32m');
+                        } else {
+                            log('❌ Docker Engine did not become ready within 60 seconds.', '\x1b[31m');
+                            log('   Try option 1.7 (Restart Docker Desktop) for a full restart.', '\x1b[33m');
+                        }
+                    } else if (os.platform() === 'darwin') {
+                        sh('pkill -f "com.docker.hyperkit"');
+                        sh('open -a Docker Desktop');
+                    } else {
+                        sh('systemctl restart docker');
+                    }
+                } else {
+                    log('Restart cancelled.', '\x1b[33m');
+                }
                 await pause();
                 break;
 
@@ -344,7 +549,15 @@ async function showMenu() {
                 sh('node Scripts/fix-node-options.js');
                 await pause();
                 break;
-
+            case '4.9':
+                log('Resetting GoCD admin password...', '\x1b[33m');
+                sh(`docker exec gocd-server sh -c "echo 'admin:${GOCD_PASS}' > /godata/config/password.properties"`);
+                // Restart is not strictly required, but ensures immediate effect
+                sh('docker restart gocd-server');
+                log('Password reset. Use the credentials from .env.docker to log in.', '\x1b[32m');
+                await pause();
+                break;
+                
             case '5.1':
                 sh('docker compose build gocd-server && docker compose up -d gocd-server');
                 await pause();
@@ -359,6 +572,11 @@ async function showMenu() {
                 break;
             case '5.4':
                 sh('docker compose build --no-cache gocd-agent-3 && docker compose up -d gocd-agent-3');
+                await pause();
+                break;
+            case '5.5':
+                const containerName = await ask('Enter container name (default: gocd-server): ') || 'gocd-server';
+                sh(`docker logs -f --tail 100 ${containerName}`);
                 await pause();
                 break;
 

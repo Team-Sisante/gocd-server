@@ -112,15 +112,16 @@ if (!GOCD_USER || !GOCD_PASS) {
 }
 
 // 1. Copy the local XML into the container
+console.log('Copying updated XML into GoCD container...');
 try {
-    execSync(`docker cp "${CONFIG_PATH}" gocd-server:/godata/config/cruise-config.xml`, { stdio: 'pipe' });
+    execSync(`docker cp "${CONFIG_PATH}" gocd-server:/godata/config/cruise-config.xml`, { stdio: 'inherit' });
     console.log('✅ Updated XML copied into GoCD container.');
 } catch (e) {
     console.error('\x1b[31mFailed to copy XML into container:\x1b[0m', e.message);
     process.exit(1);
 }
 
-/// 2. Restart GoCD and wait for it to be healthy
+// 2. Restart GoCD and wait for it to be healthy
 console.log('Restarting GoCD server...');
 try {
     execSync('docker restart gocd-server', { stdio: 'inherit' });

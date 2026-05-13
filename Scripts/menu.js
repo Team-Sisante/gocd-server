@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Scripts/gocd-menu.js
+ * Scripts/menu.js
  *
  * Cross-platform GoCD Management Menu.
  * Requires all necessary variables in .env.docker – no defaults.
@@ -208,6 +208,10 @@ async function showMenu() {
         console.log('   6.7. Check VM running & reachable');
         console.log('   6.8. Grant agent VM read access (one‑time setup)');
         console.log('   6.9. Install Tools on VM (one‑time setup)');
+        console.log('   6.10. Export VM settings to YAML');
+        console.log('   6.11. Delete VM');
+        console.log('   6.12. Create VM from saved YAML');
+        console.log('   6.13. Recreate fresh VM (export → delete → create)');
         console.log('');
         console.log('\x1b[36m0. Exit\x1b[0m');
         console.log('');
@@ -384,7 +388,55 @@ async function showMenu() {
                 log('Agent granted all required permissions.', '\x1b[32m');
                 await pause();
                 break;
-
+            case '6.10':
+                const exportPath = await ask('Output filename (default: gocd-deploy-target-config.yaml): ') || 'gocd-deploy-target-config.yaml';
+                sh(`gcloud compute instances export ${GCP_VM_NAME} --project=${GCP_PROJECT_ID} --zone=${GCP_ZONE} --destination=${exportPath}`);
+                log(`VM settings saved to ${exportPath}`, '\x1b[32m');
+                await pause();
+                break;
+            case '6.11':
+                log('WARNING: This will delete the VM and all its data!', '\x1b[31m');
+                const confirmDelete = await ask('Are you sure? (y/N): ');
+                if (confirmDelete.toLowerCase() === 'y') {
+                    sh(`gcloud compute instances delete ${GCP_VM_NAME} --project=${GCP_PROJECT_ID} --zone=${GCP_ZONE} --quiet`);
+                    log('VM deleted.', '\x1b[32m');
+                }
+                await pause();
+                break;
+            case '6.12':
+                const yamlFile = await ask('YAML config file (default: gocd-deploy-target-config.yaml): ') || 'gocd-deploy-target-config.yaml';
+                if (!fs.existsSync(yamlFile)) {
+                    log(`File not found: ${yamlFile}`, '\x1b[31m');
+                } else {
+                    sh(`gcloud compute instances create ${GCP_VM_NAME} --project=${GCP_PROJECT_ID} --zone=${GCP_ZONE} --source=${yamlFile}`);
+                    log('VM created from saved settings.', '\x1b[32m');
+                }
+                await pause();
+                break;
+            case '6.13':
+                log('This will: 1) Export settings, 2) Delete VM, 3) Create fresh VM', '\x1b[33m');
+                const confirmRecreate = await ask('Proceed? (y/N): ');
+                if (confirmRecreate.toLowerCase() === 'y') {
+                    const recreateYaml = 'gocd-deploy-target-config.yaml';
+                    log('Step 1: Exporting VM settings...', '\x1b[33m');
+                    sh(`gcloud compute instances export ${GCP_VM_NAME} --project=${GCP_PROJECT_ID} --zone=${GCP_ZONE} --destination=${recreateYaml}`);
+                    log('Step 2: Deleting VM...', '\x1b[33m');
+                    sh(`gcloud compute instances delete ${GCP_VM_NAME} --project=${GCP_PROJECT_ID} --zone=${GCP_ZONE} --quiet`);
+                    log('Step 3: Creating fresh VM...', '\x1b[33m');
+                    sh(`gcloud compute instances create ${GCP_VM_NAME} --project=${GCP_PROJECT_ID} --zone=${GCP_ZONE} --source=${recreateYaml}`);
+                    log('Fresh VM created from saved settings.', '\x1b[32m');
+                    
+                    // Remind about next steps
+                    log('', '\x1b[36m');
+                    log('Next steps:', '\x1b[36m');
+                    log('  6.2. Configure firewall rules', '\x1b[36m');
+                    log('  6.3. Setup agent SSH keys', '\x1b[36m');
+                    log('  6.4. Setup GCP Secret Manager access', '\x1b[36m');
+                    log('  6.9. Install Tools on VM', '\x1b[36m');
+                }
+                await pause();
+                break;
+                
             case '0':
                 rl.close();
                 process.exit(0);

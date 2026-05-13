@@ -1,0 +1,88 @@
+canIpForward: false
+cpuPlatform: Intel Broadwell
+creationTimestamp: '2026-05-08T08:17:33.869-07:00'
+deletionProtection: false
+disks:
+- autoDelete: true
+  boot: true
+  deviceName: persistent-disk-0
+  diskSizeGb: 30
+  guestOsFeatures:
+  - type: UEFI_COMPATIBLE
+  - type: VIRTIO_SCSI_MULTIQUEUE
+  - type: GVNIC
+  index: 0
+  interface: SCSI
+  kind: compute#attachedDisk
+  licenses:
+  - https://www.googleapis.com/compute/v1/projects/debian-cloud/global/licenses/debian-11-bullseye
+  mode: READ_WRITE
+  source: https://www.googleapis.com/compute/v1/projects/project-39c0ea08-238b-47b5-915/zones/us-west1-b/disks/gocd-deploy-target
+  type: PERSISTENT
+fingerprint: N1JO62PTVjQ=
+id: 213355827808976995
+kind: compute#instance
+labelFingerprint: 42WmSpB8rSM=
+lastStartTimestamp: '2026-05-11T08:08:42.846-07:00'
+lastStopTimestamp: '2026-05-11T08:08:01.657-07:00'
+machineType: https://www.googleapis.com/compute/v1/projects/project-39c0ea08-238b-47b5-915/zones/us-west1-b/machineTypes/e2-micro
+metadata:
+  fingerprint: J3aP8pZK3Pg=
+  items:
+  - key: enable-oslogin
+    value: 'FALSE'
+  - key: serial-port-enable
+    value: TRUE enable-oslogin=FALSE
+  - key: ssh-keys
+    value: "solomiosisante_gmail_com:ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC0nkN9TwRl5eSyk/dc6iVNzapkJr7f+j6ddOOuvCbqdtMGZ0ClFttDKFFwqE759k20XuendNp/9StTZA6/oYbjfuXsm6pgBqwFN85R/iNg9JuevRTSjbHTdRbuEwjvJV3HDSVXLfXZXtjv2daECB6doxp+RpA6oJ9Mje5qqNsn/lhXuBEy6OqErzseYsHxIh3kcA1MjEHZ7v3UKgsjM7CsaOboTlEbkLpp50EAiX0zkpXXhzXzn4q1RkBKCxFBwb9T9Kgc8gjuElKjnRRKXSnDTOHEAbESvVY17v+eWMQcS7n6CHXb7j9HwLllUmII+G1mR/FFGAsZ+43wyvt8HxYd\
+      \ LAPTOP-DADDY\\sol-i@LAPTOP-DADDY\nsol-i:ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDXlRBEhL3rBu40SWDBhg9E8XC6gjQaSX1p2Jdj1t38kbeW7QTv989xwvTIUFsHse3zLf0JV36WSq/mtTxe/NjRNS9d/T1ggXvY17+wfsp2iVc5L3a4sDvVZ8fFrKZKq7LvMxYFNvxqukJ8qsOyn8CnsoSy5VTttdOt+JfQ6kPZ78dO1wJfz35Tnva8JAfym16Y+muAYulDDlt9lfKOLUajAuQbSqBXojjmwlIaapjkpjFLVLosNCfUfjowC3INl55yyLdo2zIzlqzZmxOfUEBzGnXZxBr4ZeP8hmcOhr7Zm9hZszH8h+OQz2OZgIet+g5s74I8PUb5YvO+U4tZNVexfw+qOoCv8PbPj6qkUQxMpKpaD3MR2thD4SY0JYl/i7BhvTrxkz9378w+B+vHYZ3NCr/Ct1pusHkhAM4+pspZkn3xFSApey0hCx8ZdOWfvaLZORS4fUhtbGJuUhgEYuAZ8rENxvLE4kBKrMAxdo6H30K3Bsf2qNbrzG62LlNTxvt7fwPnxH4OnEG45o943fmG1uPCvOVsHEprGTRjy28sjdPraijK7yndzUV3jR919NhUOYOwfBA3I7LQNPziDL7kpiATrbLcfl/unnbbtt73vwlVgFWcnbByUi6IvlxwIlzs1LIjw920YQGExkREYl03dH3JltOkHk+LBrHf2M91/w==\
+      \ gocd-agent\nsol-i:ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCxSNJxZYg6qmPmGWkI3U86nuhUldDl0d+I5V18iLdNSB7nXEjRCY2HAK8ZTuHHeNsYXl/Ot/r92+YfswsvkSaVbketN1l2j6rH0XTVI8S25OPphwLPdEuiyXo+sRXR2xKvdsG13AxBVuTLN1FsLwZs+ZT6hre5xcEps1/ewvE89gGOgesVdW8trVMV71FIVl2TK3wkeFLzB1oSuTEzzJbY+k5OjLwNiSZ93dDI1J91F+nD6nEJ8UrCyIvFUvXAGKbS03pneWwznFM8PNqn6ieUPuB+mtnL6gkcKX54Bbrw59L6Olr4RYT5Cylibbaom4iFfZzHkItrpb637BJYB2nyyVL3SuvgbbaH4s7Zw/pxbcajDK6RqldxHyeJnvUMhGbPTiGVIMDC7IBQx2jknnXDQvPf6M79PqBvez0X7w5TYvKYc/7IQviium7em7+PNPogMAjvNb+tL1UIL8xlRnRHxGmMoZ8uknHZPKDSNmv+Hg7G+2RVm9Q49RklDzAMDUx/XcbmGGC+6Ayp56oxp8aSxX/7gGWEy8mzdM+rnaIAQ8Cchs//IDE3mP9mUN8+yuF2lqlG6ZnMIqbCH4cIbR4HAa2DylJ5ynu73vs0jJfutpKF4hnJQew9xIm1/tKgwQ9vKjejM6XLc+XGmtWxbhd8OtjSYOLmU1rEThBHgajghQ==\
+      \ gocd-agent\ngo:ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCxSNJxZYg6qmPmGWkI3U86nuhUldDl0d+I5V18iLdNSB7nXEjRCY2HAK8ZTuHHeNsYXl/Ot/r92+YfswsvkSaVbketN1l2j6rH0XTVI8S25OPphwLPdEuiyXo+sRXR2xKvdsG13AxBVuTLN1FsLwZs+ZT6hre5xcEps1/ewvE89gGOgesVdW8trVMV71FIVl2TK3wkeFLzB1oSuTEzzJbY+k5OjLwNiSZ93dDI1J91F+nD6nEJ8UrCyIvFUvXAGKbS03pneWwznFM8PNqn6ieUPuB+mtnL6gkcKX54Bbrw59L6Olr4RYT5Cylibbaom4iFfZzHkItrpb637BJYB2nyyVL3SuvgbbaH4s7Zw/pxbcajDK6RqldxHyeJnvUMhGbPTiGVIMDC7IBQx2jknnXDQvPf6M79PqBvez0X7w5TYvKYc/7IQviium7em7+PNPogMAjvNb+tL1UIL8xlRnRHxGmMoZ8uknHZPKDSNmv+Hg7G+2RVm9Q49RklDzAMDUx/XcbmGGC+6Ayp56oxp8aSxX/7gGWEy8mzdM+rnaIAQ8Cchs//IDE3mP9mUN8+yuF2lqlG6ZnMIqbCH4cIbR4HAa2DylJ5ynu73vs0jJfutpKF4hnJQew9xIm1/tKgwQ9vKjejM6XLc+XGmtWxbhd8OtjSYOLmU1rEThBHgajghQ==\
+      \ gocd-agent"
+  kind: compute#metadata
+name: gocd-deploy-target
+networkInterfaces:
+- accessConfigs:
+  - kind: compute#accessConfig
+    name: external-nat
+    natIP: 136.109.209.69
+    networkTier: PREMIUM
+    type: ONE_TO_ONE_NAT
+  fingerprint: 6Ib9iFyQ30M=
+  kind: compute#networkInterface
+  name: nic0
+  network: https://www.googleapis.com/compute/v1/projects/project-39c0ea08-238b-47b5-915/global/networks/default
+  networkIP: 10.138.0.2
+  stackType: IPV4_ONLY
+  subnetwork: https://www.googleapis.com/compute/v1/projects/project-39c0ea08-238b-47b5-915/regions/us-west1/subnetworks/default
+scheduling:
+  automaticRestart: true
+  onHostMaintenance: MIGRATE
+  preemptible: false
+  provisioningModel: STANDARD
+selfLink: https://www.googleapis.com/compute/v1/projects/project-39c0ea08-238b-47b5-915/zones/us-west1-b/instances/gocd-deploy-target
+serviceAccounts:
+- email: 575810712323-compute@developer.gserviceaccount.com
+  scopes:
+  - https://www.googleapis.com/auth/devstorage.read_only
+  - https://www.googleapis.com/auth/logging.write
+  - https://www.googleapis.com/auth/monitoring.write
+  - https://www.googleapis.com/auth/pubsub
+  - https://www.googleapis.com/auth/service.management.readonly
+  - https://www.googleapis.com/auth/servicecontrol
+  - https://www.googleapis.com/auth/trace.append
+shieldedInstanceConfig:
+  enableIntegrityMonitoring: true
+  enableSecureBoot: false
+  enableVtpm: true
+shieldedInstanceIntegrityPolicy:
+  updateAutoLearnPolicy: true
+startRestricted: false
+status: RUNNING
+tags:
+  fingerprint: 4qOaSDlBW90=
+  items:
+  - gocd-deploy-target
+  - http-server
+  - https-server
+zone: https://www.googleapis.com/compute/v1/projects/project-39c0ea08-238b-47b5-915/zones/us-west1-b

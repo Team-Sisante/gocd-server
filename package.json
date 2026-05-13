@@ -5,16 +5,7 @@
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
-    "go": "node Scripts/go.js",
-    "geterror": "docker ps -a --filter 'status=exited'",
-    "validate": "node Scripts/validate.js",
-    "menu": "node Scripts/gocd-menu.js",
-    "pfs": "node Scripts/pfs.js",
-    "encryptenvfiles": "node Scripts/encryptenvfiles.js",
-    "decryptenvfiles": "node Scripts/decryptenvfiles.js",
-    "test": "echo 'Error: no test specified' && exit 1",
-    "setup-base-image": "bash Scripts/setup-base-image.sh",
-    "master-feature-git-sync": "node Scripts/master-feature-git-sync.js"
+    "menu": "node Scripts/menu.js"
   },
   "devDependencies": {
     "cross-env": "^10.1.0",

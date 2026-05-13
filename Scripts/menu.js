@@ -212,6 +212,7 @@ async function showMenu() {
         console.log('   6.11. Delete VM');
         console.log('   6.12. Create VM from saved YAML');
         console.log('   6.13. Recreate fresh VM (export → delete → create)');
+        console.log('   6.14. Run full post‑creation setup (firewall, SSH, secrets, tools, check)'); 
         console.log('');
         console.log('\x1b[36m0. Exit\x1b[0m');
         console.log('');
@@ -403,40 +404,140 @@ async function showMenu() {
                 }
                 await pause();
                 break;
-            case '6.12':
+            case '6.12': {
                 const yamlFile = await ask('YAML config file (default: gocd-deploy-target-config.yaml): ') || 'gocd-deploy-target-config.yaml';
                 if (!fs.existsSync(yamlFile)) {
                     log(`File not found: ${yamlFile}`, '\x1b[31m');
                 } else {
-                    sh(`gcloud compute instances create ${GCP_VM_NAME} --project=${GCP_PROJECT_ID} --zone=${GCP_ZONE} --source=${yamlFile}`);
-                    log('VM created from saved settings.', '\x1b[32m');
+                    // Check if the VM already exists
+                    let vmExists = false;
+                    try {
+                        execSync(`gcloud compute instances describe ${GCP_VM_NAME} --project=${GCP_PROJECT_ID} --zone=${GCP_ZONE}`, { stdio: 'pipe' });
+                        vmExists = true;
+                    } catch (_) { /* VM does not exist */ }
+
+                    if (vmExists) {
+                        log(`ℹ️  VM "${GCP_VM_NAME}" already exists.`, '\x1b[33m');
+                        log('    If it needs configuration, proceed with the setup steps below.', '\x1b[33m');
+                        log('    To recreate a fresh VM, delete it first (option 6.11) or use 6.13.', '\x1b[33m');
+                    } else {
+                        // Read the YAML and build a standard creation command
+                        const yaml = fs.readFileSync(yamlFile, 'utf8');
+
+                        // Extract short resource names (last part of the URL after the final slash)
+                        const machineType = (yaml.match(/machineType:\s*.*\/([^/\s]+)/) || [])[1] || 'e2-medium';
+                        const image       = (yaml.match(/sourceImage:\s*(.+)/) || [])[1]?.trim() || 'projects/debian-cloud/global/images/family/debian-11';
+                        const bootDiskSize = (yaml.match(/diskSizeGb:\s*(\d+)/) || [])[1] || '20';
+                        const network     = (yaml.match(/network:\s*.*\/([^/\s]+)/) || [])[1] || 'default';
+                        const subnetwork  = (yaml.match(/subnetwork:\s*.*\/([^/\s]+)/) || [])[1] || '';
+                        const hasExternalIp = yaml.includes('natIP:');
+                        const externalIPFlag = hasExternalIp ? '' : '--no-address';
+
+                        let createCmd = `gcloud compute instances create ${GCP_VM_NAME}`;
+                        createCmd += ` --project=${GCP_PROJECT_ID}`;
+                        createCmd += ` --zone=${GCP_ZONE}`;
+                        createCmd += ` --machine-type=${machineType}`;
+                        createCmd += ` --image=${image}`;
+                        createCmd += ` --boot-disk-size=${bootDiskSize}GB`;
+                        createCmd += ` --network=${network}`;
+                        if (subnetwork) createCmd += ` --subnet=${subnetwork}`;
+                        if (externalIPFlag) createCmd += ` ${externalIPFlag}`;
+
+                        const result = sh(createCmd);
+                        if (result && result.success) {
+                            log('VM created from saved settings.', '\x1b[32m');
+                        } else {
+                            // sh() already printed the error; we just add context
+                            log('⚠️  VM creation failed. Check the error above.', '\x1b[31m');
+                        }
+                    }
+
+                    // --- Next steps reminder (shown whether VM existed or was just created) ---
+                    log('', '\x1b[36m');
+                    log('📋 Recommended next steps for this VM:', '\x1b[33m');
+                    log('   6.2  – Configure firewall rules', '\x1b[33m');
+                    log('   6.3  – Setup agent SSH keys', '\x1b[33m');
+                    log('   6.4  – Setup GCP Secret Manager access', '\x1b[33m');
+                    log('   6.9  – Install Tools on VM', '\x1b[33m');
+                    log('   6.7  – Check VM reachability', '\x1b[33m');
+                    log('', '\x1b[36m');
+                    log('💡 Pro tip: Use option 6.14 to run all of them at once.', '\x1b[36m');
+                    log('⚠️ Before using option 6.13: The YAML file "gocd-deploy-target-config.yaml" will be overwritten.', '\x1b[33m');
+                    log('⚠️ All the existing settings of a fully setup VM will be lost.', '\x1b[33m');
+
                 }
                 await pause();
                 break;
+            }
             case '6.13':
-                log('This will: 1) Export settings, 2) Delete VM, 3) Create fresh VM', '\x1b[33m');
+                log('This will: 1) Export settings, 2) Delete VM, 3) Create fresh VM, 4) Run full setup', '\x1b[33m');
+                log('⚠️  The YAML file "gocd-deploy-target-config.yaml" will be overwritten.', '\x1b[33m');
                 const confirmRecreate = await ask('Proceed? (y/N): ');
                 if (confirmRecreate.toLowerCase() === 'y') {
                     const recreateYaml = 'gocd-deploy-target-config.yaml';
+
+                    // Backup the old YAML if it exists
+                    if (fs.existsSync(recreateYaml)) {
+                        const backupName = recreateYaml.replace('.yaml', `-backup-${Date.now()}.yaml`);
+                        fs.copyFileSync(recreateYaml, backupName);
+                        log(`📁 Previous config backed up to: ${backupName}`, '\x1b[36m');
+                    }
+
+                    // Step 1: Export (overwrites the original)
                     log('Step 1: Exporting VM settings...', '\x1b[33m');
                     sh(`gcloud compute instances export ${GCP_VM_NAME} --project=${GCP_PROJECT_ID} --zone=${GCP_ZONE} --destination=${recreateYaml}`);
+                    
                     log('Step 2: Deleting VM...', '\x1b[33m');
                     sh(`gcloud compute instances delete ${GCP_VM_NAME} --project=${GCP_PROJECT_ID} --zone=${GCP_ZONE} --quiet`);
+
                     log('Step 3: Creating fresh VM...', '\x1b[33m');
-                    sh(`gcloud compute instances create ${GCP_VM_NAME} --project=${GCP_PROJECT_ID} --zone=${GCP_ZONE} --source=${recreateYaml}`);
+                    {
+                        const yaml = fs.readFileSync(recreateYaml, 'utf8');
+                        const machineType   = (yaml.match(/machineType:\s*(\S+)/) || [])[1] || 'e2-medium';
+                        const image         = (yaml.match(/sourceImage:\s*["']?([^"'\n\r]+)["']?/) || [])[1] || 'projects/debian-cloud/global/images/family/debian-11';
+                        const bootDiskSize  = (yaml.match(/diskSizeGb:\s*(\d+)/) || [])[1] || '20';
+                        const network       = (yaml.match(/network:\s*(\S+)/) || [])[1] || 'default';
+                        const subnetwork    = (yaml.match(/subnetwork:\s*(\S+)/) || [])[1] || '';
+                        const hasExternalIp = yaml.includes('natIP:');
+                        const externalIPFlag = hasExternalIp ? '' : '--no-address';
+
+                        let createCmd = `gcloud compute instances create ${GCP_VM_NAME}`;
+                        createCmd += ` --project=${GCP_PROJECT_ID}`;
+                        createCmd += ` --zone=${GCP_ZONE}`;
+                        createCmd += ` --machine-type=${machineType}`;
+                        createCmd += ` --image=${image}`;
+                        createCmd += ` --boot-disk-size=${bootDiskSize}GB`;
+                        createCmd += ` --network=${network}`;
+                        if (subnetwork) createCmd += ` --subnet=${subnetwork}`;
+                        if (externalIPFlag) createCmd += ` ${externalIPFlag}`;
+                        sh(createCmd);
+                    }
                     log('Fresh VM created from saved settings.', '\x1b[32m');
-                    
-                    // Remind about next steps
+
+                    // Next steps reminder (same as 6.12)
                     log('', '\x1b[36m');
-                    log('Next steps:', '\x1b[36m');
-                    log('  6.2. Configure firewall rules', '\x1b[36m');
-                    log('  6.3. Setup agent SSH keys', '\x1b[36m');
-                    log('  6.4. Setup GCP Secret Manager access', '\x1b[36m');
-                    log('  6.9. Install Tools on VM', '\x1b[36m');
+                    log('📋 Recommended next steps for this fresh VM:', '\x1b[33m');
+                    log('   6.2  – Configure firewall rules', '\x1b[33m');
+                    log('   6.3  – Setup agent SSH keys', '\x1b[33m');
+                    log('   6.4  – Setup GCP Secret Manager access', '\x1b[33m');
+                    log('   6.9  – Install Tools on VM', '\x1b[33m');
+                    log('   6.7  – Check VM reachability', '\x1b[33m');
+                    log('', '\x1b[36m');
+                    log('💡 Pro tip: Use option 6.14 to run all of them at once.', '\x1b[36m');
                 }
                 await pause();
                 break;
-                
+            case '6.14':
+                log('Running full VM post‑creation setup...', '\x1b[33m');
+                sh('node Scripts/setup-firewall-rules.js');
+                sh('node Scripts/setup-agent-ssh.js');
+                sh('node Scripts/setup-gcp-secrets-access.js');
+                sh('node Scripts/install-tools-on-vm.js');
+                sh('node Scripts/check-vm-reachability.js');
+                log('✅ Setup completed.', '\x1b[32m');
+                await pause();
+                break;
+
             case '0':
                 rl.close();
                 process.exit(0);

@@ -1,0 +1,20 @@
+# .env.docker
+GOCD_ADMIN_USERNAME=admin
+GOCD_ADMIN_PASSWORD=<secret>
+GOCD_SERVER_URL_PROTOCOL=http
+GOCD_SERVER_URL_HOST=localhost
+GOCD_SERVER_PORT=8153
+
+GITHUB_TOKEN=<secret>
+#GIT_REPO_URL=https://github.com/xmione/badminton_court.git
+GIT_REPO_PROTOCOL=https
+GIT_REPO_DOMAIN=github.com
+GIT_REPO_USERNAME=xmione
+GIT_REPO_REPONAME=badminton_court
+GIT_PEARL_HELLO_WORLD_REPONAME=pearl-hello-world
+GIT_SOLVPN_REPONAME=solvpn
+
+GCP_PROJECT_ID=project-39c0ea08-238b-47b5-915
+GCP_ZONE=us-west1-b
+GCP_VM_NAME=gocd-deploy-target
+SITE_URL=https://8153-cs-329b2ec4-b504-4dfd-9d5c-db57a726a8dd.cs-asia-east1-duck.cloudshell.dev/go

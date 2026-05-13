@@ -51,8 +51,12 @@ const GOCD_HOST  = process.env.GOCD_SERVER_URL_HOST;
 const GOCD_PORT  = process.env.GOCD_SERVER_PORT;
 const GOCD_BASE  = `${GOCD_PROTO}://${GOCD_HOST}:${GOCD_PORT}`;
 // Ensure the GoCD server's password file matches GOCD_ADMIN_PASSWORD
+// Ensure the GoCD server's password file matches GOCD_ADMIN_PASSWORD (fire‑and‑forget)
 try {
-  execSync(`docker exec gocd-server sh -c "echo 'admin:${GOCD_PASS}' > /godata/config/password.properties"`, { stdio: 'pipe' });
+  require('child_process').spawn('docker', [
+    'exec', 'gocd-server', 'sh', '-c',
+    `echo 'admin:${GOCD_PASS}' > /godata/config/password.properties`
+  ], { stdio: 'ignore', detached: true }).unref();
 } catch {}
 // GCP VM settings
 const GCP_PROJECT_ID = process.env.GCP_PROJECT_ID;
@@ -122,25 +126,36 @@ async function triggerPipelineInteractively() {
   let pipelines;
   try {
     const raw = execSync(
-      `docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" "${pipelineListUrl}"`,
+      `docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" -H "Accept: application/vnd.go.cd.v3+json" "${pipelineListUrl}"`,
       { encoding: 'utf8', stdio: 'pipe' }
     );
     const data = JSON.parse(raw);
-    if (!data._embedded || !data._embedded.pipelines) {
-      log('No pipelines found in response.', '\x1b[31m');
+    // Log raw response for debugging (you can remove this later)
+    // console.log('DEBUG pipelines response:', JSON.stringify(data, null, 2));
+
+    // Try both possible locations of the pipeline list
+    let pipelineList = data._embedded?.pipelines || data.pipelines || [];
+    if (pipelineList.length === 0) {
+      log('No pipelines found in response. Are pipelines configured in GoCD?', '\x1b[31m');
       return;
     }
-    // Filter for badminton_court_group
-    pipelines = data._embedded.pipelines
+
+    // Filter for badminton_court_group (fallback to all if none match)
+    pipelines = pipelineList
       .filter(p => p.group === 'badminton_court_group')
       .map(p => p.name);
+
+    if (pipelines.length === 0) {
+      log('No pipelines in badminton_court_group. Showing all available:', '\x1b[33m');
+      pipelines = pipelineList.map(p => p.name);
+      if (pipelines.length === 0) {
+        log('No pipelines exist at all.', '\x1b[31m');
+        return;
+      }
+    }
   } catch (e) {
     log('Could not fetch pipelines. Check the GoCD server and credentials.', '\x1b[31m');
-    return;
-  }
-
-  if (pipelines.length === 0) {
-    log('No pipelines in badminton_court_group.', '\x1b[31m');
+    console.error(e);  // show the real error while debugging
     return;
   }
 
@@ -157,7 +172,7 @@ async function triggerPipelineInteractively() {
 
 async function showMenu() {
     while (true) {
-        if (isWindows) { sh('cls'); } else { sh('clear'); }
+        process.stdout.write('\x1Bc');
 
         console.log('\x1b[32mGoCD Management Menu (.js)\x1b[0m');
         console.log('\x1b[32m===========================\x1b[0m');
@@ -620,7 +635,11 @@ async function showMenu() {
     }
 }
 
-showMenu().catch(err => {
+(async () => {
+    console.log('\x1b[36mGoCD Management Menu is starting...\x1b[0m');
+    await new Promise(r => setTimeout(r, 2000));
+    await showMenu();
+})().catch(err => {
     console.error(err);
     rl.close();
     process.exit(1);

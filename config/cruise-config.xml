@@ -45,20 +45,20 @@
                 <arg><![CDATA[
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
 
-                  # Generate environment and compile the binary
+                  ## Generate environment and compile the binary
                   node Scripts/generate-env.js development .env.docker
                   node Scripts/compile.js
 
-                  # Login once
+                  ## Login once
                   echo "$GITHUB_TOKEN" | docker login ghcr.io -u xmione --password-stdin
 
-                  # Retry loop for image build and push (handles GHCR timeouts / 502 / 503)
+                  ## Retry loop for image build and push (handles GHCR timeouts / 502 / 503)
                   for i in 1 2 3; do
                     docker build -t ghcr.io/xmione/badminton_court-web:latest -f Dockerfile.binary . &&
                     docker push ghcr.io/xmione/badminton_court-web:latest &&
                     docker build -t ghcr.io/xmione/badminton_court-mail:latest -f Dockerfile.posteio . &&
                     docker push ghcr.io/xmione/badminton_court-mail:latest && break
-                    echo "Push attempt $i failed, retrying in 10s..."
+                    echo "Push attempt ${i} failed, retrying in 10s..."
                     sleep 10
                   done
                 ]]></arg>
@@ -148,7 +148,7 @@
 
     <pipeline name="badminton_court-production">
       <materials>
-        <pipeline pipelineName="badminton_court-production" stageName="deploy_production" />
+        <pipeline pipelineName="badminton_court-staging" stageName="deploy_staging" />
       </materials>
 
       <stage name="Build_and_Package">

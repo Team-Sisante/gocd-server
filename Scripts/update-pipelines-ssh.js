@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 /**
  * Scripts/update-pipelines-ssh.js
- * Rewrites the staging and production pipeline tasks to use SSH instead of gcloud compute ssh.
- * Cross‑platform: Node.js only.
+ * Updates the local cruise-config.xml to use SSH (instead of gcloud compute ssh),
+ * then applies the changes to the running GoCD server inside Docker.
+ *
  * Usage:
- *   node Scripts/update-pipelines-ssh.js          (applies changes)
- *   node Scripts/update-pipelines-ssh.js --dry-run (shows what would change)
+ *   node Scripts/update-pipelines-ssh.js          (apply changes)
+ *   node Scripts/update-pipelines-ssh.js --dry-run (show what would change)
  */
 
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 
 const CONFIG_PATH = path.join(__dirname, '..', 'config', 'cruise-config.xml');
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -84,17 +86,69 @@ if (content.includes(productionOldTask)) {
     console.log('⚠ Production task not found or already modified.');
 }
 
-if (changes === 0) {
-    console.log('No changes were necessary.');
+if (changes > 0) {
+    // Write the updated file locally
+    const backupPath = CONFIG_PATH + '.bak';
+    fs.writeFileSync(backupPath, fs.readFileSync(CONFIG_PATH));
+    fs.writeFileSync(CONFIG_PATH, content);
+    console.log('✅ cruise-config.xml updated. Backup saved to', backupPath);
+} else {
+    console.log('No changes were necessary in the local XML.');
+}
+
+// ---------- Apply to running GoCD server ----------
+if (DRY_RUN) {
+    console.log('\n--- DRY RUN (no server update performed) ---');
     process.exit(0);
 }
 
-if (DRY_RUN) {
-    console.log('\n--- DRY RUN (no file written) ---');
-    console.log('Changes would be written to', CONFIG_PATH);
-} else {
-    const backupPath = CONFIG_PATH + '.bak';
-    fs.writeFileSync(backupPath, fs.readFileSync(CONFIG_PATH)); // backup
-    fs.writeFileSync(CONFIG_PATH, content);
-    console.log('✅ cruise-config.xml updated. Backup saved to', backupPath);
+// Credentials are inherited from the gocd-server menu (.env.docker)
+const GOCD_USER = process.env.GOCD_ADMIN_USERNAME;
+const GOCD_PASS = process.env.GOCD_ADMIN_PASSWORD;
+
+if (!GOCD_USER || !GOCD_PASS) {
+    console.error('\x1b[31mError: GoCD credentials not found. Ensure this script is run from the GoCD Management Menu.\x1b[0m');
+    process.exit(1);
 }
+
+// 1. Copy the local XML into the container
+try {
+    execSync(`docker cp "${CONFIG_PATH}" gocd-server:/godata/config/cruise-config.xml`, { stdio: 'pipe' });
+    console.log('✅ Updated XML copied into GoCD container.');
+} catch (e) {
+    console.error('\x1b[31mFailed to copy XML into container:\x1b[0m', e.message);
+    process.exit(1);
+}
+
+/// 2. Restart GoCD and wait for it to be healthy
+console.log('Restarting GoCD server...');
+try {
+    execSync('docker restart gocd-server', { stdio: 'inherit' });
+} catch (e) {
+    console.error('\x1b[31mFailed to restart GoCD:\x1b[0m', e.message);
+    process.exit(1);
+}
+
+console.log('Waiting for GoCD server to become healthy...');
+let retries = 12;  // up to ~60 seconds
+while (retries > 0) {
+    try {
+        execSync(
+            'docker exec gocd-server curl -sf http://localhost:8153/go/api/health',
+            { stdio: 'pipe' }
+        );
+        console.log('✅ GoCD server is ready.');
+        break;
+    } catch (_) {
+        retries--;
+        if (retries === 0) {
+            console.error('\x1b[31mGoCD server did not become healthy within the timeout.\x1b[0m');
+            process.exit(1);
+        }
+        // Wait 5 seconds before retrying
+        execSync(os.platform() === 'win32' ? 'timeout /t 5' : 'sleep 5', { stdio: 'pipe' });
+    }
+}
+
+console.log('✅ Pipeline configuration applied successfully.');
+process.exit(0);

@@ -75,13 +75,13 @@ const GOCD_PROTO = process.env.GOCD_SERVER_URL_PROTOCOL;
 const GOCD_HOST = process.env.GOCD_SERVER_URL_HOST;
 const GOCD_PORT = process.env.GOCD_SERVER_PORT;
 const GOCD_BASE = `${GOCD_PROTO}://${GOCD_HOST}:${GOCD_PORT}`;
-// Ensure the GoCD server's password file matches GOCD_ADMIN_PASSWORD (fire‑and‑forget)
-try {
-    require('child_process').spawn('docker', [
-        'exec', 'gocd-server', 'sh', '-c',
-        `echo 'admin:${GOCD_PASS}' > /godata/config/password.properties`
-    ], { stdio: 'ignore', detached: true }).unref();
-} catch { }
+// // Ensure the GoCD server's password file matches GOCD_ADMIN_PASSWORD (fire‑and‑forget)
+// try {
+//     require('child_process').spawn('docker', [
+//         'exec', 'gocd-server', 'sh', '-c',
+//         `echo 'admin:${GOCD_PASS}' > /godata/config/password.properties`
+//     ], { stdio: 'ignore', detached: true }).unref();
+// } catch { }
 // GCP VM settings
 const GCP_PROJECT_ID = process.env.GCP_PROJECT_ID;
 const GCP_ZONE = process.env.GCP_ZONE;
@@ -147,6 +147,36 @@ function openUrl(url) {
     }
 }
 
+async function getSessionCookie() {
+    try {
+        // Use the REST API authentication endpoint to obtain a JSESSIONID
+        const result = execSync(
+            `docker exec gocd-server curl -s -i -u "${GOCD_USER}:${GOCD_PASS}" -X POST "${GOCD_BASE}/go/api/auth/login"`,
+            { encoding: 'utf8', stdio: 'pipe' }
+        );
+
+        // The response headers contain Set-Cookie with JSESSIONID
+        const cookieMatch = result.match(/JSESSIONID=([^;]+)/);
+        if (!cookieMatch) {
+            // Try the older authentication endpoint
+            const altResult = execSync(
+                `docker exec gocd-server curl -s -i -u "${GOCD_USER}:${GOCD_PASS}" -X POST "${GOCD_BASE}/go/api/authentication/login"`,
+                { encoding: 'utf8', stdio: 'pipe' }
+            );
+            const altCookieMatch = altResult.match(/JSESSIONID=([^;]+)/);
+            if (!altCookieMatch) {
+                log('❌ Could not obtain session cookie via API.', '\x1b[31m');
+                return null;
+            }
+            return altCookieMatch[1];
+        }
+        return cookieMatch[1];
+    } catch (e) {
+        log('❌ API login request failed.', '\x1b[31m');
+        return null;
+    }
+}
+
 async function triggerPipelineInteractively() {
     const inquirer = (await import('inquirer')).default;
 
@@ -161,16 +191,23 @@ async function triggerPipelineInteractively() {
 
     let sessionCookie = process.env.GOCD_SESSION_COOKIE;
     if (!sessionCookie) {
-        const { cookie } = await inquirer.prompt({
-            type: 'input',
-            name: 'cookie',
-            message: 'Paste JSESSIONID:',
-        });
-        sessionCookie = (cookie || '').trim();
+        log('🔐 Logging into GoCD to obtain session...', '\x1b[33m');
+        sessionCookie = await getSessionCookie();
         if (!sessionCookie) {
-            rl.resume();   // resume before returning
-            log('❌ No cookie – cannot trigger.', '\x1b[31m');
-            return;
+            log('❌ Could not log into GoCD automatically.', '\x1b[31m');
+            log('   Falling back to manual cookie entry.', '\x1b[33m');
+            const { cookie } = await inquirer.prompt({
+                type: 'input',
+                name: 'cookie',
+                message: 'Paste JSESSIONID:',
+            });
+            sessionCookie = (cookie || '').trim();
+            if (!sessionCookie) {
+                log('❌ No cookie – cannot trigger.', '\x1b[31m');
+                return;
+            }
+        } else {
+            log('✅ Logged in successfully.', '\x1b[32m');
         }
         process.env.GOCD_SESSION_COOKIE = sessionCookie;
     }

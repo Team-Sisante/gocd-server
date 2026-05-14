@@ -15,6 +15,7 @@ services:
       - GO_SERVER_SSL_CERTIFICATE=/etc/go/server/server.crt
       - GO_SERVER_SSL_PRIVATE_KEY=/etc/go/server/server.key
       - TINI_SUBREAPER=true
+      - SITE_URL=http://localhost:8153 # This will be overridden by the value in .env.docker, but it's here as a fallback ${SITE_URL}
     volumes:
       - gocd_data:/godata
       - gocd_home:/home/go

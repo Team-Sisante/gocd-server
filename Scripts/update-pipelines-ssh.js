@@ -167,7 +167,7 @@ let retries = 10;   // 10 attempts × 5 sec = 50 sec extra (60 sec total)
 while (retries > 0) {
     try {
         execSync(
-            `docker exec gocd-server curl -sf -u "${GOCD_USER}:${GOCD_PASS}" "${GOCD_BASE}/go/api/health"`,
+            `docker exec gocd-server curl -sf -o /dev/null "${GOCD_BASE}/go"`,
             { stdio: 'pipe' }
         );
         console.log('✅ GoCD server is ready.');

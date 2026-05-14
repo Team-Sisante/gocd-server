@@ -12,6 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const os = require('os');
 
 const CONFIG_PATH = path.join(__dirname, '..', 'config', 'cruise-config.xml');
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -102,14 +103,35 @@ if (DRY_RUN) {
     process.exit(0);
 }
 
-// Credentials are inherited from the gocd-server menu (.env.docker)
-const GOCD_USER = process.env.GOCD_ADMIN_USERNAME;
-const GOCD_PASS = process.env.GOCD_ADMIN_PASSWORD;
+// ----- Validate required environment variables -----
+const missingVars = [];
+const required = [
+    'GOCD_ADMIN_USERNAME',
+    'GOCD_ADMIN_PASSWORD',
+    'GOCD_SERVER_URL_PROTOCOL',
+    'GOCD_SERVER_URL_HOST',
+    'GOCD_SERVER_PORT'
+];
+required.forEach(key => {
+    if (!process.env[key]) missingVars.push(key);
+});
 
-if (!GOCD_USER || !GOCD_PASS) {
-    console.error('\x1b[31mError: GoCD credentials not found. Ensure this script is run from the GoCD Management Menu.\x1b[0m');
+if (missingVars.length > 0) {
+    console.error(
+        '\x1b[31mERROR: The following required environment variables are missing:\x1b[0m\n' +
+        missingVars.map(v => `  - ${v}`).join('\n') +
+        '\n\nPlease define them in your .env.docker file.'
+    );
     process.exit(1);
 }
+
+// Now it is safe to use them
+const GOCD_USER = process.env.GOCD_ADMIN_USERNAME;
+const GOCD_PASS = process.env.GOCD_ADMIN_PASSWORD;
+const GOCD_PROTO = process.env.GOCD_SERVER_URL_PROTOCOL;
+const GOCD_HOST  = process.env.GOCD_SERVER_URL_HOST;
+const GOCD_PORT  = process.env.GOCD_SERVER_PORT;
+const GOCD_BASE  = `${GOCD_PROTO}://${GOCD_HOST}:${GOCD_PORT}`;
 
 // 1. Copy the local XML into the container
 console.log('Copying updated XML into GoCD container...');
@@ -131,11 +153,21 @@ try {
 }
 
 console.log('Waiting for GoCD server to become healthy...');
-let retries = 12;  // up to ~60 seconds
+
+let initialWait = 60; // seconds
+console.log(`  Giving GoCD a ${initialWait}‑second head start…`);
+if (os.platform() === 'win32') {
+    // ping -n <count> waits roughly <count> seconds
+    execSync(`ping -n ${initialWait + 1} 127.0.0.1 >nul`, { stdio: 'pipe' });
+} else {
+    execSync(`sleep ${initialWait}`, { stdio: 'pipe' });
+}
+
+let retries = 10;   // 10 attempts × 5 sec = 50 sec extra (60 sec total)
 while (retries > 0) {
     try {
         execSync(
-            'docker exec gocd-server curl -sf http://localhost:8153/go/api/health',
+            `docker exec gocd-server curl -sf -u "${GOCD_USER}:${GOCD_PASS}" "${GOCD_BASE}/go/api/health"`,
             { stdio: 'pipe' }
         );
         console.log('✅ GoCD server is ready.');
@@ -146,8 +178,12 @@ while (retries > 0) {
             console.error('\x1b[31mGoCD server did not become healthy within the timeout.\x1b[0m');
             process.exit(1);
         }
-        // Wait 5 seconds before retrying
-        execSync(os.platform() === 'win32' ? 'timeout /t 5' : 'sleep 5', { stdio: 'pipe' });
+        console.log(`  Attempt failed – waiting 5 seconds (${retries} retries left)...`);
+        if (os.platform() === 'win32') {
+            execSync('ping -n 6 127.0.0.1 >nul', { stdio: 'pipe' });
+        } else {
+            execSync('sleep 5', { stdio: 'pipe' });
+        }
     }
 }
 

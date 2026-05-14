@@ -174,6 +174,270 @@ async function triggerPipelineInteractively() {
   log(`Pipeline ${selectedPipeline} triggered.`, '\x1b[32m');
 }
 
+
+// Interactive container selector for logs/errors
+async function selectContainerAndAct() {
+  let containers = [];
+  try {
+    const raw = execSync('docker ps -a --format "{{.Names}}"', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    containers = raw.trim().split('\n').filter(Boolean);
+  } catch (e) {
+    console.log('\x1b[31mFailed to list containers.\x1b[0m');
+    return;
+  }
+
+  if (containers.length === 0) {
+    console.log('\x1b[33mNo containers found.\x1b[0m');
+    return;
+  }
+
+  const inquirer = (await import('inquirer')).default;
+
+  const { chosenContainer } = await inquirer.prompt({
+    type: 'list',
+    name: 'chosenContainer',
+    message: 'Select a container:',
+    choices: containers,
+    pageSize: 15
+  });
+
+  const { action } = await inquirer.prompt({
+    type: 'list',
+    name: 'action',
+    message: `What to do with ${chosenContainer}?`,
+    choices: [
+      { name: 'View logs (last 20 lines)', value: 'logs' },
+      { name: 'View errors (static scan of last 500 lines)', value: 'errors' },
+      { name: 'View errors (live - follow)', value: 'live-errors' },
+      { name: 'Cancel', value: 'cancel' }
+    ],
+    default: 'logs'
+  });
+
+  if (action === 'cancel') return;
+
+  if (action === 'live-errors') {
+    // Live follow mode
+    console.log(`\x1b[33mLive error follow for ${chosenContainer}. Press Ctrl+C to stop.\x1b[0m`);
+    await liveErrorFollow(chosenContainer);
+    return;
+  }
+
+  console.log(`\x1b[33mFetching ${action === 'logs' ? 'logs' : 'errors'}...\x1b[0m`);
+  try {
+    const tailArg = action === 'logs' ? '--tail 20' : '--tail 500';
+    const rawLogs = execSync(`docker logs ${tailArg} ${chosenContainer}`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    const lines = rawLogs.split('\n');
+
+    if (action === 'logs') {
+      lines.forEach(line => console.log(line));
+    } else {
+      // Static error view (your existing deduplicated block logic)
+      const keywords = /(error|fail|fatal|exception|denied|caused\s+by|invalid)/i;
+      const contextBefore = 5;
+      const contextAfter = 15;
+      const matches = [];
+
+      lines.forEach((line, idx) => {
+        if (keywords.test(line)) matches.push(idx);
+      });
+
+      if (matches.length === 0) {
+        console.log('\x1b[32mNo error-like lines found.\x1b[0m');
+      } else {
+        const blocks = [];
+        let currentBlock = [Math.max(0, matches[0] - contextBefore), matches[0] + contextAfter];
+
+        for (let i = 1; i < matches.length; i++) {
+          const start = Math.max(0, matches[i] - contextBefore);
+          const end = matches[i] + contextAfter;
+          if (start <= currentBlock[1] + 1) {
+            currentBlock[1] = Math.max(currentBlock[1], end);
+          } else {
+            blocks.push(currentBlock);
+            currentBlock = [start, end];
+          }
+        }
+        blocks.push(currentBlock);
+
+        const seen = new Set();
+        let first = true;
+
+        blocks.forEach(([start, end]) => {
+          const slice = lines.slice(start, end + 1);
+          const blockText = slice.join('\n');
+          if (seen.has(blockText)) return;
+          seen.add(blockText);
+
+          if (!first) {
+            console.log('\x1b[90m' + '─'.repeat(60) + '\x1b[0m');
+          }
+          first = false;
+
+          slice.forEach(line => {
+            if (keywords.test(line)) {
+              console.log('\x1b[31m' + line + '\x1b[0m');
+            } else {
+              console.log(line);
+            }
+          });
+          console.log('');
+        });
+      }
+    }
+  } catch (e) {
+    console.log(`\x1b[31mFailed to get logs: ${e.stderr || e.message}\x1b[0m`);
+  }
+}
+
+// Helper: live error follow with context
+function liveErrorFollow(containerName) {
+  return new Promise((resolve, reject) => {
+    // Only start a block on genuine error indicators
+    const errorTrigger = /^(ERROR|FATAL)\s|Exception|^Caused by:/i;
+
+    // Lines that are part of an exception block (no log level, or part of multi‑line message)
+    const continuationLine = /^\s+at\s|^\s+\.\.\.\s|^\s*Caused by:|^\s*Suppressed:|^\s*java\.|^\s*com\.|^\s*org\.|^\s*There are errors/;
+
+    const seenBlocks = new Set();
+
+    const logFilePath = path.join(process.cwd(), `error-live-${containerName}.log`);
+    try { fs.mkdirSync(process.cwd(), { recursive: true }); } catch (e) { }
+    fs.writeFileSync(logFilePath, '', 'utf8');
+    console.log(`\x1b[33mErrors will be written to: ${logFilePath}\x1b[0m`);
+
+    let proc = null;
+    let rl = null;
+    let watching = true;
+
+    function normalizeLine(line) {
+      return line
+        .replace(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}\s+/, '')
+        .replace(/^\[[^\]]*\]\s*/, '')
+        .replace(/^jvm \d+\s*\|\s*/, '')
+        .trim();
+    }
+
+    function writeBlockToFile(blockLines) {
+      try {
+        const separator = '='.repeat(60) + '\n';
+        const content = separator + blockLines.join('\n') + '\n\n';
+        fs.appendFileSync(logFilePath, content, 'utf8');
+      } catch (e) {
+        console.error(`\x1b[31mFailed to write to log file: ${e.message}\x1b[0m`);
+      }
+    }
+
+    function startFollow() {
+      const { spawn } = require('child_process');
+      const readline = require('readline');
+
+      proc = spawn('docker', ['logs', '-f', '--tail', '100', containerName], {
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+
+      rl = readline.createInterface({ input: proc.stdout });
+
+      let pendingBlock = null;   // { lines: [...] }
+
+      rl.on('line', (line) => {
+        // Strip the "jvm ... | " prefix for level checking
+        const cleaned = line.replace(/^jvm \d+\s*\|\s*/, '').trim();
+
+        // Check if the line is an error trigger (ERROR/FATAL/Exception/Caused by)
+        if (errorTrigger.test(cleaned)) {
+          // Finalise any previous block
+          if (pendingBlock) {
+            finaliseBlock(pendingBlock.lines);
+            pendingBlock = null;
+          }
+          // Start a new block
+          pendingBlock = { lines: [line] };
+          return;
+        }
+
+        // If inside a pending block, check if the line is part of the exception
+        if (pendingBlock) {
+          // A line belongs to the block if it has no log level, or it contains error keywords
+          const hasLogLevel = /^(INFO|DEBUG|WARN|ERROR|FATAL)\s/i.test(cleaned);
+          if (!hasLogLevel || errorTrigger.test(cleaned)) {
+            pendingBlock.lines.push(line);
+          } else {
+            // New unrelated log entry → finalise block and start fresh if this line is an error trigger
+            finaliseBlock(pendingBlock.lines);
+            pendingBlock = null;
+            if (errorTrigger.test(cleaned)) {
+              pendingBlock = { lines: [line] };
+            }
+          }
+        }
+      });
+
+      function finaliseBlock(lines) {
+        if (lines.length === 0) return;
+        const signature = lines.map(normalizeLine).join('\n');
+        if (!seenBlocks.has(signature)) {
+          seenBlocks.add(signature);
+          console.log('\x1b[90m' + '─'.repeat(60) + '\x1b[0m');
+          console.log('\x1b[31m' + lines[0] + '\x1b[0m');
+          for (let i = 1; i < lines.length; i++) {
+            console.log('\x1b[33m' + lines[i] + '\x1b[0m');
+          }
+          console.log('');
+          writeBlockToFile(lines);
+        }
+      }
+
+      proc.stderr.on('data', (data) => {
+        const msg = data.toString();
+        const harmless = [
+          '/docker-entrypoint.sh:',
+          'install-gocd-plugins',
+          'git-clone-config',
+          'cd /godata/config',
+          'sed -i',
+          'exec /usr/local/sbin/tini',
+          'Creating directories and symlinks',
+          'Running custom scripts',
+        ];
+        if (!harmless.some(p => msg.includes(p))) {
+          console.error(`\x1b[31mDocker logs error: ${msg}\x1b[0m`);
+        }
+      });
+
+      proc.on('close', (code) => {
+        if (pendingBlock) finaliseBlock(pendingBlock.lines);
+        rl.close();
+        if (watching && code !== null) {
+          console.log(`\x1b[33mContainer stopped (exit code ${code}). Reconnecting in 3 seconds...\x1b[0m`);
+          setTimeout(() => { if (watching) startFollow(); }, 3000);
+        } else if (!watching) {
+          console.log('\x1b[33mLive follow stopped.\x1b[0m');
+          resolve();
+        }
+      });
+
+      proc.on('error', (err) => {
+        console.error(`\x1b[31mFailed to start log stream: ${err.message}\x1b[0m`);
+        if (watching) {
+          setTimeout(() => { if (watching) startFollow(); }, 5000);
+        }
+      });
+    }
+
+    const onInterrupt = () => {
+      watching = false;
+      if (proc) proc.kill('SIGINT');
+      if (rl) rl.close();
+      console.log('\n\x1b[33mLive follow stopped by user.\x1b[0m');
+      resolve();
+    };
+    process.once('SIGINT', onInterrupt);
+
+    startFollow();
+  });
+}
+
 async function showMenu() {
     while (true) {
         process.stdout.write('\x1Bc');
@@ -190,6 +454,8 @@ async function showMenu() {
         console.log('   1.6. SYSTEM HARD RESET (Full Wipe via go.js)');
         console.log('   1.7. Restart Docker Desktop (full restart)');
         console.log('   1.8. Restart Docker Engine only');
+        console.log('   1.9. Container selector (logs / errors)');
+        console.log('   4.10. Update .env.docker password from GoCD container');
         console.log('');
         console.log('\x1b[36m2. PIPELINE MANAGEMENT\x1b[0m');
         console.log('   2.1. Trigger badminton_court pipeline');
@@ -474,6 +740,34 @@ try {
                 await pause();
                 break;
 
+            case '1.9':
+                await selectContainerAndAct();
+                await pause();
+                break;
+
+            case '4.10': {
+                const currentPass = sh(
+                    `docker exec gocd-server sh -c "cat /godata/config/password.properties | cut -d: -f2"`,
+                    { stdio: 'pipe' }
+                );
+                if (currentPass && currentPass.success && currentPass.stdout) {
+                    // Read current .env.docker content
+                    const envPath = path.join(__dirname, '..', '.env.docker');
+                    let envContent = fs.readFileSync(envPath, 'utf8');
+                    // Replace the GOCD_ADMIN_PASSWORD line
+                    envContent = envContent.replace(
+                        /^GOCD_ADMIN_PASSWORD=.*/m,
+                        `GOCD_ADMIN_PASSWORD=${currentPass.stdout.trim()}`
+                    );
+                    fs.writeFileSync(envPath, envContent);
+                    log('✅ .env.docker updated with password from container.', '\x1b[32m');
+                } else {
+                    log('❌ Could not retrieve password from container.', '\x1b[31m');
+                }
+                await pause();
+                break;
+            }                
+                
             case '2.1':
                 await triggerPipelineInteractively();
                 await pause();
@@ -557,7 +851,7 @@ try {
                 log('Password reset. Use the credentials from .env.docker to log in.', '\x1b[32m');
                 await pause();
                 break;
-                
+
             case '5.1':
                 sh('docker compose build gocd-server && docker compose up -d gocd-server');
                 await pause();

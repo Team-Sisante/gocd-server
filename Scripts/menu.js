@@ -149,30 +149,25 @@ function openUrl(url) {
 
 async function getSessionCookie() {
     try {
-        // Use the REST API authentication endpoint to obtain a JSESSIONID
+        // Try the REST API authentication endpoint – returns JSESSIONID in Set-Cookie
         const result = execSync(
             `docker exec gocd-server curl -s -i -u "${GOCD_USER}:${GOCD_PASS}" -X POST "${GOCD_BASE}/go/api/auth/login"`,
             { encoding: 'utf8', stdio: 'pipe' }
         );
-
-        // The response headers contain Set-Cookie with JSESSIONID
-        const cookieMatch = result.match(/JSESSIONID=([^;]+)/);
-        if (!cookieMatch) {
-            // Try the older authentication endpoint
-            const altResult = execSync(
+        const match = result.match(/JSESSIONID=([^;]+)/);
+        if (!match) {
+            // Fallback: try the older authentication endpoint
+            const alt = execSync(
                 `docker exec gocd-server curl -s -i -u "${GOCD_USER}:${GOCD_PASS}" -X POST "${GOCD_BASE}/go/api/authentication/login"`,
                 { encoding: 'utf8', stdio: 'pipe' }
             );
-            const altCookieMatch = altResult.match(/JSESSIONID=([^;]+)/);
-            if (!altCookieMatch) {
-                log('❌ Could not obtain session cookie via API.', '\x1b[31m');
-                return null;
-            }
-            return altCookieMatch[1];
+            const altMatch = alt.match(/JSESSIONID=([^;]+)/);
+            if (!altMatch) throw new Error('No JSESSIONID in response');
+            return altMatch[1];
         }
-        return cookieMatch[1];
+        return match[1];
     } catch (e) {
-        log('❌ API login request failed.', '\x1b[31m');
+        log('⚠ Automatic login failed – falling back to manual cookie.', '\x1b[33m');
         return null;
     }
 }
@@ -531,6 +526,11 @@ async function showMenu() {
             console.log('');
 
             const choice = await ask('Select an option: ');
+
+            // ----- Common SSH / VM constants (used by options 6.15‑6.20) -----
+            const SSH_KEY_PATH = path.join(__dirname, '..', 'secrets', 'agent-key');
+            const SSH_USER = process.env.VM_SSH_USER || 'xmnione';
+            const VM_IP = process.env.GCP_VM_IP || '136.109.209.69';
 
             switch (choice) {
                 case '1.1':
@@ -1165,66 +1165,44 @@ try {
                     await pause();
                     break;
                 case '6.15': {
-                    const keyPath = path.join(__dirname, 'agent-key');
-                    const sshUser = process.env.VM_SSH_USER || 'xmnione';
-                    const vmIp = process.env.GCP_VM_IP || '136.109.209.69';
-                    const sshCmd = `ssh -i "${keyPath}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${sshUser}@${vmIp} "docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'"`;
+                    const sshCmd = `ssh -i "${SSH_KEY_PATH}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${SSH_USER}@${VM_IP} "docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'"`;
                     sh(sshCmd);
                     await pause();
                     break;
                 }
                 case '6.16': {
-                    const keyPath = path.join(__dirname, 'agent-key');
-                    const sshUser = process.env.VM_SSH_USER || 'xmnione';
-                    const vmIp = process.env.GCP_VM_IP || '136.109.209.69';
                     const service = await ask('Service name (e.g., badminton_web_1): ');
                     if (service) {
-                    // Show logs interactively
-                        sh(`ssh -i "${keyPath}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${sshUser}@${vmIp} "docker logs -f --tail 50 ${service}"`);
+                        sh(`ssh -i "${SSH_KEY_PATH}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${SSH_USER}@${VM_IP} "docker logs -f --tail 50 ${service}"`);
                     }
                     await pause();
                     break;
                 }
                 case '6.17': {
-                    const keyPath = path.join(__dirname, 'agent-key');
-                    const sshUser = process.env.VM_SSH_USER || 'xmnione';
-                    const vmIp = process.env.GCP_VM_IP || '136.109.209.69';
                     const service = await ask('Service name to restart: ');
                     if (service) {
-                        sh(`ssh -i "${keyPath}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${sshUser}@${vmIp} "docker restart ${service}"`);
+                        sh(`ssh -i "${SSH_KEY_PATH}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${SSH_USER}@${VM_IP} "docker restart ${service}"`);
                         log(`${service} restarted.`, '\x1b[32m');
                     }
                     await pause();
                     break;
                 }
                 case '6.18': {
-                // Open staging app – uses VM's external IP
-                const stagingUrl = `http://${process.env.GCP_VM_IP || '136.109.209.69'}:8001`; // staging port
+                    const stagingUrl = `http://${VM_IP}:8001`;
                     openUrl(stagingUrl);
                     log(`Opening staging app: ${stagingUrl}`, '\x1b[32m');
                     await pause();
                     break;
                 }
                 case '6.19': {
-                // Health check – curl the app from inside the VM (avoids firewall issues)
-                    const keyPath = path.join(__dirname, 'agent-key');
-                    const sshUser = process.env.VM_SSH_USER || 'xmnione';
-                    const vmIp = process.env.GCP_VM_IP || '136.109.209.69';
                     log('Performing health check on staging (port 8001)...', '\x1b[33m');
-                    sh(`ssh -i "${keyPath}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${sshUser}@${vmIp} "curl -s -o /dev/null -w '%{http_code}' http://localhost:8001/ || echo 'Failed'"`);
+                    sh(`ssh -i "${SSH_KEY_PATH}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${SSH_USER}@${VM_IP} "curl -s -o /dev/null -w '%{http_code}' http://localhost:8001/ || echo 'Failed'"`);
                     await pause();
                     break;
                 }
                 case '6.20': {
-                // Clear cached SSH host key for the VM IP
-                    const vmIp = process.env.GCP_VM_IP || '136.109.209.69';
-                    log(`Removing cached host key for ${vmIp}...`, '\x1b[33m');
-                    if (os.platform() === 'win32') {
-                    // Use ssh-keygen from Git Bash or Windows OpenSSH
-                        sh(`ssh-keygen -R ${vmIp}`);
-                    } else {
-                        sh(`ssh-keygen -R ${vmIp}`);
-                    }
+                    log(`Removing cached host key for ${VM_IP}...`, '\x1b[33m');
+                    sh(`ssh-keygen -R ${VM_IP}`);
                     log('Host key cleared. Next connection will accept the new key.', '\x1b[32m');
                     await pause();
                     break;

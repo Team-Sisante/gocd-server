@@ -21,9 +21,16 @@
         <user>admin</user>
       </admins>
     </security>
+    <siteUrls>
+      <siteUrl>__SITE_URL__</siteUrl>
+    </siteUrls>
     <artifacts>
       <artifactsDir>artifacts</artifactsDir>
     </artifacts>
+    <!-- Enable REST API – must be the LAST element inside <server> -->
+    <api>
+        <property name="enabled" value="true" />
+    </api>
   </server>
 
   <pipelines group="badminton_court_group">

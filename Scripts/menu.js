@@ -41,6 +41,31 @@ if (missingVars.length > 0) {
   process.exit(1);
 }
 
+// ----- Load custom error patterns from errorTrigger.json -----
+const errorTriggerPath = path.join(__dirname, 'errorTrigger.json');
+let customPatterns = [];
+if (fs.existsSync(errorTriggerPath)) {
+    try {
+        customPatterns = JSON.parse(fs.readFileSync(errorTriggerPath, 'utf8'));
+        if (!Array.isArray(customPatterns)) customPatterns = [];
+    } catch (e) {
+        console.error('\x1b[31mFailed to parse errorTrigger.json:\x1b[0m', e.message);
+    }
+}
+
+// Always include these base patterns
+const basePatterns = [
+    'error', 'fail', 'fatal', 'exception', 'denied',
+    'caused\\s+by', 'invalid', 'wrapper stopped', 'gosu exited',
+    'exited with code', 'there are errors', 'could not connect',
+    'permission denied'
+];
+
+// Merge and create a single combined regex (case‑insensitive)
+const ALL_PATTERNS = [...basePatterns, ...customPatterns];
+const errorKeywords = new RegExp(ALL_PATTERNS.join('|'), 'i');
+const errorTrigger = new RegExp('^(ERROR|FATAL)\\s|' + ALL_PATTERNS.join('|'), 'i');
+
 // ----- Configuration from environment -----
 const GOCD_USER = process.env.GOCD_ADMIN_USERNAME;
 const GOCD_PASS = process.env.GOCD_ADMIN_PASSWORD;
@@ -127,40 +152,52 @@ async function triggerPipelineInteractively() {
   const inquirer = (await import('inquirer')).default;
   const pipelineListUrl = `${GOCD_BASE}/go/api/pipelines`;
 
-  let pipelines;
+  let raw;
   try {
-    const raw = execSync(
-      `docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" -H "Accept: application/vnd.go.cd.v3+json" "${pipelineListUrl}"`,
+    raw = execSync(
+      `docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" -H "Accept: application/vnd.go.cd+json" "${pipelineListUrl}"`,
       { encoding: 'utf8', stdio: 'pipe' }
     );
-    const data = JSON.parse(raw);
-    // Log raw response for debugging (you can remove this later)
-    console.log('DEBUG pipelines response:', JSON.stringify(data, null, 2));
+  } catch (e) {
+    log('Could not reach GoCD server.', '\x1b[31m');
+    console.error(e);
+    return;
+  }
 
-    // Try both possible locations of the pipeline list
-    let pipelineList = data._embedded?.pipelines || data.pipelines || [];
-    if (pipelineList.length === 0) {
-      log('No pipelines found in response. Are pipelines configured in GoCD?', '\x1b[31m');
+  // Detect authentication error (valid JSON containing "Invalid credentials")
+  if (raw && raw.includes('"message"') && raw.includes('Invalid credentials')) {
+    log('❌ GoCD rejected your credentials for the pipelines API.', '\x1b[31m');
+    log('   The admin password may have been changed in the UI but GoCD has not been fully restarted.', '\x1b[33m');
+    log('   Run "docker stop gocd-server && docker start gocd-server" and try again.', '\x1b[33m');
+    return;
+  }
+
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (e) {
+    log('Could not parse pipeline data. Response was not JSON.', '\x1b[31m');
+    console.error('Raw response:', raw.substring(0, 500));
+    return;
+  }
+
+  let pipelineList = data._embedded?.pipelines || data.pipelines || [];
+  if (pipelineList.length === 0) {
+    log('No pipelines found in response. Are pipelines configured in GoCD?', '\x1b[31m');
+    return;
+  }
+
+  let pipelines = pipelineList
+    .filter(p => p.group === 'badminton_court_group')
+    .map(p => p.name);
+
+  if (pipelines.length === 0) {
+    log('No pipelines in badminton_court_group. Showing all available:', '\x1b[33m');
+    pipelines = pipelineList.map(p => p.name);
+    if (pipelines.length === 0) {
+      log('No pipelines exist at all.', '\x1b[31m');
       return;
     }
-
-    // Filter for badminton_court_group (fallback to all if none match)
-    pipelines = pipelineList
-      .filter(p => p.group === 'badminton_court_group')
-      .map(p => p.name);
-
-    if (pipelines.length === 0) {
-      log('No pipelines in badminton_court_group. Showing all available:', '\x1b[33m');
-      pipelines = pipelineList.map(p => p.name);
-      if (pipelines.length === 0) {
-        log('No pipelines exist at all.', '\x1b[31m');
-        return;
-      }
-    }
-  } catch (e) {
-    log('Could not fetch pipelines. Check the GoCD server and credentials.', '\x1b[31m');
-    console.error(e);  // show the real error while debugging
-    return;
   }
 
   const { selectedPipeline } = await inquirer.prompt({
@@ -173,7 +210,6 @@ async function triggerPipelineInteractively() {
   sh(`docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" -H "Confirm: true" -X POST ${GOCD_BASE}/go/api/pipelines/${selectedPipeline}/schedule`);
   log(`Pipeline ${selectedPipeline} triggered.`, '\x1b[32m');
 }
-
 
 // Interactive container selector for logs/errors
 async function selectContainerAndAct() {
@@ -292,17 +328,11 @@ async function selectContainerAndAct() {
 
 // Helper: live error follow with context
 function liveErrorFollow(containerName) {
-  return new Promise((resolve, reject) => {
-    // Only start a block on genuine error indicators
-    const errorTrigger = /^(ERROR|FATAL)\s|Exception|^Caused by:/i;
-
-    // Lines that are part of an exception block (no log level, or part of multi‑line message)
-    const continuationLine = /^\s+at\s|^\s+\.\.\.\s|^\s*Caused by:|^\s*Suppressed:|^\s*java\.|^\s*com\.|^\s*org\.|^\s*There are errors/;
-
-    const seenBlocks = new Set();
+  return new Promise((resolve) => {
+    const seenLines = new Set();                     // already‑logged lines (timestamp stripped)
 
     const logFilePath = path.join(process.cwd(), `error-live-${containerName}.log`);
-    try { fs.mkdirSync(process.cwd(), { recursive: true }); } catch (e) { }
+    try { fs.mkdirSync(process.cwd(), { recursive: true }); } catch (e) {}
     fs.writeFileSync(logFilePath, '', 'utf8');
     console.log(`\x1b[33mErrors will be written to: ${logFilePath}\x1b[0m`);
 
@@ -310,22 +340,9 @@ function liveErrorFollow(containerName) {
     let rl = null;
     let watching = true;
 
-    function normalizeLine(line) {
-      return line
-        .replace(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}\s+/, '')
-        .replace(/^\[[^\]]*\]\s*/, '')
-        .replace(/^jvm \d+\s*\|\s*/, '')
-        .trim();
-    }
-
-    function writeBlockToFile(blockLines) {
-      try {
-        const separator = '='.repeat(60) + '\n';
-        const content = separator + blockLines.join('\n') + '\n\n';
-        fs.appendFileSync(logFilePath, content, 'utf8');
-      } catch (e) {
-        console.error(`\x1b[31mFailed to write to log file: ${e.message}\x1b[0m`);
-      }
+    // Strip ONLY the ISO timestamp: "2026-05-14 06:20:20,813" → ""
+    function stripTimestamp(line) {
+      return line.replace(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}\s*/, '').trim();
     }
 
     function startFollow() {
@@ -338,75 +355,24 @@ function liveErrorFollow(containerName) {
 
       rl = readline.createInterface({ input: proc.stdout });
 
-      let pendingBlock = null;   // { lines: [...] }
-
       rl.on('line', (line) => {
-        // Strip the "jvm ... | " prefix for level checking
-        const cleaned = line.replace(/^jvm \d+\s*\|\s*/, '').trim();
-
-        // Check if the line is an error trigger (ERROR/FATAL/Exception/Caused by)
-        if (errorTrigger.test(cleaned)) {
-          // Finalise any previous block
-          if (pendingBlock) {
-            finaliseBlock(pendingBlock.lines);
-            pendingBlock = null;
-          }
-          // Start a new block
-          pendingBlock = { lines: [line] };
-          return;
-        }
-
-        // If inside a pending block, check if the line is part of the exception
-        if (pendingBlock) {
-          // A line belongs to the block if it has no log level, or it contains error keywords
-          const hasLogLevel = /^(INFO|DEBUG|WARN|ERROR|FATAL)\s/i.test(cleaned);
-          if (!hasLogLevel || errorTrigger.test(cleaned)) {
-            pendingBlock.lines.push(line);
-          } else {
-            // New unrelated log entry → finalise block and start fresh if this line is an error trigger
-            finaliseBlock(pendingBlock.lines);
-            pendingBlock = null;
-            if (errorTrigger.test(cleaned)) {
-              pendingBlock = { lines: [line] };
-            }
+        const cleanLine = stripTimestamp(line);
+        if (!seenLines.has(cleanLine)) {
+          seenLines.add(cleanLine);
+          console.log(cleanLine);                          // print without timestamp
+          try {
+            fs.appendFileSync(logFilePath, cleanLine + '\n', 'utf8');  // log without timestamp
+          } catch (e) {
+            console.error(`\x1b[31mFailed to write to log file: ${e.message}\x1b[0m`);
           }
         }
       });
 
-      function finaliseBlock(lines) {
-        if (lines.length === 0) return;
-        const signature = lines.map(normalizeLine).join('\n');
-        if (!seenBlocks.has(signature)) {
-          seenBlocks.add(signature);
-          console.log('\x1b[90m' + '─'.repeat(60) + '\x1b[0m');
-          console.log('\x1b[31m' + lines[0] + '\x1b[0m');
-          for (let i = 1; i < lines.length; i++) {
-            console.log('\x1b[33m' + lines[i] + '\x1b[0m');
-          }
-          console.log('');
-          writeBlockToFile(lines);
-        }
-      }
-
       proc.stderr.on('data', (data) => {
-        const msg = data.toString();
-        const harmless = [
-          '/docker-entrypoint.sh:',
-          'install-gocd-plugins',
-          'git-clone-config',
-          'cd /godata/config',
-          'sed -i',
-          'exec /usr/local/sbin/tini',
-          'Creating directories and symlinks',
-          'Running custom scripts',
-        ];
-        if (!harmless.some(p => msg.includes(p))) {
-          console.error(`\x1b[31mDocker logs error: ${msg}\x1b[0m`);
-        }
+        console.error(`\x1b[31mDocker logs error: ${data.toString()}\x1b[0m`);
       });
 
       proc.on('close', (code) => {
-        if (pendingBlock) finaliseBlock(pendingBlock.lines);
         rl.close();
         if (watching && code !== null) {
           console.log(`\x1b[33mContainer stopped (exit code ${code}). Reconnecting in 3 seconds...\x1b[0m`);
@@ -419,9 +385,7 @@ function liveErrorFollow(containerName) {
 
       proc.on('error', (err) => {
         console.error(`\x1b[31mFailed to start log stream: ${err.message}\x1b[0m`);
-        if (watching) {
-          setTimeout(() => { if (watching) startFollow(); }, 5000);
-        }
+        if (watching) setTimeout(() => { if (watching) startFollow(); }, 5000);
       });
     }
 
@@ -455,7 +419,6 @@ async function showMenu() {
         console.log('   1.7. Restart Docker Desktop (full restart)');
         console.log('   1.8. Restart Docker Engine only');
         console.log('   1.9. Container selector (logs / errors)');
-        console.log('   4.10. Update .env.docker password from GoCD container');
         console.log('');
         console.log('\x1b[36m2. PIPELINE MANAGEMENT\x1b[0m');
         console.log('   2.1. Trigger badminton_court pipeline');
@@ -478,6 +441,8 @@ async function showMenu() {
         console.log('   4.7. Sync Master with Feature Branch');
         console.log('   4.8. Fix NODE_OPTIONS error');
         console.log('   4.9. Reset GoCD admin password (from .env.docker)');
+        console.log('   4.10. Update .env.docker password from GoCD container');
+        console.log('   4.11. Display & test GoCD admin credentials');        
         console.log('');
         console.log('\x1b[36m5. TROUBLE-SHOOT CONTAINERS\x1b[0m');
         console.log('   5.1. Rebuild and Re-start gocd-server container');
@@ -745,29 +710,6 @@ try {
                 await pause();
                 break;
 
-            case '4.10': {
-                const currentPass = sh(
-                    `docker exec gocd-server sh -c "cat /godata/config/password.properties | cut -d: -f2"`,
-                    { stdio: 'pipe' }
-                );
-                if (currentPass && currentPass.success && currentPass.stdout) {
-                    // Read current .env.docker content
-                    const envPath = path.join(__dirname, '..', '.env.docker');
-                    let envContent = fs.readFileSync(envPath, 'utf8');
-                    // Replace the GOCD_ADMIN_PASSWORD line
-                    envContent = envContent.replace(
-                        /^GOCD_ADMIN_PASSWORD=.*/m,
-                        `GOCD_ADMIN_PASSWORD=${currentPass.stdout.trim()}`
-                    );
-                    fs.writeFileSync(envPath, envContent);
-                    log('✅ .env.docker updated with password from container.', '\x1b[32m');
-                } else {
-                    log('❌ Could not retrieve password from container.', '\x1b[31m');
-                }
-                await pause();
-                break;
-            }                
-                
             case '2.1':
                 await triggerPipelineInteractively();
                 await pause();
@@ -844,13 +786,111 @@ try {
                 await pause();
                 break;
             case '4.9':
-                log('Resetting GoCD admin password...', '\x1b[33m');
+                log('Resetting GoCD admin password and restarting server...', '\x1b[33m');
+                // Write the new password from .env.docker into the container
                 sh(`docker exec gocd-server sh -c "echo 'admin:${GOCD_PASS}' > /godata/config/password.properties"`);
-                // Restart is not strictly required, but ensures immediate effect
-                sh('docker restart gocd-server');
-                log('Password reset. Use the credentials from .env.docker to log in.', '\x1b[32m');
+                // Full stop/start to flush GoCD's authentication cache
+                log('Stopping GoCD server...', '\x1b[33m');
+                sh('docker stop gocd-server');
+                log('Starting GoCD server...', '\x1b[33m');
+                sh('docker start gocd-server');
+                // Wait for GoCD to be ready (using the homepage to avoid auth issues)
+                log('Waiting for GoCD to be ready...', '\x1b[33m');
+                {
+                    let ready = false;
+                    for (let i = 0; i < 24; i++) {  // up to 120 seconds
+                        try {
+                            execSync(`docker exec gocd-server curl -sf -o /dev/null "${GOCD_BASE}/go"`, { stdio: 'pipe' });
+                            ready = true;
+                            break;
+                        } catch (_) {
+                            if (i < 23) {
+                                if (os.platform() === 'win32') {
+                                    execSync('ping -n 6 127.0.0.1 >nul', { stdio: 'pipe' });
+                                } else {
+                                    execSync('sleep 5', { stdio: 'pipe' });
+                                }
+                            }
+                        }
+                    }
+                    if (ready) {
+                        log('✅ GoCD is ready. Password reset applied.', '\x1b[32m');
+                    } else {
+                        log('❌ GoCD did not become ready in time. Check the container manually.', '\x1b[31m');
+                    }
+                }
                 await pause();
                 break;
+
+            case '4.10': {
+                // Read the current password from inside the GoCD container
+                const rawPass = sh(
+                    `docker exec gocd-server cat /godata/config/password.properties`,
+                    { stdio: 'pipe' }
+                );
+                // sh returns the output string on success, or an error object on failure
+                if (typeof rawPass === 'string' && rawPass.includes(':')) {
+                    const newPassword = rawPass.trim().split(':')[1];   // admin:password
+                    const envPath = path.join(__dirname, '..', '.env.docker');
+                    let envContent = fs.readFileSync(envPath, 'utf8');
+                    envContent = envContent.replace(
+                        /^GOCD_ADMIN_PASSWORD=.*/m,
+                        `GOCD_ADMIN_PASSWORD=${newPassword}`
+                    );
+                    fs.writeFileSync(envPath, envContent);
+                    log('✅ .env.docker updated with password from container.', '\x1b[32m');
+                } else {
+                    log('❌ Could not retrieve password from container.', '\x1b[31m');
+                }
+                await pause();
+                break;
+            }               
+
+            case '4.11': {
+                log('--- GoCD Admin Credentials ---', '\x1b[36m');
+                log(`Username: ${GOCD_USER}`, '\x1b[36m');
+                log(`Password: ${GOCD_PASS}`, '\x1b[36m');
+                log(`GoCD URL: ${GOCD_BASE}`, '\x1b[36m');
+
+                // ── Test /go/api/agents (basic auth only) ──
+                log('\nTesting /go/api/agents...', '\x1b[33m');
+                const agentsResult = sh(
+                    `docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" "${GOCD_BASE}/go/api/agents"`,
+                    { stdio: 'pipe' }
+                );
+                if (typeof agentsResult === 'string') {
+                    try {
+                        JSON.parse(agentsResult);
+                        log('✅ Agents endpoint – authentication OK, JSON returned.', '\x1b[32m');
+                    } catch (_) {
+                        log('⚠ Agents returned non‑JSON:', '\x1b[33m');
+                        console.log(agentsResult.substring(0, 400));
+                    }
+                } else {
+                    log('❌ Agents command failed (container down?).', '\x1b[31m');
+                }
+
+                // ── Test /go/api/pipelines WITH the correct Accept header ──
+                log('\nTesting /go/api/pipelines (with v3 header)...', '\x1b[33m');
+                const pipelinesResult = sh(
+                    `docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" -H "Accept: application/vnd.go.cd+json" "${GOCD_BASE}/go/api/pipelines"`,
+                    { stdio: 'pipe' }
+                );
+                if (typeof pipelinesResult === 'string') {
+                    try {
+                        const json = JSON.parse(pipelinesResult);
+                        const pipelineList = json._embedded?.pipelines || json.pipelines || [];
+                        log(`✅ Pipelines endpoint returned ${pipelineList.length} pipelines.`, '\x1b[32m');
+                    } catch (_) {
+                        log('⚠ Pipelines returned non‑JSON. Full response:', '\x1b[33m');
+                        console.log(pipelinesResult);
+                    }
+                } else {
+                    log('❌ Pipelines command failed.', '\x1b[31m');
+                }
+                await pause();
+                break;
+            }
 
             case '5.1':
                 sh('docker compose build gocd-server && docker compose up -d gocd-server');

@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 /**
  * install-tools-on-vm.js – Installs Docker on the deployment VM using the official script.
- * Also creates /opt/badminton_court with correct ownership.
- * Uses GCP_PROJECT_ID & GCP_ZONE from the environment.
+ * Also creates /opt/badminton_court with correct ownership for the SSH user.
+ * Uses GCP_PROJECT_ID, GCP_ZONE, VM_SSH_USER from the environment.
  */
 
 const { execSync } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 
 const PROJECT_ID = process.env.GCP_PROJECT_ID;
 const ZONE       = process.env.GCP_ZONE;
+const SSH_USER   = process.env.VM_SSH_USER || 'xmnione';
+
 const KEY_FILE   = path.join(__dirname, '..', 'secrets', 'agent-key');
 
 if (!PROJECT_ID || !ZONE) {
@@ -17,6 +20,12 @@ if (!PROJECT_ID || !ZONE) {
   process.exit(1);
 }
 
+if (!fs.existsSync(KEY_FILE)) {
+  console.error('SSH key not found at', KEY_FILE);
+  process.exit(1);
+}
+
+// Get VM IP
 const ip = execSync(
   `gcloud compute instances describe gocd-deploy-target --project=${PROJECT_ID} --zone=${ZONE} --format="value(networkInterfaces[0].accessConfigs[0].natIP)"`,
   { encoding: 'utf8' }
@@ -27,14 +36,18 @@ if (!ip) {
   process.exit(1);
 }
 
-// Install Docker
+// ── Install Docker ──
 console.log('Installing Docker via official script...');
-let cmd = `ssh -i "${KEY_FILE}" -o StrictHostKeyChecking=no sol-i@${ip} "curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh && sudo usermod -aG docker sol-i"`;
-execSync(cmd, { stdio: 'inherit' });
-console.log('Docker installed successfully. Use "sudo docker" if not in docker group yet.');
+let cmd = `ssh -i "${KEY_FILE}" -o StrictHostKeyChecking=no ${SSH_USER}@${ip} "curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh && sudo usermod -aG docker ${SSH_USER}"`;
+try {
+  execSync(cmd, { stdio: 'inherit' });
+  console.log('Docker installed successfully.');
+} catch (e) {
+  console.error('Docker installation may have failed, continuing with directory setup...');
+}
 
-// Create /opt/badminton_court with proper ownership
-console.log('Creating /opt/badminton_court directory...');
-cmd = `ssh -i "${KEY_FILE}" -o StrictHostKeyChecking=no sol-i@${ip} "sudo mkdir -p /opt/badminton_court && sudo chown -R sol-i:sol-i /opt/badminton_court"`;
+// ── Create /opt/badminton_court with proper ownership ──
+console.log('Setting up /opt/badminton_court directory...');
+cmd = `ssh -i "${KEY_FILE}" -o StrictHostKeyChecking=no ${SSH_USER}@${ip} "sudo mkdir -p /opt/badminton_court && sudo chown -R ${SSH_USER}:${SSH_USER} /opt/badminton_court"`;
 execSync(cmd, { stdio: 'inherit' });
-console.log('Directory /opt/badminton_court ready.');
+console.log('Directory /opt/badminton_court ready and owned by', SSH_USER);

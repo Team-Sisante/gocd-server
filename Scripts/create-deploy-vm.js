@@ -18,15 +18,23 @@ const path = require('path');
 const readline = require('readline');
 
 // ---------- Configuration ----------
-const PROJECT_ID = 'project-39c0ea08-238b-47b5-915';
-const ZONE = 'us-west1-b';
-const INSTANCE_NAME = 'gocd-deploy-target';
+const PROJECT_ID = process.env.GCP_PROJECT_ID || 'project-39c0ea08-238b-47b5-915';
+const ZONE = process.env.GCP_ZONE || 'us-west1-b';
+const INSTANCE_NAME = process.env.GCP_VM_NAME || 'gocd-deploy-target';
 const MACHINE_TYPE = 'e2-micro';
 const IMAGE_PROJECT = 'debian-cloud';
 const IMAGE_FAMILY = 'debian-11';
 const TAGS = ['http-server', 'https-server'];
 const STARTUP_SCRIPT_PATH = path.join(__dirname, '..', 'tmp_startup_script.sh');
 const SETUP_AGENT_SSH_SCRIPT = path.join(__dirname, 'setup-agent-ssh.js');
+
+// ---------- Validate required environment variable ----------
+const SSH_USER = process.env.VM_SSH_USER;
+if (!SSH_USER) {
+    console.error('\x1b[31mERROR: VM_SSH_USER is not set.\x1b[0m');
+    console.error('Please define VM_SSH_USER in your .env.docker file (e.g., VM_SSH_USER=xmnione).');
+    process.exit(1);
+}
 
 // ---------- Helpers ----------
 function run(cmd, options = {}) {
@@ -79,39 +87,34 @@ systemctl enable docker --now
 curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
 apt-get install -y nodejs
 
-# Install gcloud CLI (optional, but useful)
+# Install gcloud CLI (optional)
 echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
 curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
 apt-get update && apt-get install -y google-cloud-cli
 
-# Create user 'sol-i' and add to docker group
-if ! id -u sol-i >/dev/null 2>&1; then
-  useradd -m -s /bin/bash sol-i
-  echo "sol-i ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/sol-i
+# Create the SSH user (from VM_SSH_USER environment variable)
+SSH_USER="${SSH_USER}"
+if ! id -u "$SSH_USER" >/dev/null 2>&1; then
+  useradd -m -s /bin/bash "$SSH_USER"
+  echo "$SSH_USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$SSH_USER
 fi
-usermod -aG docker sol-i
+usermod -aG docker "$SSH_USER"
 
-# Clone the repository (if not already present)
-REPO_DIR="/app/badminton_court"
-if [ ! -d "\$REPO_DIR" ]; then
-  mkdir -p /app
-  chown sol-i:sol-i /app
-  # Use a read-only deploy key or a PAT; here we assume the repo is public and you
-  # will manually pull later via pipeline. For a private repo, you'd need a token.
-  # We'll just create the directory; the pipeline will handle git operations.
-  # However, we need a minimal clone for the pipeline to work. We'll clone using
-  # the HTTPS URL without credentials – if the repo is private, you must add a token.
-  # Safe default: create an empty repo structure that the pipeline overwrites.
-  sudo -u sol-i git clone https://github.com/xmione/badminton_court.git \$REPO_DIR || {
+# Set up the application directory
+REPO_DIR="/opt/badminton_court"
+mkdir -p "$REPO_DIR"
+chown -R "$SSH_USER:$SSH_USER" "$REPO_DIR"
+
+# Clone the repository (if possible)
+cd "$REPO_DIR"
+if [ ! -d ".git" ]; then
+  sudo -u "$SSH_USER" git clone https://github.com/xmione/badminton_court.git . || {
     echo "Clone failed; creating empty directory for pipeline to populate."
-    mkdir -p \$REPO_DIR
-    chown sol-i:sol-i \$REPO_DIR
-    cd \$REPO_DIR && sudo -u sol-i git init
+    mkdir -p "$REPO_DIR"
+    chown "$SSH_USER:$SSH_USER" "$REPO_DIR"
+    cd "$REPO_DIR" && sudo -u "$SSH_USER" git init
   }
 fi
-
-# Ensure ownership
-chown -R sol-i:sol-i /app
 
 echo "=== Startup script finished at $(date) ==="
 `;
@@ -137,8 +140,9 @@ async function main() {
     log('Existing VM deleted.', '\x1b[32m');
   }
 
-  // Write startup script to temp file
-  fs.writeFileSync(STARTUP_SCRIPT_PATH, startupScript);
+  // Write startup script to temp file (replace SSH_USER placeholder)
+  const finalScript = startupScript.replace(/__SSH_USER__/g, SSH_USER);
+  fs.writeFileSync(STARTUP_SCRIPT_PATH, finalScript);
   log('Startup script written.', '\x1b[33m');
 
   // Create the VM
@@ -181,6 +185,17 @@ async function main() {
   log('Agent SSH key injected.', '\x1b[32m');
 
   log(`\nDeployment VM ${INSTANCE_NAME} is ready.\nYou can now trigger the pipeline.\n`, '\x1b[32m');
+
+    // Show IP and reminder
+  const vmIP = run(
+    `gcloud compute instances describe ${INSTANCE_NAME} --zone=${ZONE} --project=${PROJECT_ID} --format="value(networkInterfaces[0].accessConfigs[0].natIP)"`,
+    { silent: true }
+  );
+  log(`\n📌 The new VM IP is: ${vmIP}`, '\x1b[33m');
+  log('⚠️  Update GCP_VM_IP in your .env.docker file with this IP!', '\x1b[33m');
+  log('   Then run option 4.1 to encrypt the .env.docker file.\n', '\x1b[33m');
+  log('   Then run option 2.4 to update the pipelines.\n', '\x1b[33m');
+  log('   Then run option 2.1 to trigger the badminton_court-artifacts pipeline.\n', '\x1b[33m');
 }
 
 main().catch(err => {

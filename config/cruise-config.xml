@@ -55,7 +55,7 @@
                   ## Login once
                   echo "$GITHUB_TOKEN" | docker login ghcr.io -u xmione --password-stdin
 
-                  ## Retry loop for image build and push (handles GHCR timeouts / 502 / 503)
+                  ## Retry loop for image build and push
                   for i in 1 2 3; do
                     docker build -t ghcr.io/xmione/badminton_court-web:latest -f Dockerfile.binary . &&
                     docker push ghcr.io/xmione/badminton_court-web:latest &&
@@ -146,12 +146,18 @@
         -o StrictHostKeyChecking=no \
         -o UserKnownHostsFile=/dev/null \
         xmione@136.109.209.69 \
-        "mkdir -p /opt/badminton_court &&
+        "sudo mkdir -p /opt/badminton_court &&
          sudo chown -R \$USER /opt/badminton_court &&
          git config --global --add safe.directory /opt/badminton_court &&
          cd /opt/badminton_court &&
-         git remote set-url origin https://github.com/xmione/badminton_court.git || git remote add origin https://github.com/xmione/badminton_court.git &&
-         git pull origin master &&
+         if [ ! -d .git ]; then
+             git clone https://__GITHUB_TOKEN__@github.com/xmione/badminton_court.git .;
+         else
+             git remote set-url origin https://__GITHUB_TOKEN__@github.com/xmione/badminton_court.git 2>/dev/null || git remote add origin https://__GITHUB_TOKEN__@github.com/xmione/badminton_court.git;
+             git fetch origin master &&
+             git reset --hard origin/master;
+         fi &&
+         export GITHUB_TOKEN='__GITHUB_TOKEN__' &&
          node Scripts/generate-env.js development .env.staging &&
          echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&
          sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging pull &&
@@ -184,12 +190,17 @@
         -o StrictHostKeyChecking=no \
         -o UserKnownHostsFile=/dev/null \
         xmione@136.109.209.69 \
-        "mkdir -p /opt/badminton_court &&
+        "sudo mkdir -p /opt/badminton_court &&
          sudo chown -R \$USER /opt/badminton_court &&
          git config --global --add safe.directory /opt/badminton_court &&
          cd /opt/badminton_court &&
-         git remote set-url origin https://github.com/xmione/badminton_court.git || git remote add origin https://github.com/xmione/badminton_court.git &&
-         git pull origin master &&
+         if [ ! -d .git ]; then
+             git clone https://__GITHUB_TOKEN__@github.com/xmione/badminton_court.git .;
+         else
+             git remote set-url origin https://__GITHUB_TOKEN__@github.com/xmione/badminton_court.git 2>/dev/null || git remote add origin https://__GITHUB_TOKEN__@github.com/xmione/badminton_court.git;
+             git fetch origin master &&
+             git reset --hard origin/master;
+         fi &&
          node Scripts/generate-env.js docker-production .env.production &&
          echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&
          sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production pull &&

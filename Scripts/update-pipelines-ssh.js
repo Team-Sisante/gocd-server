@@ -32,10 +32,11 @@ const GIT_DOMAIN = process.env.GIT_REPO_DOMAIN || 'github.com';
 const GIT_USER = process.env.GIT_REPO_USERNAME || 'xmione';
 const GIT_REPO = process.env.GIT_REPO_REPONAME || 'badminton_court';
 const REPO_URL = `${GIT_PROTO}://${GIT_DOMAIN}/${GIT_USER}/${GIT_REPO}.git`;
+const REPO_URL_WITH_TOKEN = `https://__GITHUB_TOKEN__@${GIT_DOMAIN}/${GIT_USER}/${GIT_REPO}.git`;
 
-const APP_ROOT = '/opt/badminton_court';   // standard deployment directory on the VM
+const APP_ROOT = '/opt/badminton_court';
 
-// ---------- New SSH task blocks (always include the remote fix) ----------
+// ---------- New SSH task blocks (fully hardened git operations) ----------
 const stagingNewTask = `              <exec command="bash">
                 <arg>-c</arg>
                 <arg><![CDATA[
@@ -43,12 +44,17 @@ const stagingNewTask = `              <exec command="bash">
         -o StrictHostKeyChecking=no \\
         -o UserKnownHostsFile=/dev/null \\
         ${SSH_USER}@${VM_IP} \\
-        "mkdir -p ${APP_ROOT} &&
+        "sudo mkdir -p ${APP_ROOT} &&
          sudo chown -R \\$USER ${APP_ROOT} &&
          git config --global --add safe.directory ${APP_ROOT} &&
          cd ${APP_ROOT} &&
-         git remote set-url origin ${REPO_URL} || git remote add origin ${REPO_URL} &&
-         git pull origin master &&
+         if [ ! -d .git ]; then
+             git clone ${REPO_URL_WITH_TOKEN} .;
+         else
+             git remote set-url origin ${REPO_URL_WITH_TOKEN} 2>/dev/null || git remote add origin ${REPO_URL_WITH_TOKEN};
+             git fetch origin master &&
+             git reset --hard origin/master;
+         fi &&
          node Scripts/generate-env.js development .env.staging &&
          echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u ${GIT_USER} --password-stdin &&
          sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging pull &&
@@ -63,12 +69,17 @@ const productionNewTask = `              <exec command="bash">
         -o StrictHostKeyChecking=no \\
         -o UserKnownHostsFile=/dev/null \\
         ${SSH_USER}@${VM_IP} \\
-        "mkdir -p ${APP_ROOT} &&
+        "sudo mkdir -p ${APP_ROOT} &&
          sudo chown -R \\$USER ${APP_ROOT} &&
          git config --global --add safe.directory ${APP_ROOT} &&
          cd ${APP_ROOT} &&
-         git remote set-url origin ${REPO_URL} || git remote add origin ${REPO_URL} &&
-         git pull origin master &&
+         if [ ! -d .git ]; then
+             git clone ${REPO_URL_WITH_TOKEN} .;
+         else
+             git remote set-url origin ${REPO_URL_WITH_TOKEN} 2>/dev/null || git remote add origin ${REPO_URL_WITH_TOKEN};
+             git fetch origin master &&
+             git reset --hard origin/master;
+         fi &&
          node Scripts/generate-env.js docker-production .env.production &&
          echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u ${GIT_USER} --password-stdin &&
          sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production pull &&
@@ -98,8 +109,7 @@ const productionOldDeployTask = `              <exec command="bash">
                 <arg>node /badminton_court/Scripts/deploy.js production __GITHUB_TOKEN__</arg>
               </exec>`;
 
-// ---------- Current SSH tasks that are missing the remote fix ----------
-// (These are the exact strings currently in your local cruise-config.xml)
+// ---------- Current SSH tasks that lack the robust git fix ----------
 const stagingOldSSHTask = `              <exec command="bash">
                 <arg>-c</arg>
                 <arg><![CDATA[
@@ -174,25 +184,23 @@ if (content.includes(productionOldDeployTask)) {
     console.log('⚠ Production deploy.js task not found or already modified.');
 }
 
-// Detect current SSH tasks that lack the remote fix
 if (content.includes(stagingOldSSHTask)) {
-    console.log('▶ Updating staging SSH task (adding remote fix)...');
+    console.log('▶ Updating staging SSH task (hardening git)...');
     content = content.replace(stagingOldSSHTask, stagingNewTask);
     changes++;
 } else {
-    console.log('⚠ Staging SSH task already contains remote fix or not found.');
+    console.log('⚠ Staging SSH task already hardened or not found.');
 }
 
 if (content.includes(productionOldSSHTask)) {
-    console.log('▶ Updating production SSH task (adding remote fix)...');
+    console.log('▶ Updating production SSH task (hardening git)...');
     content = content.replace(productionOldSSHTask, productionNewTask);
     changes++;
 } else {
-    console.log('⚠ Production SSH task already contains remote fix or not found.');
+    console.log('⚠ Production SSH task already hardened or not found.');
 }
 
 if (changes > 0) {
-    // Write the updated file locally
     const backupPath = CONFIG_PATH + '.bak';
     fs.writeFileSync(backupPath, fs.readFileSync(CONFIG_PATH));
     fs.writeFileSync(CONFIG_PATH, content);
@@ -207,29 +215,16 @@ if (DRY_RUN) {
     process.exit(0);
 }
 
-// ----- Validate required environment variables -----
 const missingVars = [];
-const required = [
-    'GOCD_ADMIN_USERNAME',
-    'GOCD_ADMIN_PASSWORD',
-    'GOCD_SERVER_URL_PROTOCOL',
-    'GOCD_SERVER_URL_HOST',
-    'GOCD_SERVER_PORT'
-];
-required.forEach(key => {
-    if (!process.env[key]) missingVars.push(key);
-});
-
-if (missingVars.length > 0) {
-    console.error(
-        '\x1b[31mERROR: The following required environment variables are missing:\x1b[0m\n' +
+['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT']
+    .forEach(key => { if (!process.env[key]) missingVars.push(key); });
+if (missingVars.length) {
+    console.error('\x1b[31mERROR: Missing environment variables:\x1b[0m\n' +
         missingVars.map(v => `  - ${v}`).join('\n') +
-        '\n\nPlease define them in your .env.docker file.'
-    );
+        '\n\nDefine them in your .env.docker file.');
     process.exit(1);
 }
 
-// Now it is safe to use them
 const GOCD_USER = process.env.GOCD_ADMIN_USERNAME;
 const GOCD_PASS = process.env.GOCD_ADMIN_PASSWORD;
 const GOCD_PROTO = process.env.GOCD_SERVER_URL_PROTOCOL;
@@ -237,7 +232,6 @@ const GOCD_HOST  = process.env.GOCD_SERVER_URL_HOST;
 const GOCD_PORT  = process.env.GOCD_SERVER_PORT;
 const GOCD_BASE  = `${GOCD_PROTO}://${GOCD_HOST}:${GOCD_PORT}`;
 
-// 1. Copy the local XML into the container
 console.log('Copying updated XML into GoCD container...');
 try {
     execSync(`docker cp "${CONFIG_PATH}" gocd-server:/godata/config/cruise-config.xml`, { stdio: 'inherit' });
@@ -247,7 +241,6 @@ try {
     process.exit(1);
 }
 
-// 2. Restart GoCD and wait for it to be healthy
 console.log('Restarting GoCD server...');
 try {
     execSync('docker restart gocd-server', { stdio: 'inherit' });
@@ -258,7 +251,7 @@ try {
 
 console.log('Waiting for GoCD server to become healthy...');
 
-let initialWait = 60; // seconds
+const initialWait = 60;
 console.log(`  Giving GoCD a ${initialWait}‑second head start…`);
 if (os.platform() === 'win32') {
     execSync(`ping -n ${initialWait + 1} 127.0.0.1 >nul`, { stdio: 'pipe' });
@@ -266,13 +259,10 @@ if (os.platform() === 'win32') {
     execSync(`sleep ${initialWait}`, { stdio: 'pipe' });
 }
 
-let retries = 10;   // 10 attempts × 5 sec = 50 sec extra (60 sec total)
+let retries = 10;
 while (retries > 0) {
     try {
-        execSync(
-            `docker exec gocd-server curl -sf -o /dev/null "${GOCD_BASE}/go"`,
-            { stdio: 'pipe' }
-        );
+        execSync(`docker exec gocd-server curl -sf -o /dev/null "${GOCD_BASE}/go"`, { stdio: 'pipe' });
         console.log('✅ GoCD server is ready.');
         break;
     } catch (_) {

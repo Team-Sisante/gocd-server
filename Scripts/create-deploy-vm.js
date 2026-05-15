@@ -47,6 +47,9 @@ if (!DESIRED_IP) {
 // Region derived from zone (e.g., us-west1-b → us-west1)
 const REGION = ZONE.substring(0, ZONE.lastIndexOf('-'));
 
+// Default compute service account (this email is standard for GCP projects)
+const COMPUTE_SA = `575810712323-compute@developer.gserviceaccount.com`;
+
 // ---------- Helpers ----------
 function run(cmd, options = {}) {
   try {
@@ -134,6 +137,17 @@ echo "=== Startup script finished at $(date) ==="
 async function main() {
   log('VM Provisioning Script for badminton_court deployment', '\x1b[32m');
 
+  // ----------------------------------------------------------------
+  // Ensure the VM's service account can read Secret Manager (one-time)
+  // ----------------------------------------------------------------
+  log('Ensuring Secret Manager permissions for the VM service account...', '\x1b[33m');
+  run(
+    `gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+        --member="serviceAccount:${COMPUTE_SA}" \
+        --role="roles/secretmanager.secretAccessor"`,
+    { silent: true, ignoreError: true }  // safe to run every time, idempotent
+  );
+
   // -----------------------------------------------
   // Manage static IP reservation (with retry, avoids misleading messages)
   // -----------------------------------------------
@@ -216,8 +230,8 @@ async function main() {
   fs.writeFileSync(STARTUP_SCRIPT_PATH, finalScript);
   log('Startup script written.', '\x1b[33m');
 
-  // Create the VM with the static IP
-  log(`Creating VM ${INSTANCE_NAME}...`, '\x1b[33m');
+  // Create the VM with the static IP AND the cloud-platform scope
+  log(`Creating VM ${INSTANCE_NAME} with cloud-platform scope...`, '\x1b[33m');
   const tagsArg = TAGS.join(',');
   const createCmd = `gcloud compute instances create ${INSTANCE_NAME} \
       --project=${PROJECT_ID} \
@@ -227,6 +241,7 @@ async function main() {
       --image-family=${IMAGE_FAMILY} \
       --tags=${tagsArg} \
       --address=${STATIC_IP_NAME} \
+      --scopes=https://www.googleapis.com/auth/cloud-platform \
       --metadata-from-file startup-script=${STARTUP_SCRIPT_PATH}`;
       
   run(createCmd, { silent: true });
@@ -266,6 +281,7 @@ async function main() {
   log(`\n✅ Deployment VM ${INSTANCE_NAME} is ready.`, '\x1b[32m');
   log(`   Static IP: ${vmIP}`, '\x1b[36m');
   log(`   This IP is permanently reserved and will not change.`, '\x1b[36m');
+  log(`   The VM has full access to GCP Secret Manager.`, '\x1b[36m');
   log(`   You may now run option 2.4 (Convert pipelines to SSH) and then trigger the pipeline.`, '\x1b[36m');
 }
 

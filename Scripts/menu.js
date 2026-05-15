@@ -521,6 +521,7 @@ async function showMenu() {
             console.log('   6.18. Open staging app in browser');
             console.log('   6.19. Health check staging app');
             console.log('   6.20. Clear SSH host key for VM');
+            console.log('   6.21. Create new VM & run full setup');            
             console.log('');
             console.log('\x1b[36m0. Exit\x1b[0m');
             console.log('');
@@ -1208,6 +1209,23 @@ try {
                     break;
                 }
 
+                case '6.21':
+                    log('Creating a fresh VM and running full setup...', '\x1b[33m');
+                    sh('node Scripts/create-deploy-vm.js');
+                    // The IP will be printed by the script; we still capture it for the setup
+                    // Force a small wait to ensure the VM is fully ready (the script already waits, but extra safety)
+                    await sleep(5000);
+                    log('Running post‑creation setup...', '\x1b[33m');
+                    sh('node Scripts/setup-firewall-rules.js');
+                    sh('node Scripts/setup-agent-ssh.js');
+                    sh('node Scripts/setup-gcp-secrets-access.js');
+                    sh('node Scripts/install-tools-on-vm.js');
+                    sh('node Scripts/check-vm-reachability.js');
+                    log('✅ Fresh VM created and full setup completed.', '\x1b[32m');
+                    log('⚠️  Remember to update GCP_VM_IP in .env.docker with the new IP and run option 2.4.', '\x1b[33m');
+                    await pause();
+                    break;
+                                    
                 case '0':
                     rl.close();
                     process.exit(0);

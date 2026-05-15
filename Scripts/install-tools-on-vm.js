@@ -3,6 +3,7 @@
  * install-tools-on-vm.js – Waits for the VM's startup script to finish,
  * then installs any missing tools (Docker, Node, git, etc.) and ensures
  * /opt/badminton_court has correct ownership.
+ * All output is shown in real time – no quiet flags.
  *
  * Uses GCP_PROJECT_ID, GCP_ZONE, GCP_VM_IP, VM_SSH_USER from the environment.
  */
@@ -41,17 +42,14 @@ try { execSync(`ssh-keygen -R ${VM_IP}`, { stdio: 'ignore' }); } catch (_) {}
 
 // ------------------------------------------------------------------
 // Stream the startup log and wait until the startup script is finished
-// AND apt is idle.
 // ------------------------------------------------------------------
 console.log('Waiting for VM startup script to complete…');
 console.log('  (Live log from the VM – every new line will appear below)');
 
 let lastOffset = 0;
 let scriptFinished = false;
-let statusPrinted = false;
 
 for (let i = 0; i < 90; i++) {
-    // 1. Print new log lines
     try {
         const newContent = execSync(
             `ssh -i "${KEY_FILE}" -o StrictHostKeyChecking=no ${SSH_USER}@${VM_IP} "tail -c +${lastOffset + 1} /var/log/startup-script.log 2>/dev/null || true"`,
@@ -66,7 +64,6 @@ for (let i = 0; i < 90; i++) {
         }
     } catch (_) {}
 
-    // 2. If the script has finished, check if apt is free
     if (scriptFinished) {
         let aptRunning = false;
         try {
@@ -76,14 +73,9 @@ for (let i = 0; i < 90; i++) {
             ).trim();
             if (aptProcs) aptRunning = true;
         } catch (_) {}
-
         if (!aptRunning) {
-            console.log('✅ VM startup script finished and package manager is idle.');
+            console.log('✅ Startup script finished and package manager is idle.');
             break;
-        }
-        if (!statusPrinted) {
-            console.log('  (apt is still finishing – waiting)');
-            statusPrinted = true;
         }
     }
 
@@ -97,32 +89,19 @@ if (!scriptFinished) {
 }
 
 // ------------------------------------------------------------------
-// Install / fix missing tools
+// Install missing tools (visible output, no quiet flags, no interactive prompts)
 // ------------------------------------------------------------------
-console.log('Checking and installing essential tools…');
-const installCmd = `ssh -i "${KEY_FILE}" -o StrictHostKeyChecking=no ${SSH_USER}@${VM_IP} "
-for tool in docker-ce docker-ce-cli containerd.io docker-compose-plugin nodejs git; do
-    pkg=\$tool
-    # Map tool names to the correct package if needed
-    case \$tool in
-        docker-ce) pkg=docker-ce;;
-        docker-ce-cli) pkg=docker-ce-cli;;
-        containerd.io) pkg=containerd.io;;
-        docker-compose-plugin) pkg=docker-compose-plugin;;
-        nodejs) pkg=nodejs;;
-        git) pkg=git;;
-    esac
-    if dpkg -s \$pkg &>/dev/null; then
-        echo \\"  ✓ \$pkg already installed\\"
-    else
-        echo \\"  Installing \$pkg…\\"
-        sudo apt-get update -qq && sudo apt-get install -y \$pkg 2>/dev/null || echo \\"  ⚠ Failed to install \$pkg\\"
-    fi
-done
-sudo usermod -aG docker ${SSH_USER} 2>/dev/null
-"`;
+console.log('Installing missing tools…');
+const installRemoteCmd = (
+    'sudo apt-get update && ' +
+    'sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin nodejs git && ' +
+    'sudo usermod -aG docker ' + SSH_USER
+);
+
+const installCmd = `ssh -T -i "${KEY_FILE}" -o StrictHostKeyChecking=no ${SSH_USER}@${VM_IP} "${installRemoteCmd}"`;
 try {
     execSync(installCmd, { stdio: 'inherit' });
+    console.log('Tools installed successfully.');
 } catch (e) {
     console.error('Some tools may have failed to install – continuing.');
 }
@@ -131,6 +110,6 @@ try {
 // Ensure /opt/badminton_court exists and is owned by the correct user
 // ------------------------------------------------------------------
 console.log('Setting up /opt/badminton_court directory…');
-const dirCmd = `ssh -i "${KEY_FILE}" -o StrictHostKeyChecking=no ${SSH_USER}@${VM_IP} "sudo mkdir -p /opt/badminton_court && sudo chown -R ${SSH_USER}:${SSH_USER} /opt/badminton_court"`;
+const dirCmd = `ssh -T -i "${KEY_FILE}" -o StrictHostKeyChecking=no ${SSH_USER}@${VM_IP} "sudo mkdir -p /opt/badminton_court && sudo chown -R ${SSH_USER}:${SSH_USER} /opt/badminton_court"`;
 execSync(dirCmd, { stdio: 'inherit' });
 console.log('Directory /opt/badminton_court ready and owned by', SSH_USER);

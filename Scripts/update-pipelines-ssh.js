@@ -17,18 +17,28 @@ const os = require('os');
 const CONFIG_PATH = path.join(__dirname, '..', 'config', 'cruise-config.xml');
 const DRY_RUN = process.argv.includes('--dry-run');
 
-// ---------- New SSH task blocks ----------
+// ----- Read dynamic values from environment -----
+const SSH_USER = process.env.VM_SSH_USER || 'xmnione';
+const VM_IP    = process.env.GCP_VM_IP;
+if (!VM_IP) {
+    console.error('\x1b[31mERROR: GCP_VM_IP is not set in the environment.\x1b[0m');
+    process.exit(1);
+}
+
+const APP_ROOT = '/opt/badminton_court';   // standard deployment directory on the VM
+
+// ---------- New SSH task blocks (built from environment variables) ----------
 const stagingNewTask = `              <exec command="bash">
                 <arg>-c</arg>
                 <arg><![CDATA[
     ssh -i /secret/agent-key \\
         -o StrictHostKeyChecking=no \\
         -o UserKnownHostsFile=/dev/null \\
-        sol-i@35.230.13.215 \\
-        "export GITHUB_TOKEN='__GITHUB_TOKEN__' &&
-         sudo chown -R \\$USER /app/badminton_court &&
-         git config --global --add safe.directory /app/badminton_court &&
-         cd /app/badminton_court &&
+        ${SSH_USER}@${VM_IP} \\
+        "mkdir -p ${APP_ROOT} &&
+         sudo chown -R \\$USER ${APP_ROOT} &&
+         git config --global --add safe.directory ${APP_ROOT} &&
+         cd ${APP_ROOT} &&
          git pull &&
          node Scripts/generate-env.js development .env.staging &&
          echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&
@@ -43,11 +53,11 @@ const productionNewTask = `              <exec command="bash">
     ssh -i /secret/agent-key \\
         -o StrictHostKeyChecking=no \\
         -o UserKnownHostsFile=/dev/null \\
-        sol-i@35.230.13.215 \\
-        "export GITHUB_TOKEN='__GITHUB_TOKEN__' &&
-         sudo chown -R \\$USER /app/badminton_court &&
-         git config --global --add safe.directory /app/badminton_court &&
-         cd /app/badminton_court &&
+        ${SSH_USER}@${VM_IP} \\
+        "mkdir -p ${APP_ROOT} &&
+         sudo chown -R \\$USER ${APP_ROOT} &&
+         git config --global --add safe.directory ${APP_ROOT} &&
+         cd ${APP_ROOT} &&
          git pull &&
          node Scripts/generate-env.js docker-production .env.production &&
          echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&

@@ -1212,9 +1212,15 @@ try {
 
                 case '6.21':
                     log('Creating a fresh VM and running full setup...', '\x1b[33m');
-                    sh('node Scripts/create-deploy-vm.js');
-                    // The IP will be printed by the script; we still capture it for the setup
-                    // Force a small wait to ensure the VM is fully ready (the script already waits, but extra safety)
+                    // Run create-deploy-vm.js – on abort it will exit with code 1
+                    const vmResult = sh('node Scripts/create-deploy-vm.js');
+                    if (vmResult && vmResult.success === false) {
+                        log('VM creation aborted by user. No further actions taken.', '\x1b[33m');
+                        await pause();
+                        break;
+                    }
+
+                    // Only continue if VM was created or replaced
                     await sleep(5000);
                     log('Running post‑creation setup...', '\x1b[33m');
                     sh('node Scripts/setup-firewall-rules.js');
@@ -1223,10 +1229,13 @@ try {
                     sh('node Scripts/install-tools-on-vm.js');
                     sh('node Scripts/check-vm-reachability.js');
                     log('✅ Fresh VM created and full setup completed.', '\x1b[32m');
-                    log('⚠️  Remember to update GCP_VM_IP in .env.docker with the new IP and run option 2.4.', '\x1b[33m');
+                    log('Updating pipeline configuration to use the new VM...', '\x1b[33m');
+                    sh('node Scripts/update-pipelines-ssh.js');
+                    log('✅ Pipelines are now ready for deployment.', '\x1b[32m');
+                    log('You can now use option 2.1 to trigger the badminton_court‑artifacts pipeline.', '\x1b[36m');
                     await pause();
                     break;
-
+                    
                 case '6.22':
                     sh(`gcloud compute instances list --project=${GCP_PROJECT_ID} --format="table(name,zone,status,machineType,networkInterfaces[0].accessConfigs[0].natIP)"`);
                     await pause();

@@ -204,7 +204,7 @@ async function main() {
     const answer = await ask(`VM ${INSTANCE_NAME} already exists. Delete and recreate? (y/N): `);
     if (answer !== 'y') {
       log('Aborting. Existing VM will be kept.', '\x1b[33m');
-      process.exit(0);
+      process.exit(1);   // non‑zero exit code signals an abort
     }
     log('Deleting existing VM...', '\x1b[33m');
     run(`gcloud compute instances delete ${INSTANCE_NAME} --zone=${ZONE} --project=${PROJECT_ID} --quiet`, { silent: true });

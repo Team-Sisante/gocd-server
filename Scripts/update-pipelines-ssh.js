@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * Scripts/update-pipelines-ssh.js
- * Updates the local cruise-config.xml to use SSH (instead of gcloud compute ssh),
- * then applies the changes to the running GoCD server inside Docker.
+ * Updates the local cruise-config.xml to use SSH (instead of gcloud compute ssh
+ * or the old deploy.js script), then applies the changes to the running GoCD
+ * server inside Docker.
  *
  * Usage:
  *   node Scripts/update-pipelines-ssh.js          (apply changes)
@@ -77,24 +78,51 @@ const productionOldTask = `              <exec command="bash">
                 <arg><![CDATA[gcloud compute ssh "__GCP_VM_NAME__" --project "__GCP_PROJECT_ID__" --zone "__GCP_ZONE__" --quiet --command "export GITHUB_TOKEN='__GITHUB_TOKEN__' && sudo chown -R \\$USER /app/badminton_court && git config --global --add safe.directory /app/badminton_court && cd /app/badminton_court && git pull && node Scripts/generate-env.js docker-production .env.production && echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin && sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production pull && sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production up -d --build"]]></arg>
               </exec>`;
 
+// ---------- Old deploy.js task blocks (to be replaced by SSH tasks) ----------
+const stagingOldDeployTask = `              <exec command="bash">
+                <arg>-c</arg>
+                <arg>node /badminton_court/Scripts/deploy.js staging __GITHUB_TOKEN__</arg>
+              </exec>`;
+
+const productionOldDeployTask = `              <exec command="bash">
+                <arg>-c</arg>
+                <arg>node /badminton_court/Scripts/deploy.js production __GITHUB_TOKEN__</arg>
+              </exec>`;
+
 // ---------- Main ----------
 let content = fs.readFileSync(CONFIG_PATH, 'utf8');
 let changes = 0;
 
 if (content.includes(stagingOldTask)) {
-    console.log('▶ Updating staging pipeline task...');
+    console.log('▶ Updating staging pipeline task (gcloud → SSH)...');
     content = content.replace(stagingOldTask, stagingNewTask);
     changes++;
 } else {
-    console.log('⚠ Staging task not found or already modified.');
+    console.log('⚠ Staging gcloud task not found or already modified.');
 }
 
 if (content.includes(productionOldTask)) {
-    console.log('▶ Updating production pipeline task...');
+    console.log('▶ Updating production pipeline task (gcloud → SSH)...');
     content = content.replace(productionOldTask, productionNewTask);
     changes++;
 } else {
-    console.log('⚠ Production task not found or already modified.');
+    console.log('⚠ Production gcloud task not found or already modified.');
+}
+
+if (content.includes(stagingOldDeployTask)) {
+    console.log('▶ Updating staging deploy.js task (deploy.js → SSH)...');
+    content = content.replace(stagingOldDeployTask, stagingNewTask);
+    changes++;
+} else {
+    console.log('⚠ Staging deploy.js task not found or already modified.');
+}
+
+if (content.includes(productionOldDeployTask)) {
+    console.log('▶ Updating production deploy.js task (deploy.js → SSH)...');
+    content = content.replace(productionOldDeployTask, productionNewTask);
+    changes++;
+} else {
+    console.log('⚠ Production deploy.js task not found or already modified.');
 }
 
 if (changes > 0) {
@@ -167,7 +195,6 @@ console.log('Waiting for GoCD server to become healthy...');
 let initialWait = 60; // seconds
 console.log(`  Giving GoCD a ${initialWait}‑second head start…`);
 if (os.platform() === 'win32') {
-    // ping -n <count> waits roughly <count> seconds
     execSync(`ping -n ${initialWait + 1} 127.0.0.1 >nul`, { stdio: 'pipe' });
 } else {
     execSync(`sleep ${initialWait}`, { stdio: 'pipe' });

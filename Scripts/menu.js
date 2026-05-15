@@ -234,21 +234,20 @@ async function triggerPipelineInteractively() {
         return;
     }
 
-    // 2. Get or ask for JSESSIONID
-    let sessionCookie = process.env.GOCD_SESSION_COOKIE;
+    // 2. Always ask for a fresh cookie (no caching)
+    log('🔐 A GoCD session cookie is required for every trigger.', '\x1b[33m');
+    log('   Open http://localhost:8153/go/pipelines, log in, F12 → Application → Cookies.', '\x1b[33m');
+    log('   Copy the value of the JSESSIONID cookie.', '\x1b[33m');
+    const { cookie } = await inquirer.prompt({
+        type: 'input',
+        name: 'cookie',
+        message: 'Paste JSESSIONID:',
+    });
+    const sessionCookie = (cookie || '').trim();
     if (!sessionCookie) {
-        const { cookie } = await inquirer.prompt({
-            type: 'input',
-            name: 'cookie',
-            message: 'Paste JSESSIONID:',
-        });
-        sessionCookie = (cookie || '').trim();
-        if (!sessionCookie) {
-            rl.resume();
-            log('❌ No cookie – cannot trigger.', '\x1b[31m');
-            return;
-        }
-        process.env.GOCD_SESSION_COOKIE = sessionCookie;
+        rl.resume();
+        log('❌ No cookie – cannot trigger.', '\x1b[31m');
+        return;
     }
 
     // 3. Choose pipeline
@@ -261,43 +260,25 @@ async function triggerPipelineInteractively() {
 
     rl.resume();
 
-    // 4. Trigger (identical to the working terminal command)
+    // 4. Trigger exactly like the manual command
     const url = GOCD_BASE + '/go/api/pipelines/' + selectedPipeline + '/schedule';
-    const curlArgs = [
-        '-s', '-H', 'Accept: application/vnd.go.cd.v1+json',
-        '-H', 'Content-Type: application/json',
-        '-H', 'X-GoCD-Confirm: true',
-        '-b', 'JSESSIONID=' + sessionCookie,
-        '-X', 'POST',
-        '-d', '{"isTrusted":true}',
-        url
-    ];
+    const curlCmd = `docker exec gocd-server curl -s -H "Accept: application/vnd.go.cd.v1+json" -H "Content-Type: application/json" -H "X-GoCD-Confirm: true" -b "JSESSIONID=${sessionCookie}" -X POST -d "{\\"isTrusted\\":true}" "${url}"`;
 
-    let result;
     try {
-        result = execSync('docker exec gocd-server curl ' + curlArgs.map(a => `"${a}"`).join(' '), {
-            encoding: 'utf8', stdio: 'pipe', cwd: PROJECT_ROOT
-        });
+        const result = execSync(curlCmd, { encoding: 'utf8', stdio: 'pipe', cwd: PROJECT_ROOT });
+        if (result.includes('accepted')) {
+            log('✅ Pipeline ' + selectedPipeline + ' triggered.', '\x1b[32m');
+        } else {
+            log('❌ Trigger may have failed. Server said:', '\x1b[31m');
+            console.error(result);
+        }
     } catch (err) {
-        // If the curl command itself fails, clear the cookie and show the error
-        process.env.GOCD_SESSION_COOKIE = '';
-        throw new Error('Connection failed: ' + (err.stderr || err.message));
+        log('❌ Failed to trigger pipeline.', '\x1b[31m');
+        console.error(err.stderr || err.message);
     }
 
-    // If the cookie expired, clear it and prompt again on the next run
-    if (result.includes('not authenticated')) {
-        process.env.GOCD_SESSION_COOKIE = '';
-        throw new Error(result.trim());
-    }
-
-    if (!result.includes('accepted')) {
-        throw new Error(result.trim());
-    }
-
-    log('✅ Pipeline ' + selectedPipeline + ' triggered.', '\x1b[32m');
     await ask('Press Enter to continue...');
 }
-
 // Interactive container selector for logs/errors
 async function selectContainerAndAct() {
   let containers = [];

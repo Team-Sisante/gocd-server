@@ -26,9 +26,16 @@ if (!VM_IP) {
     process.exit(1);
 }
 
+// Git repository details (from .env.docker)
+const GIT_PROTO = process.env.GIT_REPO_PROTOCOL || 'https';
+const GIT_DOMAIN = process.env.GIT_REPO_DOMAIN || 'github.com';
+const GIT_USER = process.env.GIT_REPO_USERNAME || 'xmione';
+const GIT_REPO = process.env.GIT_REPO_REPONAME || 'badminton_court';
+const REPO_URL = `${GIT_PROTO}://${GIT_DOMAIN}/${GIT_USER}/${GIT_REPO}.git`;
+
 const APP_ROOT = '/opt/badminton_court';   // standard deployment directory on the VM
 
-// ---------- New SSH task blocks (built from environment variables) ----------
+// ---------- New SSH task blocks (no hardcoded repo/username) ----------
 const stagingNewTask = `              <exec command="bash">
                 <arg>-c</arg>
                 <arg><![CDATA[
@@ -40,9 +47,10 @@ const stagingNewTask = `              <exec command="bash">
          sudo chown -R \\$USER ${APP_ROOT} &&
          git config --global --add safe.directory ${APP_ROOT} &&
          cd ${APP_ROOT} &&
+         git remote set-url origin ${REPO_URL} || git remote add origin ${REPO_URL} &&
          git pull origin master &&
          node Scripts/generate-env.js development .env.staging &&
-         echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&
+         echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u ${GIT_USER} --password-stdin &&
          sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging pull &&
          sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging up -d --build"
   ]]></arg>
@@ -59,9 +67,10 @@ const productionNewTask = `              <exec command="bash">
          sudo chown -R \\$USER ${APP_ROOT} &&
          git config --global --add safe.directory ${APP_ROOT} &&
          cd ${APP_ROOT} &&
+         git remote set-url origin ${REPO_URL} || git remote add origin ${REPO_URL} &&
          git pull origin master &&
          node Scripts/generate-env.js docker-production .env.production &&
-         echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&
+         echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u ${GIT_USER} --password-stdin &&
          sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production pull &&
          sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production up -d --build"
   ]]></arg>

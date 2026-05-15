@@ -11,10 +11,10 @@ const path = require('path');
 const os = require('os');
 
 // ---------- Configuration ----------
-const PROJECT_ID = 'project-39c0ea08-238b-47b5-915';
-const ZONE = 'us-west1-b';
-const INSTANCE_NAME = 'gocd-deploy-target';
-const REMOTE_USER = 'sol-i';
+const PROJECT_ID = process.env.GCP_PROJECT_ID || 'project-39c0ea08-238b-47b5-915';
+const ZONE = process.env.GCP_ZONE || 'us-west1-b';
+const INSTANCE_NAME = process.env.GCP_VM_NAME || 'gocd-deploy-target';
+const REMOTE_USER = process.env.VM_SSH_USER || 'xmnione';   // <-- dynamic, no more hard‑coded sol-i
 const AGENT_KEY_PATH = path.join(__dirname, '..', 'secrets', 'agent-key');
 const AGENT_KEY_COMMENT = 'gocd-agent';
 
@@ -41,7 +41,6 @@ if (!fs.existsSync(AGENT_KEY_PATH)) {
     log('Generating new agent SSH key pair...', '\x1b[33m');
     const keyDir = path.dirname(AGENT_KEY_PATH);
     if (!fs.existsSync(keyDir)) fs.mkdirSync(keyDir, { recursive: true });
-    // ssh-keygen -t rsa -b 4096 -f <path> -C <comment> -N ""
     run(`ssh-keygen -t rsa -b 4096 -f "${AGENT_KEY_PATH}" -C "${AGENT_KEY_COMMENT}" -N ""`, { silent: true });
     log('Key pair generated.', '\x1b[32m');
 } else {
@@ -57,7 +56,6 @@ if (!rawKeys) {
 }
 
 // ---------- Step 3: Filter out ephemeral/expired keys ----------
-// Ephemeral keys contain 'expireOn' in the comment (e.g., google-ssh {...})
 const lines = rawKeys ? rawKeys.split('\n').filter(line => line.trim() !== '') : [];
 const permanentKeys = lines.filter(line => !line.includes('expireOn'));
 
@@ -65,9 +63,9 @@ if (lines.length !== permanentKeys.length) {
     log(`Removed ${lines.length - permanentKeys.length} ephemeral key(s).`, '\x1b[33m');
 }
 
-// ---------- Step 4: Add agent public key ----------
+// ---------- Step 4: Add agent public key (with username prefix) ----------
 const agentPubKey = fs.readFileSync(`${AGENT_KEY_PATH}.pub`, 'utf8').trim();
-const agentLine = `${REMOTE_USER}:${agentPubKey}`;
+const agentLine = `${REMOTE_USER}:${agentPubKey}`;   // <-- ensures the key is valid for the correct user
 permanentKeys.push(agentLine);
 
 // ---------- Step 5: Write temporary ssh-keys.txt ----------
@@ -81,8 +79,20 @@ run(`gcloud compute instances add-metadata ${INSTANCE_NAME} \
     --zone=${ZONE} \
     --project=${PROJECT_ID} \
     --metadata-from-file ssh-keys="${tmpFile}"`, { silent: true });
-log('SSH keys successfully applied to the VM.', '\x1b[32m');
 
-// ---------- Step 7: Cleanup ----------
+// ---------- Step 7: Verify the key was installed ----------
+log('Verifying key installation...', '\x1b[33m');
+const verifyCmd = `gcloud compute instances describe ${INSTANCE_NAME} --zone=${ZONE} --project=${PROJECT_ID} --format="value(metadata.items.ssh-keys)"`;
+const updatedKeys = run(verifyCmd, { silent: true, ignoreError: true });
+if (updatedKeys && updatedKeys.includes(agentLine)) {
+    log('✅ Agent SSH key successfully installed on the VM.', '\x1b[32m');
+} else {
+    log('❌ Verification failed: the agent key was not found on the VM.', '\x1b[31m');
+    // Cleanup before exit
+    try { fs.unlinkSync(tmpFile); } catch (_) {}
+    process.exit(1);
+}
+
+// ---------- Step 8: Cleanup ----------
 fs.unlinkSync(tmpFile);
 log('Temporary file cleaned up.\nDone!', '\x1b[32m');

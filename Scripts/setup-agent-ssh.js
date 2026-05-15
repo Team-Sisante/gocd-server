@@ -14,7 +14,7 @@ const os = require('os');
 const PROJECT_ID = process.env.GCP_PROJECT_ID || 'project-39c0ea08-238b-47b5-915';
 const ZONE = process.env.GCP_ZONE || 'us-west1-b';
 const INSTANCE_NAME = process.env.GCP_VM_NAME || 'gocd-deploy-target';
-const REMOTE_USER = process.env.VM_SSH_USER || 'xmnione';   // <-- dynamic, no more hard‑coded sol-i
+const REMOTE_USER = process.env.VM_SSH_USER || 'xmnione';
 const AGENT_KEY_PATH = path.join(__dirname, '..', 'secrets', 'agent-key');
 const AGENT_KEY_COMMENT = 'gocd-agent';
 
@@ -47,6 +47,15 @@ if (!fs.existsSync(AGENT_KEY_PATH)) {
     log('Agent key pair already exists.', '\x1b[32m');
 }
 
+// ---------- Get VM IP and clear old host key ----------
+const ip = run(
+  `gcloud compute instances describe ${INSTANCE_NAME} --zone=${ZONE} --project=${PROJECT_ID} --format="value(networkInterfaces[0].accessConfigs[0].natIP)"`,
+  { silent: true, ignoreError: true }
+);
+if (ip) {
+  try { execSync(`ssh-keygen -R ${ip}`, { stdio: 'ignore' }); } catch (_) {}
+}
+
 // ---------- Step 2: Read current instance metadata SSH keys ----------
 log('Fetching current SSH keys from instance...', '\x1b[33m');
 const describeCmd = `gcloud compute instances describe ${INSTANCE_NAME} --zone=${ZONE} --project=${PROJECT_ID} --format="value(metadata.items.ssh-keys)"`;
@@ -65,7 +74,7 @@ if (lines.length !== permanentKeys.length) {
 
 // ---------- Step 4: Add agent public key (with username prefix) ----------
 const agentPubKey = fs.readFileSync(`${AGENT_KEY_PATH}.pub`, 'utf8').trim();
-const agentLine = `${REMOTE_USER}:${agentPubKey}`;   // <-- ensures the key is valid for the correct user
+const agentLine = `${REMOTE_USER}:${agentPubKey}`;
 permanentKeys.push(agentLine);
 
 // ---------- Step 5: Write temporary ssh-keys.txt ----------
@@ -88,7 +97,6 @@ if (updatedKeys && updatedKeys.includes(agentLine)) {
     log('✅ Agent SSH key successfully installed on the VM.', '\x1b[32m');
 } else {
     log('❌ Verification failed: the agent key was not found on the VM.', '\x1b[31m');
-    // Cleanup before exit
     try { fs.unlinkSync(tmpFile); } catch (_) {}
     process.exit(1);
 }

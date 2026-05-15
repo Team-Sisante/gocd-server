@@ -521,7 +521,8 @@ async function showMenu() {
             console.log('   6.18. Open staging app in browser');
             console.log('   6.19. Health check staging app');
             console.log('   6.20. Clear SSH host key for VM');
-            console.log('   6.21. Create new VM & run full setup');            
+            console.log('   6.21. Create new VM & run full setup');
+            console.log('   6.22. List all VMs (project-wide)');        
             console.log('');
             console.log('\x1b[36m0. Exit\x1b[0m');
             console.log('');
@@ -1225,7 +1226,12 @@ try {
                     log('⚠️  Remember to update GCP_VM_IP in .env.docker with the new IP and run option 2.4.', '\x1b[33m');
                     await pause();
                     break;
-                                    
+
+                case '6.22':
+                    sh(`gcloud compute instances list --project=${GCP_PROJECT_ID} --format="table(name,zone,status,machineType,networkInterfaces[0].accessConfigs[0].natIP)"`);
+                    await pause();
+                    break;
+
                 case '0':
                     rl.close();
                     process.exit(0);

@@ -27,14 +27,25 @@ const IMAGE_FAMILY = 'debian-11';
 const TAGS = ['http-server', 'https-server'];
 const STARTUP_SCRIPT_PATH = path.join(__dirname, '..', 'tmp_startup_script.sh');
 const SETUP_AGENT_SSH_SCRIPT = path.join(__dirname, 'setup-agent-ssh.js');
+const STATIC_IP_NAME = 'gocd-deploy-target-ip';
 
-// ---------- Validate required environment variable ----------
+// ---------- Validate required environment variables ----------
 const SSH_USER = process.env.VM_SSH_USER;
 if (!SSH_USER) {
     console.error('\x1b[31mERROR: VM_SSH_USER is not set.\x1b[0m');
     console.error('Please define VM_SSH_USER in your .env.docker file (e.g., VM_SSH_USER=xmnione).');
     process.exit(1);
 }
+
+const DESIRED_IP = process.env.GCP_VM_IP;
+if (!DESIRED_IP) {
+    console.error('\x1b[31mERROR: GCP_VM_IP is not set in your .env.docker file.\x1b[0m');
+    console.error('Please define GCP_VM_IP with the desired static IP.');
+    process.exit(1);
+}
+
+// Region derived from zone (e.g., us-west1-b → us-west1)
+const REGION = ZONE.substring(0, ZONE.lastIndexOf('-'));
 
 // ---------- Helpers ----------
 function run(cmd, options = {}) {
@@ -123,6 +134,66 @@ echo "=== Startup script finished at $(date) ==="
 async function main() {
   log('VM Provisioning Script for badminton_court deployment', '\x1b[32m');
 
+  // -----------------------------------------------
+  // Manage static IP reservation (with retry, avoids misleading messages)
+  // -----------------------------------------------
+  log('Ensuring static IP reservation...', '\x1b[33m');
+  let finalIp = DESIRED_IP;
+
+  // Check if reservation already exists and matches
+  const existingIP = run(
+    `gcloud compute addresses describe ${STATIC_IP_NAME} --region=${REGION} --format="value(address)"`,
+    { silent: true, ignoreError: true }
+  );
+
+  if (existingIP && existingIP.trim() === finalIp) {
+    log(`Static IP ${finalIp} already reserved.`);
+  } else {
+    if (existingIP) {
+      log(`Static IP changed: ${existingIP.trim()} → ${finalIp}. Deleting old reservation...`, '\x1b[33m');
+      run(`gcloud compute addresses delete ${STATIC_IP_NAME} --region=${REGION} --quiet`, { silent: true });
+    }
+
+    // Try twice to reserve the exact desired IP (transient GCP errors can happen)
+    let reservationCreated = false;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const createResult = run(
+        `gcloud compute addresses create ${STATIC_IP_NAME} --region=${REGION} --addresses=${finalIp}`,
+        { silent: true, ignoreError: true }
+      );
+      if (createResult !== null) {
+        log(`Static IP ${finalIp} reserved successfully.`);
+        reservationCreated = true;
+        break;
+      }
+      if (attempt === 1) {
+        log(`First reservation attempt failed – retrying once after a short pause...`, '\x1b[33m');
+        execSync(`ping -n 6 127.0.0.1 >nul`, { stdio: 'pipe' }); // ~5 seconds
+      }
+    }
+
+    if (!reservationCreated) {
+      // True fallback: desired IP really not available
+      log(`Could not reserve ${finalIp}. Falling back to a random static IP.`, '\x1b[33m');
+      run(`gcloud compute addresses create ${STATIC_IP_NAME} --region=${REGION}`, { silent: true });
+      const assignedIp = run(
+        `gcloud compute addresses describe ${STATIC_IP_NAME} --region=${REGION} --format="value(address)"`,
+        { silent: true }
+      );
+      finalIp = assignedIp.trim();
+      log(`Assigned static IP: ${finalIp}`, '\x1b[32m');
+
+      // Update .env.docker with the new IP
+      const envFilePath = path.join(__dirname, '..', '.env.docker');
+      if (fs.existsSync(envFilePath)) {
+        let envContent = fs.readFileSync(envFilePath, 'utf8');
+        envContent = envContent.replace(/^GCP_VM_IP=.*/m, `GCP_VM_IP=${finalIp}`);
+        fs.writeFileSync(envFilePath, envContent);
+        log(`Updated .env.docker with new GCP_VM_IP=${finalIp}`, '\x1b[32m');
+      }
+    }
+  }
+
   // Check if VM already exists
   const existing = run(
     `gcloud compute instances describe ${INSTANCE_NAME} --zone=${ZONE} --project=${PROJECT_ID} --format="value(name)"`,
@@ -145,17 +216,19 @@ async function main() {
   fs.writeFileSync(STARTUP_SCRIPT_PATH, finalScript);
   log('Startup script written.', '\x1b[33m');
 
-  // Create the VM
+  // Create the VM with the static IP
   log(`Creating VM ${INSTANCE_NAME}...`, '\x1b[33m');
   const tagsArg = TAGS.join(',');
   const createCmd = `gcloud compute instances create ${INSTANCE_NAME} \
-    --project=${PROJECT_ID} \
-    --zone=${ZONE} \
-    --machine-type=${MACHINE_TYPE} \
-    --image-project=${IMAGE_PROJECT} \
-    --image-family=${IMAGE_FAMILY} \
-    --tags=${tagsArg} \
-    --metadata-from-file startup-script=${STARTUP_SCRIPT_PATH}`;
+      --project=${PROJECT_ID} \
+      --zone=${ZONE} \
+      --machine-type=${MACHINE_TYPE} \
+      --image-project=${IMAGE_PROJECT} \
+      --image-family=${IMAGE_FAMILY} \
+      --tags=${tagsArg} \
+      --address=${STATIC_IP_NAME} \
+      --metadata-from-file startup-script=${STARTUP_SCRIPT_PATH}`;
+      
   run(createCmd, { silent: true });
   log('VM created. Waiting for it to be ready...', '\x1b[33m');
 
@@ -184,18 +257,16 @@ async function main() {
   run(`node "${SETUP_AGENT_SSH_SCRIPT}"`, { silent: true });
   log('Agent SSH key injected.', '\x1b[32m');
 
-  log(`\nDeployment VM ${INSTANCE_NAME} is ready.\nYou can now trigger the pipeline.\n`, '\x1b[32m');
-
-    // Show IP and reminder
+  // Get the assigned IP (should be the same as finalIp)
   const vmIP = run(
     `gcloud compute instances describe ${INSTANCE_NAME} --zone=${ZONE} --project=${PROJECT_ID} --format="value(networkInterfaces[0].accessConfigs[0].natIP)"`,
     { silent: true }
   );
-  log(`\n📌 The new VM IP is: ${vmIP}`, '\x1b[33m');
-  log('⚠️  Update GCP_VM_IP in your .env.docker file with this IP!', '\x1b[33m');
-  log('   Then run option 4.1 to encrypt the .env.docker file.\n', '\x1b[33m');
-  log('   Then run option 2.4 to update the pipelines.\n', '\x1b[33m');
-  log('   Then run option 2.1 to trigger the badminton_court-artifacts pipeline.\n', '\x1b[33m');
+  
+  log(`\n✅ Deployment VM ${INSTANCE_NAME} is ready.`, '\x1b[32m');
+  log(`   Static IP: ${vmIP}`, '\x1b[36m');
+  log(`   This IP is permanently reserved and will not change.`, '\x1b[36m');
+  log(`   You may now run option 2.4 (Convert pipelines to SSH) and then trigger the pipeline.`, '\x1b[36m');
 }
 
 main().catch(err => {

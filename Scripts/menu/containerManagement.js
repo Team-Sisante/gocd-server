@@ -7,23 +7,23 @@ const os = require('os');
 
 module.exports = {
     '1.1': async (ctx) => {
-        ctx.sh('docker compose build && docker compose up -d');
+        ctx.sh('docker compose --env-file .env.docker build && docker compose --env-file .env.docker up -d');
         await ctx.pause();
     },
     '1.2': async (ctx) => {
-        ctx.sh('docker ps -a --filter "status=exited"');
+        ctx.sh('docker compose --env-file .env.docker ps -a --filter "status=exited"');
         await ctx.pause();
     },
     '1.3': async (ctx) => {
-        ctx.sh('node Scripts/validate.js');
+        ctx.sh('docker compose --env-file .env.docker run --rm -v $(pwd)/Scripts:/scripts node:alpine sh -c "cd /scripts && npm install && node validate.js"');
         await ctx.pause();
     },
     '1.4': async (ctx) => {
-        ctx.sh('docker compose down');
+        ctx.sh('docker compose --env-file .env.docker down');
         await ctx.pause();
     },
     '1.5': async (ctx) => {
-        ctx.sh('docker compose down');
+        ctx.sh('docker compose --env-file .env.docker down');
         await ctx.pause();
     },
     '1.6': async (ctx) => {

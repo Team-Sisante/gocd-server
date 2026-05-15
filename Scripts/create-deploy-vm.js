@@ -5,7 +5,8 @@
  * Provisions the VM from scratch with a startup script that installs all
  * necessary dependencies and clones the repository.
  * After VM creation, automatically calls setup-agent-ssh.js to inject
- * the agent's SSH key.
+ * the agent's SSH key, runs firewall setup, GCP Secret Manager access,
+ * VM reachability check, and updates the GoCD pipeline configuration.
  *
  * Cross‑platform: Node.js + gcloud.
  * Usage:
@@ -26,7 +27,6 @@ const IMAGE_PROJECT = 'debian-cloud';
 const IMAGE_FAMILY = 'debian-11';
 const TAGS = ['http-server', 'https-server'];
 const STARTUP_SCRIPT_PATH = path.join(__dirname, '..', 'tmp_startup_script.sh');
-const SETUP_AGENT_SSH_SCRIPT = path.join(__dirname, 'setup-agent-ssh.js');
 const STATIC_IP_NAME = 'gocd-deploy-target-ip';
 
 // ---------- Validate required environment variables ----------
@@ -101,25 +101,37 @@ done
 export DEBIAN_FRONTEND=noninteractive
 
 # Update system
-apt-get update && apt-get upgrade -y
+echo "Updating package lists..."
+apt-get update
+echo "Upgrading existing packages..."
+apt-get upgrade -y
 
 # Install required packages
+echo "Installing essential packages..."
 apt-get install -y ca-certificates curl git gnupg lsb-release
 
 # Install Docker
+echo "Installing Docker..."
 curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 systemctl enable docker --now
+echo "Docker installed."
 
 # Install Node.js 18.x
+echo "Installing Node.js..."
 curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
 apt-get install -y nodejs
+echo "Node.js installed."
 
 # Install gcloud CLI (optional)
+echo "Installing gcloud CLI..."
 echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
 curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
-apt-get update && apt-get install -y google-cloud-cli
+apt-get update
+apt-get install -y google-cloud-cli
+echo "gcloud CLI installed."
 
 # Create the SSH user (from VM_SSH_USER environment variable)
 SSH_USER="${SSH_USER}"
@@ -135,6 +147,8 @@ mkdir -p "$REPO_DIR"
 chown -R "$SSH_USER:$SSH_USER" "$REPO_DIR"
 
 # Verify critical tools
+echo ""
+echo "=== Verifying installed tools ==="
 for tool in git docker node npm gcloud; do
   if command -v $tool &>/dev/null; then
     echo "  ✓ $tool is installed"
@@ -148,12 +162,15 @@ echo "=== Startup script finished at $(date) ==="
 
 // ---------- Main flow ----------
 async function main() {
-  log('VM Provisioning Script for badminton_court deployment', '\x1b[32m');
+  const startTime = Date.now();
+  const elapsed = () => Math.floor((Date.now() - startTime) / 1000) + 's';
+
+  log(`[${elapsed()}] VM Provisioning for badminton_court deployment`, '\x1b[32m');
 
   // ----------------------------------------------------------------
   // Ensure the VM's service account can read Secret Manager (one-time)
   // ----------------------------------------------------------------
-  log('Ensuring Secret Manager permissions for the VM service account...', '\x1b[33m');
+  log(`[${elapsed()}] Ensuring Secret Manager permissions for the VM service account...`, '\x1b[33m');
   run(
     `gcloud projects add-iam-policy-binding ${PROJECT_ID} \
         --member="serviceAccount:${COMPUTE_SA}" \
@@ -164,7 +181,7 @@ async function main() {
   // -----------------------------------------------
   // Manage static IP reservation (with retry, avoids misleading messages)
   // -----------------------------------------------
-  log('Ensuring static IP reservation...', '\x1b[33m');
+  log(`[${elapsed()}] Ensuring static IP reservation...`, '\x1b[33m');
   let finalIp = DESIRED_IP;
 
   // Check if reservation already exists and matches
@@ -268,6 +285,7 @@ async function main() {
       { silent: true, ignoreError: true }
     );
     if (status && status.trim() === 'RUNNING') break;
+    log(`  Elapsed ${elapsed()} – still waiting...`, '\x1b[36m');
     await new Promise(resolve => setTimeout(resolve, 10000));
   }
 
@@ -275,15 +293,34 @@ async function main() {
     log('VM failed to reach RUNNING state. Check console.', '\x1b[31m');
     process.exit(1);
   }
-  log('VM is running.', '\x1b[32m');
+  log(`[${elapsed()}] VM is running.`);
 
   // Clean up temp file
   fs.unlinkSync(STARTUP_SCRIPT_PATH);
 
-  // Run setup-agent-ssh.js to inject the agent's SSH key
-  log('Injecting agent SSH key...', '\x1b[33m');
-  run(`node "${SETUP_AGENT_SSH_SCRIPT}"`, { silent: true });
-  log('Agent SSH key injected.', '\x1b[32m');
+  // ------------------------------------------------------------------
+  // Post‑creation setup (automatic) – runs the same scripts as option 6.14
+  // ------------------------------------------------------------------
+  const postScripts = [
+    ['setup-firewall-rules.js', 'Firewall rules'],
+    ['setup-agent-ssh.js', 'SSH keys'],
+    ['setup-gcp-secrets-access.js', 'Secret Manager access'],
+    ['check-vm-reachability.js', 'VM reachability']
+  ];
+  for (const [script, label] of postScripts) {
+    log(`[${elapsed()}] Running ${label}...`, '\x1b[33m');
+    run(`node "${path.join(__dirname, script)}"`, { silent: true });
+    log(`[${elapsed()}] ${label} done.`, '\x1b[36m');
+  }
+
+  // ------------------------------------------------------------------
+  // Update GoCD pipeline configuration (replaces option 2.4)
+  // ------------------------------------------------------------------
+  log(`[${elapsed()}] Applying pipeline configuration...`, '\x1b[33m');
+  const configXml = path.join(__dirname, '..', 'config', 'cruise-config.xml');
+  execSync(`docker cp "${configXml}" gocd-server:/godata/config/cruise-config.xml`, { stdio: 'inherit' });
+  execSync('docker restart gocd-server', { stdio: 'inherit' });
+  log(`[${elapsed()}] GoCD server restarted.`);
 
   // Get the assigned IP (should be the same as finalIp)
   const vmIP = run(
@@ -295,7 +332,8 @@ async function main() {
   log(`   Static IP: ${vmIP}`, '\x1b[36m');
   log(`   This IP is permanently reserved and will not change.`, '\x1b[36m');
   log(`   The VM has full access to GCP Secret Manager.`, '\x1b[36m');
-  log(`   You may now run option 2.4 (Convert pipelines to SSH) and then trigger the pipeline.`, '\x1b[36m');
+  log(`   All post‑creation steps completed and pipeline configuration applied.`, '\x1b[36m');
+  log(`   You may now use option 2.1 to trigger the badminton_court‑artifacts pipeline.`, '\x1b[36m');
 }
 
 main().catch(err => {

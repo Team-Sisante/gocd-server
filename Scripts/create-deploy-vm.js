@@ -7,9 +7,10 @@
  *    granular scripts that are also available as individual menu options:
  *    - setup-firewall-rules.js      (6.2)
  *    - setup-agent-ssh.js           (6.3)
- *    - setup-gcp-secrets-access.js  (6.4)
- *    - check-vm-reachability.js     (6.7)
- *    - apply-pipeline-config.js     (6.8)
+ *    - install-tools-on-vm.js       (6.4)
+ *    - setup-gcp-secrets-access.js  (6.5)
+ *    - check-vm-reachability.js     (6.6)
+ *    - apply-pipeline-config.js     (6.7)   ← pipeline config is part of the setup
  *
  * Usage:
  *   node Scripts/create-deploy-vm.js
@@ -43,22 +44,19 @@ async function main() {
 
   log(`[${elapsed()}] Starting full deployment VM creation…`, '\x1b[32m');
 
-  // -----------------------------------------------
-  // 1. Create the VM (same as menu option 6.1)
-  // -----------------------------------------------
+  // 1. Create the VM (menu option 6.1)
   log(`[${elapsed()}] Step 1: Creating fresh VM (menu option 6.1)…`, '\x1b[33m');
   run('node Scripts/create-fresh-vm.js');
   log(`[${elapsed()}] VM created.`);
 
-  // -----------------------------------------------
   // 2. Post‑creation setup (same as individual menu options)
-  // -----------------------------------------------
   const steps = [
-    ['setup-firewall-rules.js',      'Firewall rules (6.2)'],
-    ['setup-agent-ssh.js',           'SSH keys (6.3)'],
-    ['setup-gcp-secrets-access.js',  'Secret Manager access (6.4)'],
-    ['check-vm-reachability.js',     'VM reachability (6.7)'],
-    ['apply-pipeline-config.js',     'Apply pipeline config (6.8)']
+    ['setup-firewall-rules.js',      'Configure firewall rules (6.2)'],
+    ['setup-agent-ssh.js',           'Setup agent SSH keys (6.3)'],
+    ['install-tools-on-vm.js',       'Install / Verify tools on VM (6.4)'],
+    ['setup-gcp-secrets-access.js',  'Setup GCP Secret Manager access (6.5)'],
+    ['check-vm-reachability.js',     'Check VM running & reachable (6.6)'],
+    ['apply-pipeline-config.js',     'Apply pipeline configuration (6.7)']
   ];
 
   for (const [script, label] of steps) {

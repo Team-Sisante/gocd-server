@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * install-tools-on-vm.js – Waits for the VM's startup script to finish
- * (which already installs Docker, Node, etc.) and then ensures
- * /opt/badminton_court has correct ownership.
+ * (which installs Docker, Node, etc.) and ensures /opt/badminton_court
+ * has correct ownership. Streams the startup log in real time so you
+ * always know what's happening.
  *
  * Uses GCP_PROJECT_ID, GCP_ZONE, VM_SSH_USER from the environment.
  */
@@ -40,28 +41,30 @@ if (!ip) {
 try { execSync(`ssh-keygen -R ${ip}`, { stdio: 'ignore' }); } catch (_) {}
 
 // ------------------------------------------------------------------
-// Wait until the startup script is completely done
+// Stream the startup log and wait until the service is completely done
 // ------------------------------------------------------------------
 console.log('Waiting for VM startup script to complete…');
-console.log('  (New log lines from the VM will appear below)');
+console.log('  (Live log from the VM – every new line will appear below)');
 
-let lastLogLine = '';
+let lastOffset = 0;            // how many bytes of the log we've already seen
 let startupDone = false;
+let lastStatusTime = Date.now();
 
 for (let i = 0; i < 90; i++) {   // up to 15 minutes
-  // Show progress from the startup log
+  // Fetch new log content since lastOffset
   try {
-    const logLine = execSync(
-      `ssh -i "${KEY_FILE}" -o StrictHostKeyChecking=no ${SSH_USER}@${ip} "tail -n 1 /var/log/startup-script.log 2>/dev/null || echo ''"`,
+    const newContent = execSync(
+      `ssh -i "${KEY_FILE}" -o StrictHostKeyChecking=no ${SSH_USER}@${ip} "tail -c +${lastOffset + 1} /var/log/startup-script.log 2>/dev/null || true"`,
       { encoding: 'utf8', stdio: 'pipe' }
-    ).trim();
-    if (logLine && logLine !== lastLogLine) {
-      console.log(`  VM: ${logLine}`);
-      lastLogLine = logLine;
+    );
+    if (newContent.trim()) {
+      process.stdout.write(newContent);   // print directly, no extra newlines
+      lastOffset += Buffer.byteLength(newContent, 'utf8');
+      lastStatusTime = Date.now();
     }
   } catch (_) {}
 
-  // Check if the startup script service has stopped
+  // Check if the startup script service is inactive
   let serviceInactive = false;
   try {
     const status = execSync(
@@ -77,11 +80,17 @@ for (let i = 0; i < 90; i++) {   // up to 15 minutes
   let aptRunning = false;
   try {
     const aptProcs = execSync(
-      `ssh -i "${KEY_FILE}" -o StrictHostKeyChecking=no ${SSH_USER}@${ip} "pgrep -x apt-get || true"`,
+      `ssh -i "${KEY_FILE}" -o StrictHostKeyChecking=no ${SSH_USER}@${ip} "pgrep -x apt-get || pgrep -x dpkg || true"`,
       { encoding: 'utf8', stdio: 'pipe' }
     ).trim();
     if (aptProcs) aptRunning = true;
-  } catch (_) { /* pgrep might not be installed, assume not running */ }
+  } catch (_) {}
+
+  // Status update if nothing new for 30 seconds
+  if (Date.now() - lastStatusTime > 30000) {
+    console.log(`  [Status] Service active: ${!serviceInactive}, apt running: ${aptRunning}`);
+    lastStatusTime = Date.now();
+  }
 
   if (serviceInactive && !aptRunning) {
     startupDone = true;

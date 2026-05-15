@@ -510,7 +510,6 @@ async function showMenu() {
             console.log('   2.1. Trigger badminton_court pipeline');
             console.log('   2.2. View pipeline history');
             console.log('   2.3. Unlock pipeline');
-            console.log('   2.4. Convert pipelines to SSH');
             console.log('');
             console.log('\x1b[36m3. AGENT MANAGEMENT\x1b[0m');
             console.log('   3.1. View agent status');
@@ -823,11 +822,7 @@ try {
                     log(`Pipeline ${pipelineToUnlock} unlock requested.`, '\x1b[32m');
                     await pause();
                     break;
-                case '2.4':
-                    sh('node Scripts/update-pipelines-ssh.js');
-                    await pause();
-                    break;
-
+                
                 case '3.1':
                     sh(`docker exec gocd-server curl -s -u "${GOCD_USER}:${GOCD_PASS}" ${GOCD_BASE}/go/api/agents | jq ".[] | {hostname, status, resources}"`);
                     await pause();

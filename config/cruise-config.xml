@@ -45,26 +45,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg><![CDATA[
-                  export GITHUB_TOKEN='__GITHUB_TOKEN__'
-
-                  ## Generate environment and compile the binary
-                  node Scripts/generate-env.js development .env.docker
-                  node Scripts/compile.js
-
-                  ## Login once
-                  echo "$GITHUB_TOKEN" | docker login ghcr.io -u xmione --password-stdin
-
-                  ## Retry loop for image build and push
-                  for i in 1 2 3; do
-                    docker build -t ghcr.io/xmione/badminton_court-web:latest -f Dockerfile.binary . &&
-                    docker push ghcr.io/xmione/badminton_court-web:latest &&
-                    docker build -t ghcr.io/xmione/badminton_court-mail:latest -f Dockerfile.posteio . &&
-                    docker push ghcr.io/xmione/badminton_court-mail:latest && break
-                    echo "Push attempt ${i} failed, retrying in 10s..."
-                    sleep 10
-                  done
-                ]]></arg>
+                <arg>node /badminton_court/Scripts/build-and-push.js</arg>
               </exec>
             </tasks>
           </job>
@@ -86,28 +67,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg><![CDATA[
-    ssh -i /secret/agent-key \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        xmione@136.109.209.69 \
-        "sudo mkdir -p /opt/badminton_court &&
-         sudo chown -R \$USER /opt/badminton_court &&
-         git config --global --add safe.directory /opt/badminton_court &&
-         cd /opt/badminton_court &&
-         if [ ! -d .git ]; then
-             git clone https://__GITHUB_TOKEN__@github.com/xmione/badminton_court.git .;
-         else
-             git remote set-url origin https://__GITHUB_TOKEN__@github.com/xmione/badminton_court.git 2>/dev/null || git remote add origin https://__GITHUB_TOKEN__@github.com/xmione/badminton_court.git;
-             git fetch origin master &&
-             git reset --hard origin/master;
-         fi &&
-         export GITHUB_TOKEN='__GITHUB_TOKEN__' &&
-         node Scripts/generate-env.js development .env.staging &&
-         echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&
-         sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging pull &&
-         sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging up -d --build"
-  ]]></arg>
+                <arg>node /badminton_court/Scripts/deploy.js staging __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -130,27 +90,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg><![CDATA[
-    ssh -i /secret/agent-key \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        xmione@136.109.209.69 \
-        "sudo mkdir -p /opt/badminton_court &&
-         sudo chown -R \$USER /opt/badminton_court &&
-         git config --global --add safe.directory /opt/badminton_court &&
-         cd /opt/badminton_court &&
-         if [ ! -d .git ]; then
-             git clone https://__GITHUB_TOKEN__@github.com/xmione/badminton_court.git .;
-         else
-             git remote set-url origin https://__GITHUB_TOKEN__@github.com/xmione/badminton_court.git 2>/dev/null || git remote add origin https://__GITHUB_TOKEN__@github.com/xmione/badminton_court.git;
-             git fetch origin master &&
-             git reset --hard origin/master;
-         fi &&
-         node Scripts/generate-env.js docker-production .env.production &&
-         echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&
-         sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production pull &&
-         sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production up -d --build"
-  ]]></arg>
+                <arg>node /badminton_court/Scripts/deploy.js production __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>

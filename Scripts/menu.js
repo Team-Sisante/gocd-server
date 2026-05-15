@@ -546,7 +546,6 @@ async function showMenu() {
             console.log('   6.6. Monitor VM status');
             console.log('   6.7. Check VM running & reachable');
             console.log('   6.8. Grant agent VM read access (one‑time setup)');
-            console.log('   6.9. Install Tools on VM (one‑time setup)');
             console.log('   6.10. Export VM settings to YAML');
             console.log('   6.11. Delete VM');
             console.log('   6.12. Create VM from saved YAML');
@@ -1052,12 +1051,6 @@ try {
                     log('Agent granted all required permissions (including project‑level SSH metadata).', '\x1b[32m');
                     await pause();
                     break;
-                case '6.9':
-                // Install tools on VM (one-time setup)
-                    sh('node Scripts/install-tools-on-vm.js');
-                    log('Agent granted all required permissions.', '\x1b[32m');
-                    await pause();
-                    break;
                 case '6.10':
                     const exportPath = await ask('Output filename (default: gocd-deploy-target-config.yaml): ') || 'gocd-deploy-target-config.yaml';
                     sh(`gcloud compute instances export ${GCP_VM_NAME} --project=${GCP_PROJECT_ID} --zone=${GCP_ZONE} --destination=${exportPath}`);
@@ -1127,7 +1120,6 @@ try {
                         log('   6.2  – Configure firewall rules', '\x1b[33m');
                         log('   6.3  – Setup agent SSH keys', '\x1b[33m');
                         log('   6.4  – Setup GCP Secret Manager access', '\x1b[33m');
-                        log('   6.9  – Install Tools on VM', '\x1b[33m');
                         log('   6.7  – Check VM reachability', '\x1b[33m');
                         log('', '\x1b[36m');
                         log('💡 Pro tip: Use option 6.14 to run all of them at once.', '\x1b[36m');
@@ -1186,7 +1178,6 @@ try {
                         log('   6.2  – Configure firewall rules', '\x1b[33m');
                         log('   6.3  – Setup agent SSH keys', '\x1b[33m');
                         log('   6.4  – Setup GCP Secret Manager access', '\x1b[33m');
-                        log('   6.9  – Install Tools on VM', '\x1b[33m');
                         log('   6.7  – Check VM reachability', '\x1b[33m');
                         log('', '\x1b[36m');
                         log('💡 Pro tip: Use option 6.14 to run all of them at once.', '\x1b[36m');
@@ -1198,7 +1189,6 @@ try {
                     sh('node Scripts/setup-firewall-rules.js');
                     sh('node Scripts/setup-agent-ssh.js');
                     sh('node Scripts/setup-gcp-secrets-access.js');
-                    sh('node Scripts/install-tools-on-vm.js');
                     sh('node Scripts/check-vm-reachability.js');
                     log('✅ Setup completed.', '\x1b[32m');
                     await pause();
@@ -1247,31 +1237,30 @@ try {
                     break;
                 }
 
-                case '6.21':
-                    log('Creating a fresh VM and running full setup...', '\x1b[33m');
-                    // Run create-deploy-vm.js – on abort it will exit with code 1
-                    const vmResult = sh('node Scripts/create-deploy-vm.js');
-                    if (vmResult && vmResult.success === false) {
-                        log('VM creation aborted by user. No further actions taken.', '\x1b[33m');
-                        await pause();
-                        break;
-                    }
+            case '6.21':
+                const startTime = Date.now();
+                function elapsed() { return Math.floor((Date.now() - startTime) / 1000) + 's'; }
 
-                    // Only continue if VM was created or replaced
-                    await sleep(5000);
-                    log('Running post‑creation setup...', '\x1b[33m');
-                    sh('node Scripts/setup-firewall-rules.js');
-                    sh('node Scripts/setup-agent-ssh.js');
-                    sh('node Scripts/setup-gcp-secrets-access.js');
-                    sh('node Scripts/install-tools-on-vm.js');
-                    sh('node Scripts/check-vm-reachability.js');
-                    log('✅ Fresh VM created and full setup completed.', '\x1b[32m');
-                    log('Updating pipeline configuration to use the new VM...', '\x1b[33m');
-                    sh('node Scripts/update-pipelines-ssh.js');
-                    log('✅ Pipelines are now ready for deployment.', '\x1b[32m');
-                    log('You can now use option 2.1 to trigger the badminton_court‑artifacts pipeline.', '\x1b[36m');
+                log(`[${elapsed()}] Creating a fresh VM and running full setup...`, '\x1b[33m');
+                const vmResult = sh('node Scripts/create-deploy-vm.js');
+                if (vmResult && vmResult.success === false) {
+                    log(`[${elapsed()}] VM creation aborted by user. No further actions taken.`, '\x1b[33m');
                     await pause();
                     break;
+                }
+
+                log(`[${elapsed()}] Running post‑creation setup...`, '\x1b[33m');
+                sh('node Scripts/setup-firewall-rules.js');  log(`[${elapsed()}] Firewall rules done.`, '\x1b[36m');
+                sh('node Scripts/setup-agent-ssh.js');       log(`[${elapsed()}] SSH keys done.`, '\x1b[36m');
+                sh('node Scripts/setup-gcp-secrets-access.js'); log(`[${elapsed()}] Secret Manager access done.`, '\x1b[36m');
+                sh('node Scripts/check-vm-reachability.js'); log(`[${elapsed()}] Reachability check done.`, '\x1b[36m');
+                
+                log(`[${elapsed()}] Updating pipeline configuration...`, '\x1b[33m');
+                sh('node Scripts/update-pipelines-ssh.js');
+                log(`[${elapsed()}] ✅ Pipelines are now ready for deployment.`, '\x1b[32m');
+                log('You can now use option 2.1 to trigger the badminton_court‑artifacts pipeline.', '\x1b[36m');
+                await pause();
+                break;
                     
                 case '6.22':
                     sh(`gcloud compute instances list --project=${GCP_PROJECT_ID} --format="table(name,zone,status,machineType,networkInterfaces[0].accessConfigs[0].natIP)"`);

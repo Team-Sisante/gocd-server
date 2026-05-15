@@ -85,6 +85,21 @@ exec > /var/log/startup-script.log 2>&1
 
 echo "=== Startup script starting at $(date) ==="
 
+# Wait up to 5 minutes for any apt process to finish (GCP guest agent, auto-updates, etc.)
+echo "Waiting for apt lock to be released..."
+for i in $(seq 1 30); do
+  if fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
+    echo "  apt is busy (attempt $i/30), waiting 10s..."
+    sleep 10
+  else
+    echo "  apt lock is free."
+    break
+  fi
+done
+
+# Now safe to run apt
+export DEBIAN_FRONTEND=noninteractive
+
 # Update system
 apt-get update && apt-get upgrade -y
 
@@ -119,16 +134,14 @@ REPO_DIR="/opt/badminton_court"
 mkdir -p "$REPO_DIR"
 chown -R "$SSH_USER:$SSH_USER" "$REPO_DIR"
 
-# Clone the repository (if possible)
-cd "$REPO_DIR"
-if [ ! -d ".git" ]; then
-  sudo -u "$SSH_USER" git clone https://github.com/xmione/badminton_court.git . || {
-    echo "Clone failed; creating empty directory for pipeline to populate."
-    mkdir -p "$REPO_DIR"
-    chown "$SSH_USER:$SSH_USER" "$REPO_DIR"
-    cd "$REPO_DIR" && sudo -u "$SSH_USER" git init
-  }
-fi
+# Verify critical tools
+for tool in git docker node npm gcloud; do
+  if command -v $tool &>/dev/null; then
+    echo "  ✓ $tool is installed"
+  else
+    echo "  ✗ WARNING: $tool is MISSING"
+  fi
+done
 
 echo "=== Startup script finished at $(date) ==="
 `;

@@ -180,7 +180,10 @@ async function showMenu() {
             const ctx = {
                 sh, log, ask, pause, execSync, openUrl, sleep, isWindows, PROJECT_ROOT,
                 GOCD_BASE, GOCD_USER, GOCD_PASS, GCP_PROJECT_ID, GCP_ZONE, GCP_VM_NAME,
-                GCP_VM_IP, VM_SSH_USER,    // straight from validated env vars
+                GCP_VM_IP, VM_SSH_USER,
+                // Aliases used by vmSetup and other SSH‑based options
+                SSH_USER: VM_SSH_USER,
+                VM_IP:   GCP_VM_IP,
                 rl, setErrorDisplayed, errorDisplayed,
                 SSH_KEY_PATH: path.join(__dirname, '..', 'secrets', 'agent-key')
             };

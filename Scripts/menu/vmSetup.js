@@ -24,9 +24,8 @@ module.exports = {
     },
     // 6.4 – Install / Verify tools on VM
     '6.4': async (ctx) => {
-        const sshCmd = `ssh -i "${ctx.SSH_KEY_PATH}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${ctx.SSH_USER}@${ctx.VM_IP} "echo 'Checking tools...' && for tool in docker node npm git gcloud; do if command -v \$tool &>/dev/null; then echo \\"  ✓ \$tool is installed\\"; else echo \\"  ✗ \$tool is MISSING\\"; fi; done && sudo chown -R ${ctx.SSH_USER}:${ctx.SSH_USER} /opt/badminton_court 2>/dev/null && echo 'Directory /opt/badminton_court ownership fixed (if needed).'"`;
-        ctx.sh(sshCmd);
-        ctx.log('Tool verification complete.', '\x1b[32m');
+        ctx.sh('node Scripts/install-tools-on-vm.js');
+        ctx.log('VM tools are now ready.', '\x1b[32m');
         await ctx.pause();
     },
     // 6.5 – Setup GCP Secret Manager access for agent

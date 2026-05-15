@@ -308,8 +308,8 @@ async function main() {
   log(`   This IP is permanently reserved and will not change.`, '\x1b[36m');
   log(`   The VM has full access to GCP Secret Manager.`, '\x1b[36m');
   log(`   Next steps:`, '\x1b[36m');
-  log(`   • Run 6.2‑6.6 to complete the setup (firewall, SSH, tools, secrets, reachability).`, '\x1b[36m');
-  log(`   • Or use option 6.15 to run them all at once.`, '\x1b[36m');
+  log(`   • Run 6.2‑6.7 to complete the setup (firewall, SSH, tools, secrets, reachability, pipeline config).`, '\x1b[36m');
+  log(`   • Or use option 6.15 to run firewall, SSH, secrets, reachability, then run 6.7 for pipeline config.`, '\x1b[36m');
   log(`   • For a fully automatic fresh start, use option 6.22 next time.`, '\x1b[36m');
 }
 

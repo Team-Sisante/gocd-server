@@ -150,6 +150,7 @@
          sudo chown -R \$USER /opt/badminton_court &&
          git config --global --add safe.directory /opt/badminton_court &&
          cd /opt/badminton_court &&
+         git remote set-url origin https://github.com/xmione/badminton_court.git || git remote add origin https://github.com/xmione/badminton_court.git &&
          git pull origin master &&
          node Scripts/generate-env.js development .env.staging &&
          echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&
@@ -187,6 +188,7 @@
          sudo chown -R \$USER /opt/badminton_court &&
          git config --global --add safe.directory /opt/badminton_court &&
          cd /opt/badminton_court &&
+         git remote set-url origin https://github.com/xmione/badminton_court.git || git remote add origin https://github.com/xmione/badminton_court.git &&
          git pull origin master &&
          node Scripts/generate-env.js docker-production .env.production &&
          echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&

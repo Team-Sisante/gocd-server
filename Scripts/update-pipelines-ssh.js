@@ -35,7 +35,7 @@ const REPO_URL = `${GIT_PROTO}://${GIT_DOMAIN}/${GIT_USER}/${GIT_REPO}.git`;
 
 const APP_ROOT = '/opt/badminton_court';   // standard deployment directory on the VM
 
-// ---------- New SSH task blocks (no hardcoded repo/username) ----------
+// ---------- New SSH task blocks (always include the remote fix) ----------
 const stagingNewTask = `              <exec command="bash">
                 <arg>-c</arg>
                 <arg><![CDATA[
@@ -87,7 +87,7 @@ const productionOldTask = `              <exec command="bash">
                 <arg><![CDATA[gcloud compute ssh "__GCP_VM_NAME__" --project "__GCP_PROJECT_ID__" --zone "__GCP_ZONE__" --quiet --command "export GITHUB_TOKEN='__GITHUB_TOKEN__' && sudo chown -R \\$USER /app/badminton_court && git config --global --add safe.directory /app/badminton_court && cd /app/badminton_court && git pull origin master && node Scripts/generate-env.js docker-production .env.production && echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin && sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production pull && sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production up -d --build"]]></arg>
               </exec>`;
 
-// ---------- Old deploy.js task blocks (to be replaced by SSH tasks) ----------
+// ---------- Old deploy.js task blocks ----------
 const stagingOldDeployTask = `              <exec command="bash">
                 <arg>-c</arg>
                 <arg>node /badminton_court/Scripts/deploy.js staging __GITHUB_TOKEN__</arg>
@@ -96,6 +96,46 @@ const stagingOldDeployTask = `              <exec command="bash">
 const productionOldDeployTask = `              <exec command="bash">
                 <arg>-c</arg>
                 <arg>node /badminton_court/Scripts/deploy.js production __GITHUB_TOKEN__</arg>
+              </exec>`;
+
+// ---------- Current SSH tasks that are missing the remote fix ----------
+// (These are the exact strings currently in your local cruise-config.xml)
+const stagingOldSSHTask = `              <exec command="bash">
+                <arg>-c</arg>
+                <arg><![CDATA[
+    ssh -i /secret/agent-key \\
+        -o StrictHostKeyChecking=no \\
+        -o UserKnownHostsFile=/dev/null \\
+        xmione@136.109.209.69 \\
+        "mkdir -p /opt/badminton_court &&
+         sudo chown -R \\$USER /opt/badminton_court &&
+         git config --global --add safe.directory /opt/badminton_court &&
+         cd /opt/badminton_court &&
+         git pull origin master &&
+         node Scripts/generate-env.js development .env.staging &&
+         echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&
+         sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging pull &&
+         sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging up -d --build"
+  ]]></arg>
+              </exec>`;
+
+const productionOldSSHTask = `              <exec command="bash">
+                <arg>-c</arg>
+                <arg><![CDATA[
+    ssh -i /secret/agent-key \\
+        -o StrictHostKeyChecking=no \\
+        -o UserKnownHostsFile=/dev/null \\
+        xmione@136.109.209.69 \\
+        "mkdir -p /opt/badminton_court &&
+         sudo chown -R \\$USER /opt/badminton_court &&
+         git config --global --add safe.directory /opt/badminton_court &&
+         cd /opt/badminton_court &&
+         git pull origin master &&
+         node Scripts/generate-env.js docker-production .env.production &&
+         echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&
+         sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production pull &&
+         sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production up -d --build"
+  ]]></arg>
               </exec>`;
 
 // ---------- Main ----------
@@ -132,6 +172,23 @@ if (content.includes(productionOldDeployTask)) {
     changes++;
 } else {
     console.log('⚠ Production deploy.js task not found or already modified.');
+}
+
+// Detect current SSH tasks that lack the remote fix
+if (content.includes(stagingOldSSHTask)) {
+    console.log('▶ Updating staging SSH task (adding remote fix)...');
+    content = content.replace(stagingOldSSHTask, stagingNewTask);
+    changes++;
+} else {
+    console.log('⚠ Staging SSH task already contains remote fix or not found.');
+}
+
+if (content.includes(productionOldSSHTask)) {
+    console.log('▶ Updating production SSH task (adding remote fix)...');
+    content = content.replace(productionOldSSHTask, productionNewTask);
+    changes++;
+} else {
+    console.log('⚠ Production SSH task already contains remote fix or not found.');
 }
 
 if (changes > 0) {

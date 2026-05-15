@@ -86,7 +86,21 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /badminton_court/Scripts/deploy.js staging __GITHUB_TOKEN__</arg>
+                <arg><![CDATA[
+    ssh -i /secret/agent-key \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        xmione@136.109.209.69 \
+        "mkdir -p /opt/badminton_court &&
+         sudo chown -R \$USER /opt/badminton_court &&
+         git config --global --add safe.directory /opt/badminton_court &&
+         cd /opt/badminton_court &&
+         git pull origin master &&
+         node Scripts/generate-env.js development .env.staging &&
+         echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&
+         sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging pull &&
+         sudo docker compose -f docker-compose.vm.yml --env-file .env.staging --profile staging up -d --build"
+  ]]></arg>
               </exec>
             </tasks>
           </job>
@@ -109,7 +123,21 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /badminton_court/Scripts/deploy.js production __GITHUB_TOKEN__</arg>
+                <arg><![CDATA[
+    ssh -i /secret/agent-key \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        xmione@136.109.209.69 \
+        "mkdir -p /opt/badminton_court &&
+         sudo chown -R \$USER /opt/badminton_court &&
+         git config --global --add safe.directory /opt/badminton_court &&
+         cd /opt/badminton_court &&
+         git pull origin master &&
+         node Scripts/generate-env.js docker-production .env.production &&
+         echo '__GITHUB_TOKEN__' | sudo docker login ghcr.io -u xmione --password-stdin &&
+         sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production pull &&
+         sudo docker compose -f docker-compose.vm.yml --env-file .env.production --profile production up -d --build"
+  ]]></arg>
               </exec>
             </tasks>
           </job>

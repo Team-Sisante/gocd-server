@@ -211,17 +211,69 @@ module.exports = {
     },
     // 6.16 – Show Docker containers on VM
     '6.16': async (ctx) => {
-        const sshCmd = `ssh -i "${ctx.SSH_KEY_PATH}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${ctx.SSH_USER}@${ctx.VM_IP} "docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'"`;
-        ctx.sh(sshCmd);
-        await ctx.pause();
+        try {
+            ctx.rl.pause();
+            const inquirer = (await import('inquirer')).default;
+            const sshCmd = `ssh -i "${ctx.SSH_KEY_PATH}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${ctx.SSH_USER}@${ctx.VM_IP} "docker ps -a --format '{{.Names}}'"`;
+            const result = ctx.execSync(sshCmd, { encoding: 'utf8', stdio: 'pipe' });
+            const containers = result.trim().split('\n').filter(Boolean);
+            if (containers.length === 0) {
+                ctx.log('No containers found on VM.', '\x1b[33m');
+                ctx.rl.resume();
+                await ctx.pause();
+                return;
+            }
+            const { service } = await inquirer.prompt({
+                type: 'list',
+                name: 'service',
+                message: 'Select a container to view logs:',
+                choices: containers
+            });
+            ctx.rl.resume();
+            ctx.sh(`ssh -i "${ctx.SSH_KEY_PATH}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${ctx.SSH_USER}@${ctx.VM_IP} "docker logs -f --tail 50 ${service}"`);
+            await ctx.pause();
+        } catch (e) {
+            ctx.rl.resume();                     // ensure readline is active
+            ctx.setErrorDisplayed(true);
+            process.stdout.write('\x1Bc');
+            ctx.log('❌ Failed to list containers or view logs.', '\x1b[31m');
+            console.error(e.stderr || e.message);
+            await ctx.ask('Press Enter to return to the menu...');
+            // No extra pause
+        }
     },
     // 6.17 – View logs of a service on VM
     '6.17': async (ctx) => {
-        const service = await ctx.ask('Service name (e.g., badminton_web_1): ');
-        if (service) {
-            ctx.sh(`ssh -i "${ctx.SSH_KEY_PATH}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${ctx.SSH_USER}@${ctx.VM_IP} "docker logs -f --tail 50 ${service}"`);
+        try {
+            ctx.rl.pause();
+            const inquirer = (await import('inquirer')).default;
+            const sshCmd = `ssh -i "${ctx.SSH_KEY_PATH}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${ctx.SSH_USER}@${ctx.VM_IP} "docker ps -a --format '{{.Names}}'"`;
+            const result = ctx.execSync(sshCmd, { encoding: 'utf8', stdio: 'pipe' });
+            const containers = result.trim().split('\n').filter(Boolean);
+            if (containers.length === 0) {
+                ctx.log('No containers found on VM.', '\x1b[33m');
+                ctx.rl.resume();
+                await ctx.pause();
+                return;
+            }
+            const { service } = await inquirer.prompt({
+                type: 'list',
+                name: 'service',
+                message: 'Select a container to restart:',
+                choices: containers
+            });
+            ctx.rl.resume();
+            ctx.sh(`ssh -i "${ctx.SSH_KEY_PATH}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${ctx.SSH_USER}@${ctx.VM_IP} "docker restart ${service}"`);
+            ctx.log(`${service} restarted.`, '\x1b[32m');
+            await ctx.pause();
+        } catch (e) {
+            ctx.rl.resume();
+            ctx.setErrorDisplayed(true);
+            process.stdout.write('\x1Bc');
+            ctx.log('❌ Failed to list containers or restart service.', '\x1b[31m');
+            console.error(e.stderr || e.message);
+            await ctx.ask('Press Enter to return to the menu...');
         }
-        await ctx.pause();
     },
     // 6.18 – Restart a service on VM
     '6.18': async (ctx) => {

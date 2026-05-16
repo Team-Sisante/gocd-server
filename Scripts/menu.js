@@ -72,9 +72,17 @@ function log(msg, color = '\x1b[36m') { console.log(`${color}%s\x1b[0m`, msg); }
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 function sh(cmd, options = {}) {
     try {
-        return execSync(cmd, { cwd: PROJECT_ROOT, encoding: 'utf8', stdio: options.stdio || 'inherit', ...options });
+        return execSync(cmd, {
+            cwd: PROJECT_ROOT,
+            encoding: 'utf8',
+            stdio: options.stdio || 'inherit',
+            ...options
+        });
     } catch (error) {
-        if (!options.silent) console.error('\x1b[31m%s\x1b[0m', `Command failed: ${cmd}`);
+        if (!options.silent) {
+            console.error('\x1b[31m%s\x1b[0m', `Command failed: ${cmd}`);
+        }
+        errorDisplayed = true;   // ← ADD THIS LINE
         return { success: false, error: error.message };
     }
 }
@@ -148,7 +156,7 @@ async function showMenu() {
             console.log('   5.3. Rebuild and Re-start gocd-agent-2 container');
             console.log('   5.4. Rebuild and Re-start gocd-agent-3 container');
             console.log('   5.5. View container logs');
-            console.log('\n\x1b[36m6. GCP VM SETUP\x1b[0m');
+            console.log('\x1b[36m6. GCP VM SETUP\x1b[0m');
             console.log('   6.1. Create deployment VM');
             console.log('   6.2. Configure firewall rules');
             console.log('   6.3. Setup agent SSH keys');
@@ -163,14 +171,14 @@ async function showMenu() {
             console.log('   6.12. Delete VM');
             console.log('   6.13. Create VM from saved YAML');
             console.log('   6.14. Recreate fresh VM (export → delete → create)');
-            console.log('   6.15. Run full post‑creation setup (firewall, SSH, secrets, reachability)');
-            console.log('   6.16. Show Docker containers on VM (staging/production)');
-            console.log('   6.17. View logs of a service on VM');
-            console.log('   6.18. Restart a service on VM');
-            console.log('   6.19. Open staging app in browser');
-            console.log('   6.20. Health check staging app');
-            console.log('   6.21. Clear SSH host key for VM');
-            console.log('   6.22. Create new VM & run full setup (calls 6.1‑6.6)');
+            console.log('   6.15. Run full post‑creation setup');
+            console.log('   6.16. View logs of a service (interactive)');
+            console.log('   6.17. Restart a service (interactive)');
+            console.log('   6.18. Open staging app in browser');
+            console.log('   6.19. Health check staging app');
+            console.log('   6.20. Clear SSH host key for VM');
+            console.log('   6.21. Connect to VM via SSH');
+            console.log('   6.22. Create new VM & run full setup (one‑step)');
             console.log('   6.23. List all VMs (project-wide)');
             console.log('\n\x1b[36m0. Exit\x1b[0m\n');
 

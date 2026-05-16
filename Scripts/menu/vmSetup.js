@@ -1,5 +1,5 @@
 // menu/vmSetup.js
-// GCP VM Setup options (6.1 – 6.23)
+// GCP VM Setup options (6.1 – 6.24)
 
 const viewLogs           = require('./viewLogs');
 const restartService     = require('./restartService');
@@ -8,6 +8,7 @@ const healthCheckStaging = require('./healthCheckStaging');
 const clearSSHHostKey    = require('./clearSSHHostKey');
 const recreateFreshVM    = require('./recreateFreshVM');
 const createVMFromYAML   = require('./createVMFromYAML');
+const sshToVM            = require('./sshToVM');
 
 module.exports = {
     '6.1':  async (ctx) => { ctx.sh('node Scripts/create-fresh-vm.js'); await ctx.pause(); },
@@ -61,15 +62,23 @@ module.exports = {
         ctx.log('✅ Setup completed.', '\x1b[32m');
         await ctx.pause();
     },
+    // 6.16 – View logs of a service (interactive, replaces old quick table)
     '6.16': viewLogs,
+    // 6.17 – Restart a service (interactive)
     '6.17': restartService,
+    // 6.18 – Open staging app in browser
     '6.18': openStagingApp,
+    // 6.19 – Health check staging app
     '6.19': healthCheckStaging,
+    // 6.20 – Clear SSH host key
     '6.20': clearSSHHostKey,
-    '6.21': async (ctx) => { ctx.sh('node Scripts/create-deploy-vm.js'); await ctx.pause(); },
-    '6.22': async (ctx) => {
+    // 6.21 – Connect to VM via SSH (interactive shell)
+    '6.21': sshToVM,
+    // 6.22 – Create new VM & run full setup (one‑step)
+    '6.22': async (ctx) => { ctx.sh('node Scripts/create-deploy-vm.js'); await ctx.pause(); },
+    // 6.23 – List all VMs (project-wide)
+    '6.23': async (ctx) => {
         ctx.sh(`gcloud compute instances list --project=${ctx.GCP_PROJECT_ID} --format="table(name,zone,status,machineType,networkInterfaces[0].accessConfigs[0].natIP)"`);
         await ctx.pause();
-    },
-    '6.23': async (ctx) => { /* reserved */ await ctx.pause(); }
+    }
 };

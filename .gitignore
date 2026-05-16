@@ -31,3 +31,4 @@ Scripts/NodeOptionsFixer.cs
 Scripts/fix-node-options-cleanup.ps1
 Scripts/save-open-folders.ps1
 error-live-gocd-server.log
+error-live-gocd-agent-2.log

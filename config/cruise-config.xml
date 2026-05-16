@@ -35,7 +35,7 @@
       <materials>
         <git url="__GIT_REPO_URL_WITH_CREDENTIALS__" branch="master" />
       </materials>
-      <stage name="build">
+      <stage name="build_and_push">
         <jobs>
           <job name="artifact_generation">
             <resources>
@@ -57,62 +57,7 @@
       <materials>
         <pipeline pipelineName="badminton_court-artifacts" stageName="build_and_push" />
       </materials>
-      <stage name="build">
-        <jobs>
-          <job name="build_job">
-            <resources>
-              <resource>docker</resource>
-              <resource>badminton_court</resource>
-            </resources>
-            <tasks>
-              <!-- STEP 1: Decrypt Environment files -->
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>cd /badminton_court &amp;&amp; node Scripts/docker-menu.js 13.7</arg>
-              </exec>
-
-              <!-- STEP 2: Clean up Containers and Images -->
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>
-                  echo "========================================================" &amp;&amp;
-                  echo "CLEANING UP badminton_court" &amp;&amp;
-                  echo "========================================================" &amp;&amp;
-                  cd /badminton_court &amp;&amp;
-                  docker compose --env-file .env.docker down -v --rmi all &amp;&amp;
-                  docker volume rm badminton_court_poste_data badminton_court_postgres_data badminton_court_postgres_test_data badminton_court_mariadb_data 2>/dev/null || true &amp;&amp;
-                  docker system prune -a --volumes -f
-                </arg>
-              </exec>
-
-              <!-- STEP 3: Build and start dev profile containers -->
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>
-                  echo "========================================================" &amp;&amp;
-                  echo "BUILDING badminton_court" &amp;&amp;
-                  echo "========================================================" &amp;&amp;
-                  cd /badminton_court &amp;&amp;
-                  docker compose --env-file .env.docker --profile dev --progress=plain build --no-cache
-                </arg>
-              </exec>
-
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>
-                  echo "========================================================" &amp;&amp;
-                  echo "STARTING badminton_court" &amp;&amp;
-                  echo "========================================================" &amp;&amp;
-                  cd /badminton_court &amp;&amp;
-                  docker compose --env-file .env.docker --profile dev up -d
-                </arg>
-              </exec>
-
-            </tasks>
-          </job>
-        </jobs>
-      </stage>
-      <stage name="deploy_to_gcp">
+      <stage name="deploy_staging">
         <jobs>
           <job name="remote_deploy">
             <resources>
@@ -134,8 +79,8 @@
       <materials>
         <pipeline pipelineName="badminton_court-staging" stageName="deploy_staging" />
       </materials>
-
-      <stage name="Build_and_Package">
+      <stage name="deploy_production">
+        <approval type="manual" />
         <jobs>
           <job name="remote_deploy">
             <resources>
@@ -154,78 +99,77 @@
     </pipeline>
 
   </pipelines>
-<pipelines group="humrine_site_group">
-  <pipeline name="humrine_site-artifacts">
-    <materials>
-      <git url="__HUMRINE_SITE_REPO_URL_WITH_CREDENTIALS__" branch="master" dest="humrine_site" />
-    </materials>
-    <stage name="build_and_push">
-      <approval type="manual" />
-      <jobs>
-        <job name="artifact_generation">
-          <resources>
-            <resource>docker</resource>
-            <resource>humrine_site</resource>
-          </resources>
-          <tasks>
-            <exec command="bash">
-              <arg>-c</arg>
-              <arg><![CDATA[
-                export GITHUB_TOKEN='__GITHUB_TOKEN__'
-                cd /humrine_site
-                node Scripts/build-and-push.js
-              ]]></arg>
-            </exec>
-          </tasks>
-        </job>
-      </jobs>
-    </stage>
-  </pipeline>
 
-  <pipeline name="humrine_site-staging">
-    <materials>
-      <pipeline pipelineName="humrine_site-artifacts" stageName="build_and_push" />
-    </materials>
-    <stage name="deploy_staging">
-      <approval type="manual" />
-      <jobs>
-        <job name="remote_deploy">
-          <resources>
-            <resource>docker</resource>
-            <resource>humrine_site</resource>
-          </resources>
-          <tasks>
-            <exec command="bash">
-              <arg>-c</arg>
-              <arg>node /humrine_site/Scripts/deploy.js staging __GITHUB_TOKEN__</arg>
-            </exec>
-          </tasks>
-        </job>
-      </jobs>
-    </stage>
-  </pipeline>
+ <pipelines group="pay-sol-group">
+    
+    <pipeline name="pay-sol-artifacts">
+      <materials>
+        <git url="__GIT_REPO_URL_WITH_CREDENTIALS__" branch="master" />
+      </materials>
+      <stage name="build_and_push">
+        <approval type="manual" />
+        <jobs>
+          <job name="artifact_generation">
+            <resources>
+              <resource>docker</resource>
+              <resource>pay-sol</resource>
+            </resources>
+            <tasks>
+              <exec command="bash">
+                <arg>-c</arg>
+                <arg>node /pay-sol/Scripts/build-and-push.js</arg>
+              </exec>
+            </tasks>
+          </job>
+        </jobs>
+      </stage>
+    </pipeline>
 
-  <pipeline name="humrine_site-production">
-    <materials>
-      <pipeline pipelineName="humrine_site-staging" stageName="deploy_staging" />
-    </materials>
-    <stage name="deploy_production">
-      <approval type="manual" />
-      <jobs>
-        <job name="remote_deploy">
-          <resources>
-            <resource>docker</resource>
-            <resource>humrine_site</resource>
-          </resources>
-          <tasks>
-            <exec command="bash">
-              <arg>-c</arg>
-              <arg>node /humrine_site/Scripts/deploy.js production __GITHUB_TOKEN__</arg>
-            </exec>
-          </tasks>
-        </job>
-      </jobs>
-    </stage>
-  </pipeline>
-</pipelines>
+    <pipeline name="pay-sol-staging">
+      <materials>
+        <pipeline pipelineName="pay-sol-artifacts" stageName="build_and_push" />
+      </materials>
+      <stage name="deploy_staging">
+        <approval type="manual" />
+        <jobs>
+          <job name="remote_deploy">
+            <resources>
+              <resource>docker</resource>
+              <resource>pay-sol</resource>
+            </resources>
+            <tasks>
+              <exec command="bash">
+                <arg>-c</arg>
+                <arg>node /pay-sol/Scripts/deploy.js staging __GITHUB_TOKEN__</arg>
+              </exec>
+            </tasks>
+          </job>
+        </jobs>
+      </stage>
+    </pipeline>
+
+    <pipeline name="pay-sol-production">
+      <materials>
+        <pipeline pipelineName="pay-sol-staging" stageName="deploy_staging" />
+      </materials>
+      <stage name="deploy_production">
+        <approval type="manual" />
+        <jobs>
+          <job name="remote_deploy">
+            <resources>
+              <resource>docker</resource>
+              <resource>pay-sol</resource>
+            </resources>
+            <tasks>
+              <exec command="bash">
+                <arg>-c</arg>
+                <arg>node /pay-sol/Scripts/deploy.js production __GITHUB_TOKEN__</arg>
+              </exec>
+            </tasks>
+          </job>
+        </jobs>
+      </stage>
+    </pipeline>
+
+  </pipelines>
 </cruise>

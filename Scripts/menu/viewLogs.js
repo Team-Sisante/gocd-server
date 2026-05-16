@@ -1,34 +1,29 @@
 // menu/viewLogs.js
-// Interactive container log viewer for the remote VM
+// Interactive container log viewer – asks user for follow mode, then delegates
 
-const { listContainers } = require('./containerList');
+const interactive = require('./interactiveContainerAction');
 
 module.exports = async function viewLogs(ctx) {
-    try {
-        ctx.rl.pause();
-        const inquirer = (await import('inquirer')).default;
-        const containers = listContainers(ctx);
-        if (containers.length === 0) {
-            ctx.log('No containers found on VM.', '\x1b[33m');
-            ctx.rl.resume();
-            await ctx.pause();
-            return;
-        }
-        const { service } = await inquirer.prompt({
-            type: 'list',
-            name: 'service',
-            message: 'Select a container to view logs:',
-            choices: containers
-        });
-        ctx.rl.resume();
-        ctx.sh(`ssh -i "${ctx.SSH_KEY_PATH}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${ctx.SSH_USER}@${ctx.VM_IP} "docker logs -f --tail 50 ${service}"`);
-        await ctx.pause();
-    } catch (e) {
-        ctx.rl.resume();
-        ctx.setErrorDisplayed(true);
-        process.stdout.write('\x1Bc');
-        ctx.log('❌ Failed to list containers or view logs.', '\x1b[31m');
-        console.error(e.stderr || e.message);
-        await ctx.ask('Press Enter to return to the menu...');
-    }
+    // Ask which mode the user wants
+    const inquirer = (await import('inquirer')).default;
+    const { mode } = await inquirer.prompt({
+        type: 'list',
+        name: 'mode',
+        message: 'Log viewing mode:',
+        choices: [
+            { name: 'Continuous (follow mode – press Ctrl+C to stop)', value: 'follow' },
+            { name: 'One‑shot (last 50 lines, then return)', value: 'tail' }
+        ],
+        default: 'follow'
+    });
+
+    const commandTemplate = mode === 'follow'
+        ? 'docker logs -f --tail 50 {container}'
+        : 'docker logs --tail 50 {container}';
+
+    await interactive(ctx, {
+        commandTemplate,
+        message: `Select a container to view logs (${mode === 'follow' ? 'follow' : 'one‑shot'}):`,
+        errorMessage: '❌ Failed to list containers or view logs.'
+    });
 };

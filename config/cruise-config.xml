@@ -58,6 +58,7 @@
         <pipeline pipelineName="badminton_court-artifacts" stageName="build_and_push" />
       </materials>
       <stage name="deploy_staging">
+        <approval type="manual" />
         <jobs>
           <job name="remote_deploy">
             <resources>

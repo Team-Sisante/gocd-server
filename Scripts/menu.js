@@ -14,7 +14,13 @@ const dotenv = require('dotenv');
 
 // Load environment
 dotenv.config({ path: path.join(__dirname, '..', '.env.docker') });
-
+// --- DEBUG START ---
+console.log('DEBUG: GOCD_API_TOKEN =', process.env.GOCD_API_TOKEN ? 'SET' : 'NOT SET');
+console.log('DEBUG: looking in file:', path.join(__dirname, '..', '.env.docker'));
+if (process.env.GOCD_API_TOKEN) {
+    console.log('       token first 8 chars:', process.env.GOCD_API_TOKEN.substring(0, 8) + '...');
+}
+// --- DEBUG END ---
 // ----- Validate required environment variables -----
 const requiredVars = [
     'GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD',

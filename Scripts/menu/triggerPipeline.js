@@ -1,13 +1,14 @@
 // menu/triggerPipeline.js
 // Handles pipeline trigger (option 2.1) with optional VM container check
-// Supports automatic authentication via GOCD_API_TOKEN (preferred) or manual JSESSIONID cookie.
+// Supports automatic authentication via admin credentials (preferred),
+// GOCD_API_TOKEN (fallback), or manual JSESSIONID cookie.
 
 const fs = require('fs');
 const path = require('path');
 const viewLogs = require('./viewLogs');   // reusable 6.16
 
 module.exports = async function triggerPipeline(ctx) {
-    const { execSync: exec, log, setErrorDisplayed, GOCD_BASE, PROJECT_ROOT } = ctx;
+    const { execSync: exec, log, setErrorDisplayed, GOCD_BASE, PROJECT_ROOT, GOCD_USER, GOCD_PASS } = ctx;
     const inquirer = (await import('inquirer')).default;
     ctx.rl.pause();
 
@@ -42,15 +43,19 @@ module.exports = async function triggerPipeline(ctx) {
     let sessionCookie = '';
     const apiToken = process.env.GOCD_API_TOKEN;
 
-    if (apiToken) {
-        // Use personal access token (Bearer/Basic)
-        // GoCD expects Basic Auth with username "admin" and the token as password
+    if (GOCD_USER && GOCD_PASS) {
+        // 1st choice: admin credentials (always available from .env.docker)
+        const basicAuth = Buffer.from(`${GOCD_USER}:${GOCD_PASS}`).toString('base64');
+        authHeader = `-H "Authorization: Basic ${basicAuth}"`;
+        log('🔑 Using admin credentials for authentication.', '\x1b[32m');
+    } else if (apiToken) {
+        // 2nd choice: personal access token
         const basicAuth = Buffer.from(`admin:${apiToken}`).toString('base64');
         authHeader = `-H "Authorization: Basic ${basicAuth}"`;
         log('🔑 Using GOCD_API_TOKEN for authentication.', '\x1b[32m');
     } else {
-        // Fallback to manual cookie
-        log('🔐 No GOCD_API_TOKEN found – a session cookie is required.', '\x1b[33m');
+        // Last resort: manual cookie
+        log('🔐 No admin credentials or token found – a session cookie is required.', '\x1b[33m');
         log('   Open http://localhost:8153/go/pipelines, log in, F12 → Application → Cookies.', '\x1b[33m');
         log('   Copy the value of the JSESSIONID cookie.', '\x1b[33m');
         const { cookie } = await inquirer.prompt({

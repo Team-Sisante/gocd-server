@@ -80,5 +80,18 @@ module.exports = {
     '6.23': async (ctx) => {
         ctx.sh(`gcloud compute instances list --project=${ctx.GCP_PROJECT_ID} --format="table(name,zone,status,machineType,networkInterfaces[0].accessConfigs[0].natIP)"`);
         await ctx.pause();
-    }
+    },
+    // 6.24 – Clean up Docker disk space on staging VM
+    '6.24': async (ctx) => {
+        const { GCP_VM_IP, SSH_USER, SSH_KEY_PATH, sh, log, pause } = ctx;
+        log('Connecting to staging VM to clean up Docker disk space...', '\x1b[33m');
+        try {
+            sh(`ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${SSH_USER}@${GCP_VM_IP} "sudo docker system prune -af && sudo docker volume prune -f && df -h /"`);
+            log('✅ Cleanup complete.', '\x1b[32m');
+        } catch (err) {
+            log('❌ Cleanup failed.', '\x1b[31m');
+            console.error(err.message);
+        }
+        await pause();
+    },
 };

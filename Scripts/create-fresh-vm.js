@@ -122,6 +122,11 @@ apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 systemctl enable docker --now
 echo "Docker installed."
 
+echo "Configuring Docker DNS for reliable registry access..."
+echo '{"dns":["8.8.8.8"]}' | sudo tee /etc/docker/daemon.json
+sudo systemctl restart docker
+echo "Docker DNS configured."
+
 # Install Node.js 18.x
 echo "Installing Node.js..."
 curl -fsSL https://deb.nodesource.com/setup_18.x | bash -

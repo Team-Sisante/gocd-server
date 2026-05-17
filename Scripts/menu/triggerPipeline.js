@@ -1,5 +1,6 @@
 // menu/triggerPipeline.js
 // Handles pipeline trigger (option 2.1) with optional VM container check
+// Supports automatic authentication via GOCD_API_TOKEN (preferred) or manual JSESSIONID cookie.
 
 const fs = require('fs');
 const path = require('path');
@@ -36,21 +37,34 @@ module.exports = async function triggerPipeline(ctx) {
         return;
     }
 
-    // 2. Always ask for a fresh cookie
-    log('🔐 A GoCD session cookie is required for every trigger.', '\x1b[33m');
-    log('   Open http://localhost:8153/go/pipelines, log in, F12 → Application → Cookies.', '\x1b[33m');
-    log('   Copy the value of the JSESSIONID cookie.', '\x1b[33m');
-    const { cookie } = await inquirer.prompt({
-        type: 'input', name: 'cookie', message: 'Paste JSESSIONID:'
-    });
-    const sessionCookie = (cookie || '').trim();
-    if (!sessionCookie) {
-        ctx.rl.resume();
-        setErrorDisplayed(true);
-        process.stdout.write('\x1Bc');
-        log('❌ No cookie – cannot trigger.', '\x1b[31m');
-        await inquirer.prompt({ type: 'input', name: 'dummy', message: 'Press Enter to return to the menu...' });
-        return;
+    // ----- Authentication mode selection -----
+    let authHeader = '';
+    let sessionCookie = '';
+    const apiToken = process.env.GOCD_API_TOKEN;
+
+    if (apiToken) {
+        // Use personal access token (Bearer/Basic)
+        // GoCD expects Basic Auth with username "admin" and the token as password
+        const basicAuth = Buffer.from(`admin:${apiToken}`).toString('base64');
+        authHeader = `-H "Authorization: Basic ${basicAuth}"`;
+        log('🔑 Using GOCD_API_TOKEN for authentication.', '\x1b[32m');
+    } else {
+        // Fallback to manual cookie
+        log('🔐 No GOCD_API_TOKEN found – a session cookie is required.', '\x1b[33m');
+        log('   Open http://localhost:8153/go/pipelines, log in, F12 → Application → Cookies.', '\x1b[33m');
+        log('   Copy the value of the JSESSIONID cookie.', '\x1b[33m');
+        const { cookie } = await inquirer.prompt({
+            type: 'input', name: 'cookie', message: 'Paste JSESSIONID:'
+        });
+        sessionCookie = (cookie || '').trim();
+        if (!sessionCookie) {
+            ctx.rl.resume();
+            setErrorDisplayed(true);
+            process.stdout.write('\x1Bc');
+            log('❌ No cookie – cannot trigger.', '\x1b[31m');
+            await inquirer.prompt({ type: 'input', name: 'dummy', message: 'Press Enter to return to the menu...' });
+            return;
+        }
     }
 
     // ----- Optional: interactive container check (same as 6.16, but without follow) -----
@@ -74,9 +88,16 @@ module.exports = async function triggerPipeline(ctx) {
     });
     ctx.rl.resume();
 
-    // 4. Trigger exactly like the manual command
+    // 4. Build trigger command
     const url = GOCD_BASE + '/go/api/pipelines/' + selectedPipeline + '/schedule';
-    const curlCmd = `docker exec gocd-server curl -s -H "Accept: application/vnd.go.cd.v1+json" -H "Content-Type: application/json" -H "X-GoCD-Confirm: true" -b "JSESSIONID=${sessionCookie}" -X POST -d "{\\"isTrusted\\":true}" "${url}"`;
+    let curlCmd;
+    if (authHeader) {
+        // Using token – no cookie needed
+        curlCmd = `docker exec gocd-server curl -s ${authHeader} -H "Accept: application/vnd.go.cd.v1+json" -H "Content-Type: application/json" -H "X-GoCD-Confirm: true" -X POST -d "{\\"isTrusted\\":true}" "${url}"`;
+    } else {
+        // Using session cookie
+        curlCmd = `docker exec gocd-server curl -s -H "Accept: application/vnd.go.cd.v1+json" -H "Content-Type: application/json" -H "X-GoCD-Confirm: true" -b "JSESSIONID=${sessionCookie}" -X POST -d "{\\"isTrusted\\":true}" "${url}"`;
+    }
 
     try {
         const result = exec(curlCmd, { encoding: 'utf8', stdio: 'pipe', cwd: PROJECT_ROOT });

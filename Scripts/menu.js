@@ -186,7 +186,8 @@ async function showMenu() {
             console.log('   6.21. Connect to VM via SSH');
             console.log('   6.22. Create new VM & run full setup (one‑step)');
             console.log('   6.23. List all VMs (project-wide)');
-            console.log('   6.24. Clean up Docker disk space on staging VM');            
+            console.log('   6.24. Clean up Docker disk space on staging VM');       
+            console.log('   6.25. Open production app in browser');                 
             console.log('\n\x1b[36m0. Exit\x1b[0m\n');
 
             const choice = await ask('Select an option: ');
@@ -226,7 +227,8 @@ async function showMenu() {
                 case '6.9': case '6.10': case '6.11': case '6.12':
                 case '6.13': case '6.14': case '6.15': case '6.16':
                 case '6.17': case '6.18': case '6.19': case '6.20':
-                case '6.21': case '6.22': case '6.23': case '6.24':
+                case '6.21': case '6.22': case '6.23': case '6.24': 
+                case '6.25':
                     await vmSetup[choice](ctx); break;
                 case '0':
                     rl.close();

@@ -4,6 +4,7 @@
 const viewLogs           = require('./viewLogs');
 const restartService     = require('./restartService');
 const openStagingApp     = require('./openStagingApp');
+const openProductionApp     = require('./openProductionApp');
 const healthCheckStaging = require('./healthCheckStaging');
 const clearSSHHostKey    = require('./clearSSHHostKey');
 const recreateFreshVM    = require('./recreateFreshVM');
@@ -94,4 +95,6 @@ module.exports = {
         }
         await pause();
     },
+    // 6.25 – Open production app in browser
+    '6.25': openProductionApp,
 };

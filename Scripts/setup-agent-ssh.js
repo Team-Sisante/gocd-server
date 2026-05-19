@@ -3,6 +3,10 @@
  * Scripts/setup-agent-ssh.js
  * Automates provisioning of the GoCD agent's SSH key to the deployment VM.
  * Cross‑platform: runs wherever Node.js and gcloud are available.
+ *
+ * 🔴 HARD RULE: Every process MUST display real‑time progress.
+ *    Never suppress output or leave the screen frozen.
+ *    Always show live elapsed time where appropriate.
  */
 
 const { execSync } = require('child_process');
@@ -18,13 +22,17 @@ const REMOTE_USER = process.env.VM_SSH_USER || 'xmnione';
 const AGENT_KEY_PATH = path.join(__dirname, '..', 'secrets', 'agent-key');
 const AGENT_KEY_COMMENT = 'gocd-agent';
 
+const scriptStart = Date.now();
+const elapsed = () => Math.floor((Date.now() - scriptStart) / 1000) + 's';
+
 // ---------- Helpers ----------
 function run(cmd, options = {}) {
+    const stdio = options.silent ? 'pipe' : 'inherit';
     try {
-        return execSync(cmd, { encoding: 'utf8', stdio: options.silent ? 'pipe' : 'inherit', ...options });
+        return execSync(cmd, { encoding: 'utf8', stdio, ...options });
     } catch (e) {
         if (!options.ignoreError) {
-            console.error(`\x1b[31mCommand failed: ${cmd}\x1b[0m`);
+            console.error(`\x1b[31m[${elapsed()}] Command failed: ${cmd}\x1b[0m`);
             console.error(e.message);
             process.exit(1);
         }
@@ -33,7 +41,7 @@ function run(cmd, options = {}) {
 }
 
 function log(msg, color = '\x1b[36m') {
-    console.log(`${color}%s\x1b[0m`, msg);
+    console.log(`${color}[${elapsed()}] ${msg}\x1b[0m`);
 }
 
 // ---------- Step 1: Ensure agent key pair exists ----------
@@ -41,7 +49,7 @@ if (!fs.existsSync(AGENT_KEY_PATH)) {
     log('Generating new agent SSH key pair...', '\x1b[33m');
     const keyDir = path.dirname(AGENT_KEY_PATH);
     if (!fs.existsSync(keyDir)) fs.mkdirSync(keyDir, { recursive: true });
-    run(`ssh-keygen -t rsa -b 4096 -f "${AGENT_KEY_PATH}" -C "${AGENT_KEY_COMMENT}" -N ""`, { silent: true });
+    run(`ssh-keygen -t rsa -b 4096 -f "${AGENT_KEY_PATH}" -C "${AGENT_KEY_COMMENT}" -N ""`, { silent: false });
     log('Key pair generated.', '\x1b[32m');
 } else {
     log('Agent key pair already exists.', '\x1b[32m');
@@ -84,10 +92,11 @@ log(`Temporary file created: ${tmpFile}`, '\x1b[33m');
 
 // ---------- Step 6: Apply metadata ----------
 log('Applying new SSH keys to instance...', '\x1b[33m');
+// No silent – let user see the gcloud output
 run(`gcloud compute instances add-metadata ${INSTANCE_NAME} \
     --zone=${ZONE} \
     --project=${PROJECT_ID} \
-    --metadata-from-file ssh-keys="${tmpFile}"`, { silent: true });
+    --metadata-from-file ssh-keys="${tmpFile}"`, { silent: false });
 
 // ---------- Step 7: Verify the key was installed ----------
 log('Verifying key installation...', '\x1b[33m');

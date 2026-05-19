@@ -232,13 +232,16 @@ async function main() {
       finalIp = assignedIp.trim();
       log(`Assigned static IP: ${finalIp}`, '\x1b[32m');
 
-      // Update .env.docker with the new IP
+      // Update .env.docker – replace the old IP with the new one everywhere
       const envFilePath = path.join(__dirname, '..', '.env.docker');
       if (fs.existsSync(envFilePath)) {
         let envContent = fs.readFileSync(envFilePath, 'utf8');
+        // Replace all occurrences of the old (desired) IP with the new final IP
+        envContent = envContent.split(DESIRED_IP).join(finalIp);
+        // Also explicitly update the GCP_VM_IP line (belt‑and‑suspenders, the split/join already caught it)
         envContent = envContent.replace(/^GCP_VM_IP=.*/m, `GCP_VM_IP=${finalIp}`);
         fs.writeFileSync(envFilePath, envContent);
-        log(`Updated .env.docker with new GCP_VM_IP=${finalIp}`, '\x1b[32m');
+        log(`Updated .env.docker: all references to ${DESIRED_IP} changed to ${finalIp}`, '\x1b[32m');
       }
     }
   }

@@ -6,6 +6,10 @@
  * All output is shown in real time – no quiet flags.
  *
  * Uses GCP_PROJECT_ID, GCP_ZONE, GCP_VM_IP, VM_SSH_USER from the environment.
+ * 
+ * 🔴 HARD RULE: Every process MUST display real‑time progress.
+ *    Never suppress output or leave the screen frozen.
+ *    Always show live elapsed time where appropriate.
  */
 
 const { execSync } = require('child_process');
@@ -40,23 +44,29 @@ if (!fs.existsSync(KEY_FILE)) {
 // Clear old host key
 try { execSync(`ssh-keygen -R ${VM_IP}`, { stdio: 'ignore' }); } catch (_) {}
 
+const scriptStart = Date.now();
+const elapsed = () => Math.floor((Date.now() - scriptStart) / 1000) + 's';
+
 // ------------------------------------------------------------------
 // Stream the startup log and wait until the startup script is finished
 // ------------------------------------------------------------------
-console.log('Waiting for VM startup script to complete…');
+console.log(`\x1b[36m[${elapsed()}] Waiting for VM startup script to complete…\x1b[0m`);
 console.log('  (Live log from the VM – every new line will appear below)');
 
 let lastOffset = 0;
 let scriptFinished = false;
 
 for (let i = 0; i < 90; i++) {
+    // Show a moving status line every attempt
+    console.log(`\x1b[36m⏳ [${elapsed()}] Checking startup log (attempt ${i + 1}/90)…\x1b[0m`);
+
     try {
         const newContent = execSync(
             `ssh -i "${KEY_FILE}" -o StrictHostKeyChecking=no ${SSH_USER}@${VM_IP} "tail -c +${lastOffset + 1} /var/log/startup-script.log 2>/dev/null || true"`,
             { encoding: 'utf8', stdio: 'pipe' }
         );
         if (newContent.trim()) {
-            process.stdout.write(newContent);
+            process.stdout.write(newContent);   // real‑time log output
             lastOffset += Buffer.byteLength(newContent, 'utf8');
             if (newContent.includes('=== Startup script finished at')) {
                 scriptFinished = true;
@@ -74,7 +84,7 @@ for (let i = 0; i < 90; i++) {
             if (aptProcs) aptRunning = true;
         } catch (_) {}
         if (!aptRunning) {
-            console.log('✅ Startup script finished and package manager is idle.');
+            console.log(`\x1b[32m✅ [${elapsed()}] Startup script finished and package manager is idle.\x1b[0m`);
             break;
         }
     }
@@ -85,13 +95,13 @@ for (let i = 0; i < 90; i++) {
 }
 
 if (!scriptFinished) {
-    console.log('Startup script did not finish in time – proceeding anyway.');
+    console.log(`\x1b[33m⚠️ [${elapsed()}] Startup script did not finish in time – proceeding anyway.\x1b[0m`);
 }
 
 // ------------------------------------------------------------------
 // Install missing tools (visible output, no quiet flags, no interactive prompts)
 // ------------------------------------------------------------------
-console.log('Installing missing tools…');
+console.log(`\x1b[33m[${elapsed()}] Installing missing tools…\x1b[0m`);
 const installRemoteCmd = (
     'sudo apt-get update && ' +
     'sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin nodejs git && ' +
@@ -100,16 +110,16 @@ const installRemoteCmd = (
 
 const installCmd = `ssh -T -i "${KEY_FILE}" -o StrictHostKeyChecking=no ${SSH_USER}@${VM_IP} "${installRemoteCmd}"`;
 try {
-    execSync(installCmd, { stdio: 'inherit' });
-    console.log('Tools installed successfully.');
+    execSync(installCmd, { stdio: 'inherit' });   // FULL output visible
+    console.log(`\x1b[32m✅ [${elapsed()}] Tools installed successfully.\x1b[0m`);
 } catch (e) {
-    console.error('Some tools may have failed to install – continuing.');
+    console.error(`\x1b[31m❌ [${elapsed()}] Some tools may have failed to install – continuing.\x1b[0m`);
 }
 
 // ------------------------------------------------------------------
 // Ensure /opt/badminton_court exists and is owned by the correct user
 // ------------------------------------------------------------------
-console.log('Setting up /opt/badminton_court directory…');
+console.log(`\x1b[33m[${elapsed()}] Setting up /opt/badminton_court directory…\x1b[0m`);
 const dirCmd = `ssh -T -i "${KEY_FILE}" -o StrictHostKeyChecking=no ${SSH_USER}@${VM_IP} "sudo mkdir -p /opt/badminton_court && sudo chown -R ${SSH_USER}:${SSH_USER} /opt/badminton_court"`;
 execSync(dirCmd, { stdio: 'inherit' });
-console.log('Directory /opt/badminton_court ready and owned by', SSH_USER);
+console.log(`\x1b[32m✅ [${elapsed()}] Directory /opt/badminton_court ready and owned by ${SSH_USER}.\x1b[0m`);

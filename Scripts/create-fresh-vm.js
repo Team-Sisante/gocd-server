@@ -122,10 +122,10 @@ apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 systemctl enable docker --now
 echo "Docker installed."
 
-echo "Configuring Docker DNS for reliable registry access..."
-echo '{"dns":["8.8.8.8"]}' | sudo tee /etc/docker/daemon.json
+echo "Configuring Docker DNS and MTU for reliable registry access on GCP..."
+echo '{"dns":["8.8.8.8"], "mtu": 1460}' | sudo tee /etc/docker/daemon.json
 sudo systemctl restart docker
-echo "Docker DNS configured."
+echo "Docker DNS and MTU configured."
 
 # Install Node.js 18.x
 echo "Installing Node.js..."

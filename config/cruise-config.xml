@@ -79,7 +79,7 @@
 
     <pipeline name="badminton_court-production">
       <materials>
-        <pipeline pipelineName="badminton_court-staging" stageName="deploy_staging" />
+        <pipeline pipelineName="badminton_court-artifacts" stageName="build_and_push" />
       </materials>
       <stage name="deploy_production">
         <approval type="manual" />

@@ -10,6 +10,7 @@ const clearSSHHostKey    = require('./clearSSHHostKey');
 const recreateFreshVM    = require('./recreateFreshVM');
 const createVMFromYAML   = require('./createVMFromYAML');
 const sshToVM            = require('./sshToVM');
+const containerDiagnostics = require('./containerDiagnostics');
 
 module.exports = {
     '6.1':  async (ctx) => { ctx.sh('node Scripts/create-fresh-vm.js'); await ctx.pause(); },
@@ -97,4 +98,7 @@ module.exports = {
     },
     // 6.25 – Open production app in browser
     '6.25': openProductionApp,
+    // Container diagnostics
+    '6.26': async (ctx) => { await containerDiagnostics(ctx, 'staging'); },
+    '6.27': async (ctx) => { await containerDiagnostics(ctx, 'production'); },    
 };

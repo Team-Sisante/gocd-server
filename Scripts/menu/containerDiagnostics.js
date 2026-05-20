@@ -18,8 +18,10 @@ module.exports = async function containerDiagnostics(ctx, env) {
 
   // Run a remote command, capture output, no artificial timeout
   function remoteExec(cmd) {
-    // Build the full SSH command exactly like your working helpers
-    const fullCmd = `ssh ${sshOpts} ${sshTarget} "${cmd}"`;
+    // Use single quotes around the entire remote command to avoid shell escaping issues.
+    // Inner single quotes are escaped as '\'' (end single-quote, literal ', start single-quote).
+    const escapedCmd = cmd.replace(/'/g, "'\\''");
+    const fullCmd = `ssh ${sshOpts} ${sshTarget} '${escapedCmd}'`;
     try {
       return execSync(fullCmd, {
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -27,14 +29,15 @@ module.exports = async function containerDiagnostics(ctx, env) {
       });
     } catch (err) {
       // SSH failed – print its error output
-      if (err.stderr) console.error(err.stderr);
-      if (err.stdout) console.error(err.stdout);
+      if (err.stderr) console.error(err.stderr.trim());
+      if (err.stdout) console.error(err.stdout.trim());
       return null;
     }
   }
 
   // 1. Quick SSH and Docker test
   log('Testing Docker responsiveness...', '\x1b[36m');
+  // Use format with escaped double quotes inside the single-quoted remote command
   const dockerInfo = remoteExec('sudo docker info --format "{{.ContainersRunning}} running containers"');
   if (dockerInfo === null) {
     log('Could not reach Docker on VM. Please check connectivity.', '\x1b[31m');

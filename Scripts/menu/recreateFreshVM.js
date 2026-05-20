@@ -47,7 +47,7 @@ module.exports = async function recreateFreshVM(ctx) {
         ctx.log('📋 Recommended next steps for this fresh VM:', '\x1b[33m');
         ctx.log('   6.2  – Configure firewall rules', '\x1b[33m');
         ctx.log('   6.3  – Setup agent SSH keys', '\x1b[33m');
-        ctx.log('   6.4  – Install / Verify tools on VM', '\x1b[33m');
+        ctx.log('   6.4  – Wait / Verify tools on VM', '\x1b[33m');
         ctx.log('   6.5  – Setup GCP Secret Manager access', '\x1b[33m');
         ctx.log('   6.6  – Check VM reachability', '\x1b[33m');
         ctx.log('', '\x1b[36m');

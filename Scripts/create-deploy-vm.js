@@ -7,7 +7,7 @@
  *    granular scripts that are also available as individual menu options:
  *    - setup-firewall-rules.js      (6.2)
  *    - setup-agent-ssh.js           (6.3)
- *    - install-tools-on-vm.js       (6.4)
+ *    - wait-for-vm-tools.js       (6.4)
  *    - setup-gcp-secrets-access.js  (6.5)
  *    - check-vm-reachability.js     (6.6)
  *    - apply-pipeline-config.js     (6.7)   ← pipeline config is part of the setup
@@ -107,7 +107,7 @@ async function main() {
     const steps = [
       ['setup-firewall-rules.js',      'Configure firewall rules (6.2)'],
       ['setup-agent-ssh.js',           'Setup agent SSH keys (6.3)'],
-      ['install-tools-on-vm.js',       'Install / Verify tools on VM (6.4)'],
+      ['wait-for-vm-tools.js',       'Install / Verify tools on VM (6.4)'],
       ['setup-gcp-secrets-access.js',  'Setup GCP Secret Manager access (6.5)'],
       ['check-vm-reachability.js',     'Check VM running & reachable (6.6)'],
       ['apply-pipeline-config.js',     'Apply pipeline configuration (6.7)']

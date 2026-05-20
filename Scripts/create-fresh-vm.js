@@ -103,6 +103,9 @@ done
 # Now safe to run apt
 export DEBIAN_FRONTEND=noninteractive
 
+# Force apt to use IPv4 – avoids network unreachable errors on some GCP zones
+echo 'Acquire::ForceIPv4 "true";' | tee /etc/apt/apt.conf.d/99force-ipv4
+
 # Update system
 echo "Updating package lists..."
 apt-get update

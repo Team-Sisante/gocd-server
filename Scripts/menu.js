@@ -166,7 +166,7 @@ async function showMenu() {
             console.log('   6.1. Create deployment VM');
             console.log('   6.2. Configure firewall rules');
             console.log('   6.3. Setup agent SSH keys');
-            console.log('   6.4. Install / Verify tools on VM');
+            console.log('   6.4. Wait / Verify tools on VM');
             console.log('   6.5. Setup GCP Secret Manager access for agent');
             console.log('   6.6. Check VM running & reachable');
             console.log('   6.7. Apply pipeline configuration to GoCD');

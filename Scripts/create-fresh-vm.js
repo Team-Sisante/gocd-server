@@ -45,6 +45,7 @@ if (missing.length > 0) {
 const MACHINE_TYPE = 'e2-micro';
 const IMAGE_PROJECT = 'debian-cloud';
 const IMAGE_FAMILY = 'debian-11';
+const DISK_SIZE = '30GB'; // Max free tier limit for stability
 const TAGS = ['http-server', 'https-server'];
 const STARTUP_SCRIPT_PATH = path.join(__dirname, '..', 'tmp_startup_script.sh');
 const STATIC_IP_NAME = 'gocd-deploy-target-ip';
@@ -133,6 +134,16 @@ apt-get update
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 systemctl enable docker --now
 echo "Docker installed."
+
+echo "Enabling 4GB swap space for stability..."
+if [ ! -f /swapfile ]; then
+  fallocate -l 4G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+echo "Swap space enabled."
 
 echo "Configuring Docker DNS and MTU for reliable registry access on GCP..."
 echo '{"dns":["8.8.8.8"], "mtu": 1460}' | sudo tee /etc/docker/daemon.json

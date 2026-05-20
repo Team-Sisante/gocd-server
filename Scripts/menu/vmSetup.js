@@ -100,5 +100,7 @@ module.exports = {
     '6.25': openProductionApp,
     // Container diagnostics
     '6.26': async (ctx) => { await containerDiagnostics(ctx, 'staging'); },
-    '6.27': async (ctx) => { await containerDiagnostics(ctx, 'production'); },    
+    '6.27': async (ctx) => { await containerDiagnostics(ctx, 'production'); },
+    // 6.28 – Enable/Verify Swap Space on VM
+    '6.28': async (ctx) => { ctx.sh('node Scripts/enable-swap-on-vm.js'); await ctx.pause(); },
 };

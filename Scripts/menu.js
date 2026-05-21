@@ -14,26 +14,17 @@ const dotenv = require('dotenv');
 
 // Load environment
 dotenv.config({ path: path.join(__dirname, '..', '.env.docker') });
-// --- DEBUG START ---
-// console.log('DEBUG: GOCD_API_TOKEN =', process.env.GOCD_API_TOKEN ? 'SET' : 'NOT SET');
-// console.log('DEBUG: looking in file:', path.join(__dirname, '..', '.env.docker'));
-// if (process.env.GOCD_API_TOKEN) {
-//     console.log('       token first 8 chars:', process.env.GOCD_API_TOKEN.substring(0, 8) + '...');
-// }
-// --- DEBUG END ---
-// ----- Validate required environment variables -----
-const requiredVars = [
-    'GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD',
-    'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT',
-    'GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME',
-    'GCP_VM_IP', 'VM_SSH_USER'          // ← added, no defaults anymore
-];
-const missingVars = requiredVars.filter(v => !process.env[v]);
-if (missingVars.length > 0) {
-    console.error('\x1b[31mERROR: The following required environment variables are missing:\x1b[0m\n' +
-        missingVars.map(v => `  - ${v}`).join('\n'));
-    console.error('\nPlease define them in your .env.docker file.');
-    process.exit(1);
+
+// ----- Validation Helper -----
+function validateEnv(requiredVars) {
+    const missingVars = requiredVars.filter(v => !process.env[v]);
+    if (missingVars.length > 0) {
+        console.error('\x1b[31mERROR: Missing required environment variables:\x1b[0m\n' +
+            missingVars.map(v => `  - ${v}`).join('\n'));
+        console.error('\nPlease define them in your .env.docker file.');
+        return false;
+    }
+    return true;
 }
 
 // ----- Load custom error patterns from errorTrigger.json -----
@@ -56,18 +47,18 @@ const ALL_PATTERNS = [...basePatterns, ...customPatterns];
 const errorKeywords = new RegExp(ALL_PATTERNS.join('|'), 'i');
 const errorTrigger = new RegExp('^(ERROR|FATAL)\\s|' + ALL_PATTERNS.join('|'), 'i');
 
-// ----- Derived configuration (no defaults for required vars) -----
+// ----- Derived configuration -----
 const GOCD_USER = process.env.GOCD_ADMIN_USERNAME;
 const GOCD_PASS = process.env.GOCD_ADMIN_PASSWORD;
 const GOCD_PROTO = process.env.GOCD_SERVER_URL_PROTOCOL;
 const GOCD_HOST  = process.env.GOCD_SERVER_URL_HOST;
 const GOCD_PORT  = process.env.GOCD_SERVER_PORT;
-const GOCD_BASE  = `${GOCD_PROTO}://${GOCD_HOST}:${GOCD_PORT}`;
+const GOCD_BASE  = (GOCD_PROTO && GOCD_HOST && GOCD_PORT) ? `${GOCD_PROTO}://${GOCD_HOST}:${GOCD_PORT}` : '';
 const GCP_PROJECT_ID = process.env.GCP_PROJECT_ID;
 const GCP_ZONE       = process.env.GCP_ZONE;
 const GCP_VM_NAME    = process.env.GCP_VM_NAME;
-const GCP_VM_IP      = process.env.GCP_VM_IP;          // required now
-const VM_SSH_USER    = process.env.VM_SSH_USER;        // required now
+const GCP_VM_IP      = process.env.GCP_VM_IP;
+const VM_SSH_USER    = process.env.VM_SSH_USER;
 const SITE_URL       = process.env.SITE_URL || '';
 
 const PROJECT_ROOT = path.join(__dirname, '..');
@@ -88,7 +79,7 @@ function sh(cmd, options = {}) {
         if (!options.silent) {
             console.error('\x1b[31m%s\x1b[0m', `Command failed: ${cmd}`);
         }
-        errorDisplayed = true;   // ← ADD THIS LINE
+        errorDisplayed = true;
         return { success: false, error: error.message };
     }
 }
@@ -123,7 +114,7 @@ async function showMenu() {
             if (!errorDisplayed) process.stdout.write('\x1Bc');
             errorDisplayed = false;
 
-            // ---------- Menu display (unchanged) ----------
+            // ... (Menu display remains unchanged) ...
             console.log('\x1b[32mGoCD Management Menu (.js)\x1b[0m');
             console.log('\x1b[32m===========================\x1b[0m\n');
             console.log('\x1b[36m1. CONTAINER MANAGEMENT\x1b[0m');
@@ -207,6 +198,48 @@ async function showMenu() {
                 rl, setErrorDisplayed, errorDisplayed,
                 SSH_KEY_PATH: path.join(__dirname, '..', 'secrets', 'agent-key')
             };
+
+            // Define validation requirements
+            const requirements = {
+                // Container Management
+                '1.1': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
+                
+                // Pipeline Management
+                '2.1': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
+                '2.2': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
+                '2.3': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
+
+                // Agent Management
+                '3.1': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
+                '3.2': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
+                '3.3': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
+
+                // VM Setup
+                '6.1': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+                '6.2': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+                '6.3': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+                '6.4': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+                '6.5': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+                '6.6': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+                '6.7': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT', 'GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+                '6.8': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT', 'GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+                '6.9': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+                '6.10': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+                '6.11': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+                '6.12': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+                '6.13': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+                '6.14': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+                '6.15': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+                '6.21': ['GCP_VM_IP', 'VM_SSH_USER'],
+                '6.22': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+                '6.23': ['GCP_PROJECT_ID'],
+                '6.24': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER']
+            };
+
+            if (requirements[choice] && !validateEnv(requirements[choice])) {
+                await pause();
+                continue;
+            }
 
             switch (choice) {
                 case '1.1': case '1.2': case '1.3': case '1.4':

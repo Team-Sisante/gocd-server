@@ -1,32 +1,49 @@
+/*
 // Scripts/pfs.js
-// This script prints the folder structure of the project, excluding certain directories.
+// This script prints the folder structure of a project (or any folder), excluding certain directories.
+// Usage: node Scripts/pfs.js [target-folder]
+//   - If no folder is given, the project root (one level up from Scripts/) is used.
+//   - If a folder is given, its structure is printed instead.
+
+  Example usage:
+    node Scripts/pfs.js /c/repo
+    # or
+    node Scripts/pfs.js C:/repo
+*/
+
 
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
-// Determine the script's directory and project root
+// Determine the script's directory and the default project root
 const scriptPath = __filename;
 const scriptDir = path.dirname(scriptPath);
-const projectRoot = path.dirname(scriptDir);
+const defaultProjectRoot = path.dirname(scriptDir);
 
-console.log(`Project root is: ${projectRoot}`);
+// Allow the user to specify a different target folder via command-line argument
+const userTarget = process.argv[2];
+const targetRoot = userTarget ? path.resolve(userTarget) : defaultProjectRoot;
 
-// Define folders to exclude
-const excludeFolders = [
+console.log(`Target folder: ${targetRoot}`);
+
+// Define folders to exclude (relative names – they will be mapped to full paths under targetRoot)
+const excludeRelative = [
   "dist",
   ".next",
   ".gi",
   ".github",
   "node_modules",
-  "__pycache",
-  "court_management/__pycache",
+  "__pycache__",
+  "court_management/__pycache__",
   "court_management/management/commands/__pycache__",
   "court_management/management/migrations/__pycache__",
   "court_management/templatetags/__pycache__",
   "venv"
-].map(folder => path.join(projectRoot, folder));
+];
 
+// Convert relative exclusions to absolute paths inside the target folder
+const excludeFolders = excludeRelative.map(folder => path.join(targetRoot, folder));
 console.log("Excluded folders:", excludeFolders);
 
 /**
@@ -88,16 +105,16 @@ function printFolderStructure(dirPath, excludeFolders, maxDepth = 3, currentDept
 }
 
 // Generate the folder structure
-const folderStructure = `${path.basename(projectRoot)}/\n` + 
-  printFolderStructure(projectRoot, excludeFolders, 4);
+const folderStructure = `${path.basename(targetRoot)}/\n` + 
+  printFolderStructure(targetRoot, excludeFolders, 4);
 
-// Write to file
-const outputFile = path.join(projectRoot, 'folderstructure.txt');
+// Write the result to a file inside the target folder (same name for consistency)
+const outputFile = path.join(targetRoot, 'folderstructure.txt');
 fs.writeFileSync(outputFile, folderStructure, 'utf8');
 
 console.log(`\nFolder structure written to: ${outputFile}`);
 
-// Open the file with VS Code (if available)
+// Try to open the file with VS Code (if available)
 try {
   execSync(`code "${outputFile}"`, { stdio: 'inherit' });
 } catch (err) {

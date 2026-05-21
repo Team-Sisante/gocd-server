@@ -33,14 +33,16 @@ function ensureRule(name, port, protocol = 'tcp') {
   if (!exists) {
     console.log(`\x1b[33m[${elapsed()}] Creating firewall rule: ${name} (${protocol}:${port})\x1b[0m`);
     // Show the creation output – no suppression
-    run(`gcloud compute firewall-rules create ${name} --project=${PROJECT_ID} --direction=INGRESS --priority=1000 --network=default --action=ALLOW --rules=${protocol}:${port} --source-ranges=0.0.0.0/0`);
+    run(`gcloud compute firewall-rules create ${name} --project=${PROJECT_ID} --direction=INGRESS --priority=1000 --network=default --action=ALLOW --rules=${protocol}:${port} --source-ranges=0.0.0.0/0 --target-tags=gocd-deploy-target`);
     console.log(`\x1b[32m[${elapsed()}] Rule ${name} created.\x1b[0m`);
   } else {
     console.log(`\x1b[32m[${elapsed()}] Firewall rule ${name} already exists.\x1b[0m`);
   }
 }
 
-['default-allow-ssh:22', 'default-allow-http:80', 'default-allow-https:443'].forEach(entry => {
+['default-allow-ssh:22', 'default-allow-http:80', 'default-allow-https:443', 
+ 'allow-staging-http:8001', 'allow-staging-https:8443', 
+ 'allow-production-http:8002', 'allow-production-https:9443'].forEach(entry => {
   const [name, port] = entry.split(':');
   ensureRule(name, port);
 });

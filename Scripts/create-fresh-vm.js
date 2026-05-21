@@ -46,7 +46,7 @@ const MACHINE_TYPE = 'e2-micro';
 const IMAGE_PROJECT = 'debian-cloud';
 const IMAGE_FAMILY = 'debian-11';
 const DISK_SIZE = '30GB'; // Max free tier limit for stability
-const TAGS = ['http-server', 'https-server'];
+const TAGS = ['http-server', 'https-server', 'gocd-deploy-target'];
 const STARTUP_SCRIPT_PATH = path.join(__dirname, '..', 'tmp_startup_script.sh');
 const STATIC_IP_NAME = 'gocd-deploy-target-ip';
 
@@ -384,6 +384,10 @@ async function main() {
     process.exit(1);
   }
   log('VM is running.', '\x1b[32m');
+
+  // Automatically configure firewall rules
+  log('Automatically configuring firewall rules...', '\x1b[33m');
+  run('node Scripts/setup-firewall-rules.js', { stdio: 'inherit' });
 
   // Clean up temp file
   fs.unlinkSync(STARTUP_SCRIPT_PATH);

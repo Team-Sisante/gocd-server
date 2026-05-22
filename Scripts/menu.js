@@ -15,6 +15,19 @@ const dotenv = require('dotenv');
 // Load environment
 dotenv.config({ path: path.join(__dirname, '..', '.env.docker') });
 
+// Module-level error flag (prevents screen clear)
+let errorDisplayed = false;
+function setErrorDisplayed(val) { errorDisplayed = val; }
+
+// ----- Import modular handlers -----
+const triggerPipeline     = require('./menu/triggerPipeline');
+const containerLogs       = require('./menu/containerLogs');
+const containerManagement = require('./menu/containerManagement');
+const pipelineManagement  = require('./menu/pipelineManagement');
+const systemUtilities     = require('./menu/systemUtilities');
+const dockerTroubleshoot  = require('./menu/dockerTroubleshoot');
+const vmSetup             = require('./menu/vmSetup');
+
 // ----- Validation Helper -----
 function validateEnv(requiredVars) {
     const missingVars = requiredVars.filter(v => !process.env[v]);
@@ -93,19 +106,6 @@ function openUrl(url) {
     let cmd = isWindows ? `start ${url}` : (os.platform() === 'darwin' ? `open ${url}` : `xdg-open ${url}`);
     try { sh(cmd, { stdio: 'ignore' }); } catch (e) { log(`Could not open browser. Manually visit: ${url}`, '\x1b[33m'); }
 }
-
-// Module-level error flag (prevents screen clear)
-let errorDisplayed = false;
-function setErrorDisplayed(val) { errorDisplayed = val; }
-
-// ----- Import modular handlers -----
-const triggerPipeline     = require('./menu/triggerPipeline');
-const containerLogs       = require('./menu/containerLogs');
-const containerManagement = require('./menu/containerManagement');
-const pipelineManagement  = require('./menu/pipelineManagement');
-const systemUtilities     = require('./menu/systemUtilities');
-const dockerTroubleshoot  = require('./menu/dockerTroubleshoot');
-const vmSetup             = require('./menu/vmSetup');
 
 // ----- Main menu loop -----
 async function showMenu() {

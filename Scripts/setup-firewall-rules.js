@@ -27,10 +27,8 @@ function run(cmd, options = {}) {
   }
 }
 
-function ensureRule(name, port, protocol = 'tcp') {
-  console.log(`\x1b[33m[${elapsed()}] Checking firewall rule ${name}…\x1b[0m`);
-  const exists = run(`gcloud compute firewall-rules list --filter="name=${name}" --project=${PROJECT_ID} --format="value(name)"`, { silent: true });
-  if (!exists) {
+function ensureRule(name, port, existingRules, protocol = 'tcp') {
+  if (!existingRules.has(name)) {
     console.log(`\x1b[33m[${elapsed()}] Creating firewall rule: ${name} (${protocol}:${port})\x1b[0m`);
     // Show the creation output – no suppression
     run(`gcloud compute firewall-rules create ${name} --project=${PROJECT_ID} --direction=INGRESS --priority=1000 --network=default --action=ALLOW --rules=${protocol}:${port} --source-ranges=0.0.0.0/0 --target-tags=gocd-deploy-target`);
@@ -40,11 +38,17 @@ function ensureRule(name, port, protocol = 'tcp') {
   }
 }
 
+// Fetch all rules once to avoid expensive CLI calls in a loop
+log('Fetching existing firewall rules list...', '\x1b[33m');
+const rawRules = run(`gcloud compute firewall-rules list --project=${PROJECT_ID} --format="value(name)"`, { silent: true }) || "";
+const existingRules = new Set(rawRules.split('\n').map(r => r.trim()));
+log(`Found ${existingRules.size} existing rules.`, '\x1b[32m');
+
 ['default-allow-ssh:22', 'default-allow-http:80', 'default-allow-https:443', 
  'allow-staging-http:8001', 'allow-staging-https:8443', 
  'allow-production-http:8002', 'allow-production-https:9443'].forEach(entry => {
   const [name, port] = entry.split(':');
-  ensureRule(name, port);
+  ensureRule(name, port, existingRules);
 });
 
 console.log(`\x1b[32m[${elapsed()}] Firewall rules verification complete.\x1b[0m`);

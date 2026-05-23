@@ -3,30 +3,32 @@
 // No artificial timeouts – relies on SSH's ConnectTimeout. No hardcoded ports.
 
 module.exports = async function containerDiagnostics(ctx, env) {
-  const { execSync } = require('child_process');
+  const { execFileSync } = require('child_process');
   const { log, GCP_VM_IP, SSH_USER, SSH_KEY_PATH } = ctx;
 
   const projectName = env === 'production' ? 'badminton-production' : 'badminton-staging';
   const envFile = env === 'production' ? '.env.production' : '.env.staging';
   const appUrl = env === 'production' ? ctx.PRODUCTION_APP_URL : ctx.STAGING_APP_URL;
 
-  // Use the same SSH options as your other working helpers, but with a longer ConnectTimeout
-  const sshOpts = `-i "${SSH_KEY_PATH}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15`;
   const sshTarget = `${SSH_USER}@${GCP_VM_IP}`;
   
   console.log(`\n\x1b[33m=== Diagnostics for ${env.toUpperCase()} (project: ${projectName}) ===\x1b[0m\n`);
 
-  // Run a remote command, capture output, no artificial timeout
+  // Run a remote command via SSH using array-based arguments to avoid host-shell escaping issues
   function remoteExec(cmd) {
-    // Use single quotes around the entire remote command to avoid shell escaping issues.
-    // Inner single quotes are escaped as '\'' (end single-quote, literal ', start single-quote).
-    const escapedCmd = cmd.replace(/'/g, "'\\''");
-    const fullCmd = `ssh ${sshOpts} ${sshTarget} '${escapedCmd}'`;
+    const args = [
+      '-i', SSH_KEY_PATH,
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      '-o', 'ConnectTimeout=15',
+      '-o', 'LogLevel=ERROR',
+      '-o', 'KexAlgorithms=+diffie-hellman-group14-sha256',
+      sshTarget,
+      cmd
+    ];
+
     try {
-      return execSync(fullCmd, {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        encoding: 'utf8'
-      });
+      return execFileSync('ssh', args, { encoding: 'utf8', stdio: 'pipe' });
     } catch (err) {
       // SSH failed – print its error output
       if (err.stderr) console.error(err.stderr.trim());

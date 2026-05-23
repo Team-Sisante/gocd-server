@@ -41,6 +41,15 @@ if (missing.length > 0) {
     process.exit(1);
 }
 
+// --- Pre-flight Check: Prevent Service Account usage for VM creation ---
+const activeAccount = run('gcloud config get-value account', { silent: true, ignoreError: true });
+if (activeAccount && activeAccount.includes('.gserviceaccount.com')) {
+  log(`⚠️  ERROR: Active account is a Service Account: ${activeAccount}`, '\x1b[31m');
+  log('VM creation requires a User Account (Owner/Editor permissions).', '\x1b[33m');
+  log('Run "gcloud auth login" before continuing.', '\x1b[33m');
+  process.exit(1);
+}
+
 // ---------- Configuration (no defaults) ----------
 const MACHINE_TYPE = 'e2-micro';
 const IMAGE_PROJECT = 'debian-cloud';
@@ -53,12 +62,32 @@ const STATIC_IP_NAME = 'gocd-deploy-target-ip';
 // Region derived from the original desired zone (e.g., us-west1-b → us-west1)
 const REGION = ZONE.substring(0, ZONE.lastIndexOf('-'));
 
-// Free‑tier zones – restricted to the SAME region to keep the static IP valid.
-// The static IP is regional; if we switch regions, the IP won't work.
-const REGIONAL_ZONES = [
-    ZONE,                             // try the user's choice first
-    `${REGION}-a`, `${REGION}-b`, `${REGION}-c`
-];
+/**
+ * Dynamically identifies the best available zones in the region.
+ * Prioritizes the zone from the environment files to achieve the best speed
+ * by avoiding "resource unavailable" or "zone down" errors.
+ */
+function getOptimalZones(region, preferredZone) {
+  log(`Searching for available zones in region ${region}...`, '\x1b[33m');
+  try {
+    // Query gcloud for zones that are currently UP in the region
+    const result = execSync(
+      `gcloud compute zones list --filter="region:(${region}) AND status:UP" --format="value(name)"`,
+      { encoding: 'utf8', stdio: 'pipe' }
+    );
+    const zones = result.split(/\r?\n/).map(z => z.trim()).filter(z => z);
+    
+    // Prioritize the list of currently UP zones returned by GCP to ensure best speed/availability.
+    // If the preferred zone is UP, it will be included in this list.
+    if (zones.length > 0) return zones;
+    return [preferredZone, `${region}-a`, `${region}-b`, `${region}-c`].filter((v, i, a) => a.indexOf(v) === i);
+  } catch (e) {
+    log('Note: Zone availability query failed. Falling back to regional defaults.', '\x1b[33m');
+    return [preferredZone, `${region}-a`, `${region}-b`, `${region}-c`].filter((v, i, a) => a.indexOf(v) === i);
+  }
+}
+
+const REGIONAL_ZONES = getOptimalZones(REGION, ZONE);
 
 // Default compute service account (this email is standard for GCP projects)
 const COMPUTE_SA = `575810712323-compute@developer.gserviceaccount.com`;

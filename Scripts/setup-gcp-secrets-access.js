@@ -42,6 +42,14 @@ function log(msg, color = '\x1b[36m') {
   console.log(`${color}[${elapsed()}] ${msg}\x1b[0m`);
 }
 
+// Check if the active account is a service account (common cause of permission errors)
+const activeAccount = run('gcloud config get-value account', { silent: true, ignoreError: true });
+if (activeAccount && activeAccount.includes('.gserviceaccount.com')) {
+  log(`⚠️  Detected active account is a Service Account: ${activeAccount}`, '\x1b[33m');
+  log('Administrative IAM tasks usually require a User Account (Owner/Editor).', '\x1b[33m');
+  log('Suggestion: Run "gcloud auth login" to switch back to your personal account.', '\x1b[33m');
+}
+
 // ---------- Step 1: Ensure service account exists ----------
 log('Checking if service account exists...', '\x1b[33m');
 const existingSA = run(`gcloud iam service-accounts list --project=${PROJECT_ID} --format="value(email)" --filter="email:${SA_EMAIL}"`, { silent: true, ignoreError: true });

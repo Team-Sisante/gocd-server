@@ -12,6 +12,12 @@
 const { execSync } = require('child_process');
 
 const PROJECT_ID = process.env.GCP_PROJECT_ID;
+if (!PROJECT_ID) {
+  console.error('\x1b[31mERROR: GCP_PROJECT_ID environment variable is missing.\x1b[0m');
+  console.error('Ensure you are running this through the management menu or have .env.docker loaded.');
+  process.exit(1);
+}
+
 const scriptStart = Date.now();
 const elapsed = () => Math.floor((Date.now() - scriptStart) / 1000) + 's';
 
@@ -27,14 +33,18 @@ function run(cmd, options = {}) {
   }
 }
 
+function log(msg, color = '\x1b[36m') {
+  console.log(`${color}[${elapsed()}] ${msg}\x1b[0m`);
+}
+
 function ensureRule(name, port, existingRules, protocol = 'tcp') {
   if (!existingRules.has(name)) {
-    console.log(`\x1b[33m[${elapsed()}] Creating firewall rule: ${name} (${protocol}:${port})\x1b[0m`);
+    log(`Creating firewall rule: ${name} (${protocol}:${port})`, '\x1b[33m');
     // Show the creation output – no suppression
     run(`gcloud compute firewall-rules create ${name} --project=${PROJECT_ID} --direction=INGRESS --priority=1000 --network=default --action=ALLOW --rules=${protocol}:${port} --source-ranges=0.0.0.0/0 --target-tags=gocd-deploy-target`);
-    console.log(`\x1b[32m[${elapsed()}] Rule ${name} created.\x1b[0m`);
+    log(`Rule ${name} created.`, '\x1b[32m');
   } else {
-    console.log(`\x1b[32m[${elapsed()}] Firewall rule ${name} already exists.\x1b[0m`);
+    log(`Firewall rule ${name} already exists.`, '\x1b[32m');
   }
 }
 

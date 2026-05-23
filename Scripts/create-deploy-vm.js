@@ -29,14 +29,24 @@
  */
 
 const { spawn } = require('child_process');
+const { execSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
 // ---------- CONFIGURABLE TIMER INTERVAL ----------
 const TIMER_INTERVAL_SECONDS = 1;   // change to any number of seconds
 
 // ---------- Terminal helpers ----------
-let rows = process.stdout.rows || 24;
-process.stdout.on('resize', () => { rows = process.stdout.rows; });
+function getRows() {
+  return process.stdout.rows || 24;
+}
+
+let rows = getRows();
+process.stdout.on('resize', () => { 
+  rows = getRows();
+  // Re-apply the scroll region to the new terminal size
+  setScrollRegion(1, rows - 1);
+});
 
 // ---- Clear screen and move cursor to home ----
 process.stdout.write('\x1Bc');
@@ -54,13 +64,14 @@ const startTime = Date.now();
 
 function startTimer() {
   return setInterval(() => {
+    const currentRows = getRows();
     const totalSec = Math.floor((Date.now() - startTime) / 1000);
     const hours   = Math.floor(totalSec / 3600);
     const mins    = Math.floor((totalSec % 3600) / 60);
     const secs    = totalSec % 60;
     const timeStr = [hours, mins, secs].map(v => String(v).padStart(2, '0')).join(':');
-    // Save cursor, move to last row, print timer, clear line, restore cursor
-    process.stdout.write(`\x1b7\x1b[${rows};1H\x1b[36m⏱️  Time Elapsed: ${timeStr}\x1b[0m\x1b[K\x1b8`);
+    // \x1b7: Save cursor. \x1b[rows;1H: Move to absolute bottom. \x1b[K: Clear line. \x1b8: Restore cursor.
+    process.stdout.write(`\x1b7\x1b[${currentRows};1H\x1b[36m⏱️  Time Elapsed: ${timeStr}\x1b[0m\x1b[K\x1b8`);
   }, TIMER_INTERVAL_SECONDS * 1000);
 }
 
@@ -69,8 +80,9 @@ function runAsync(cmd, args = []) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
       cwd: path.join(__dirname, '..'),
-      stdio: 'inherit',               // output goes directly to terminal (within scroll region)
-      shell: true
+      stdio: 'inherit',
+      shell: true,
+      env: process.env                // Pass current process env
     });
     child.on('close', (code) => {
       if (code === 0) resolve();
@@ -78,6 +90,25 @@ function runAsync(cmd, args = []) {
     });
     child.on('error', reject);
   });
+}
+
+/**
+ * Reloads environment variables from .env.docker into process.env.
+ * Necessary after Step 1 if the zone or IP changed during provisioning.
+ */
+function refreshEnv() {
+  const envPath = path.join(__dirname, '..', '.env.docker');
+  if (fs.existsSync(envPath)) {
+    const content = fs.readFileSync(envPath, 'utf8');
+    content.split(/\r?\n/).forEach(line => {
+      const match = line.match(/^([^#=]+)=(.*)$/);
+      if (match) {
+        const key = match[1].trim();
+        const value = match[2].trim().replace(/^["']|["']$/g, '');
+        process.env[key] = value;
+      }
+    });
+  }
 }
 
 function log(msg, color = '\x1b[36m') {
@@ -91,6 +122,20 @@ function elapsed() {
 
 // ---------- Main flow ----------
 async function main() {
+  // --- Pre-flight Check: Ensure we aren't using a Service Account ---
+  try {
+    const activeAccount = execSync('gcloud config get-value account', { encoding: 'utf8', stdio: 'pipe' }).trim();
+    if (activeAccount && activeAccount.includes('.gserviceaccount.com')) {
+      process.stdout.write('\x1Bc'); // Clear screen
+      console.error(`\x1b[31m[ERROR] Active account is a Service Account: ${activeAccount}\x1b[0m`);
+      console.error('\x1b[33mAdministrative tasks (IAM/VM creation) require a User Account.\x1b[0m');
+      console.error('\x1b[33mPlease run "gcloud auth login" first.\x1b[0m\n');
+      process.exit(1);
+    }
+  } catch (e) {
+    // If gcloud isn't configured at all, the sub-scripts will handle the error
+  }
+
   // Reserve the bottom line
   setScrollRegion(1, rows - 1);
 
@@ -104,10 +149,15 @@ async function main() {
     await runAsync('node', ['Scripts/create-fresh-vm.js']);
     log(`[${elapsed()}] VM created.`);
 
+    // CRITICAL: Refresh memory with updated IP/Zone from disk
+    refreshEnv();
+    log(`[${elapsed()}] Environment variables refreshed (Zone: ${process.env.GCP_ZONE}).`);
+
     const steps = [
       ['setup-firewall-rules.js',      'Configure firewall rules (6.2)'],
       ['setup-agent-ssh.js',           'Setup agent SSH keys (6.3)'],
-      ['wait-for-vm-tools.js',       'Install / Verify tools on VM (6.4)'],
+      // Polling for tool readiness can be slow; note added for user clarity
+      ['wait-for-vm-tools.js',       'Install / Verify tools on VM (6.4) - This takes ~5-10 min'],
       ['setup-gcp-secrets-access.js',  'Setup GCP Secret Manager access (6.5)'],
       ['check-vm-reachability.js',     'Check VM running & reachable (6.6)'],
       ['apply-pipeline-config.js',     'Apply pipeline configuration (6.7)']

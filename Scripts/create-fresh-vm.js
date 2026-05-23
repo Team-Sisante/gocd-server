@@ -269,6 +269,7 @@ function tryCreateVM(zone) {
         --machine-type=${MACHINE_TYPE} \
         --image-project=${IMAGE_PROJECT} \
         --image-family=${IMAGE_FAMILY} \
+        --boot-disk-size=${DISK_SIZE} \
         --tags=${tagsArg} \
         --address=${STATIC_IP_NAME} \
         --scopes=https://www.googleapis.com/auth/cloud-platform \

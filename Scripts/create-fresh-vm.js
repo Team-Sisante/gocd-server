@@ -150,10 +150,12 @@ echo "Updating package lists..."
 apt-get update
 echo "Upgrading existing packages..."
 apt-get upgrade -y
+apt-get clean
+apt-get autoremove -y
 
 # Install required packages
 echo "Installing essential packages..."
-apt-get install -y ca-certificates curl git gnupg lsb-release
+apt-get install -y ca-certificates curl git gnupg lsb-release cloud-guest-utils
 
 # Install Docker
 echo "Installing Docker..."
@@ -163,6 +165,11 @@ apt-get update
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 systemctl enable docker --now
 echo "Docker installed."
+
+echo "Ensuring filesystem utilizes full 30GB disk..."
+growpart /dev/sda 1 || echo "Partition already max size"
+resize2fs /dev/sda1 || echo "Filesystem already max size"
+df -h /
 
 echo "Enabling 4GB swap space for stability..."
 if [ ! -f /swapfile ]; then

@@ -50,9 +50,9 @@ module.exports = async function containerDiagnostics(ctx, env) {
 
   // 2. Container status
   try {
-    log('\nContainer status (docker compose ps):', '\x1b[36m');
+    log('\nContainer status (docker compose ps -a):', '\x1b[36m');
     const composePs = remoteExec(
-      `cd /opt/badminton_court && sudo docker compose -p ${projectName} -f docker-compose.vm.yml --env-file ${envFile} ps`
+      `cd /opt/badminton_court && sudo docker compose -p ${projectName} -f docker-compose.vm.yml --env-file ${envFile} ps -a`
     );
     if (composePs === null) {
       // Try fallback

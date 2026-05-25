@@ -164,45 +164,13 @@ apt-get update
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 echo "Docker installed."
 
-# Configure Docker DNS and MTU BEFORE starting Docker
-echo "Configuring Docker DNS and MTU for reliable registry access on GCP..."
-echo '{"dns":["8.8.8.8"], "mtu": 1460}' | sudo tee /etc/docker/daemon.json
+# Configure Docker DNS (MTU is handled by docker-compose network)
+echo "Configuring Docker DNS for reliable registry access on GCP..."
+echo '{"dns":["8.8.8.8"]}' | sudo tee /etc/docker/daemon.json
 echo "Docker daemon.json configured."
 
 systemctl enable docker --now
 echo "Docker started."
-
-# Verify and set MTU to 1460 on docker0 interface (CRITICAL for GCP VPC compatibility)
-echo "Verifying Docker MTU configuration..."
-# Wait for docker0 interface to be created (Docker might take a moment)
-for i in {1..30}; do
-  actual_mtu=$(ip link show docker0 2>/dev/null | grep -oP "mtu \K[0-9]+" || echo "0")
-  if [ "$actual_mtu" != "0" ]; then
-    break
-  fi
-  echo "Waiting for docker0 interface to be created... ($i/30)"
-  sleep 2
-done
-
-if [ "$actual_mtu" -eq 1460 ]; then
-  echo "✓ Docker MTU is correctly set to 1460."
-else
-  echo "⚠ Docker MTU is $actual_mtu, expected 1460. Setting docker0 interface MTU directly..."
-  # daemon.json sets Docker's internal MTU, but the actual bridge interface needs direct MTU setting
-  sudo ip link set docker0 mtu 1460
-  sleep 2
-  actual_mtu=$(ip link show docker0 2>/dev/null | grep -oP "mtu \K[0-9]+" || echo "0")
-  if [ "$actual_mtu" -eq 1460 ]; then
-    echo "✓ Docker MTU is now correctly set to 1460."
-  else
-    echo "✗ CRITICAL: Failed to set Docker MTU to 1460. Current MTU: $actual_mtu"
-    echo "✗ MTU 1460 is required for GCP VPC compatibility to prevent TLS handshake timeouts."
-    echo "✗ VM setup cannot proceed without correct MTU configuration."
-    echo "✗ See https://forums.docker.com/t/changing-mtu-value/74114 for more information."
-    # Force exit even if running in subshell
-    kill $$
-  fi
-fi
 
 echo "Ensuring filesystem utilizes full 30GB disk..."
 growpart /dev/sda 1 || echo "Partition already max size"

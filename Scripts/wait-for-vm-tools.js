@@ -113,6 +113,18 @@ async function main() {
     while (!toolsReady && Date.now() < deadline) {
         console.log(`\x1b[36m⏳ [${elapsed()}] Checking tool readiness…\x1b[0m`);
 
+        // 0. Check for startup script failure marker
+        try {
+            const failureCheck = await sshAsync(
+                ['test -f /var/log/startup-script-failed && echo FAILED || true'],
+                SSH_TIMEOUT_SECONDS
+            );
+            if (failureCheck.includes('FAILED')) {
+                console.error(`\x1b[31m❌ [${elapsed()}] Startup script failed. Check /var/log/startup-script.log on VM for details.\x1b[0m`);
+                process.exit(1);
+            }
+        } catch (_) { /* ignore */ }
+
         // 1. Stream new startup‑log lines (for visibility)
         try {
             const newContent = await sshAsync(

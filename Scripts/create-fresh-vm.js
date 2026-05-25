@@ -148,10 +148,9 @@ echo 'Acquire::ForceIPv4 "true";' | tee /etc/apt/apt.conf.d/99force-ipv4
 # Update system
 echo "Updating package lists..."
 apt-get update
-echo "Upgrading existing packages..."
-apt-get upgrade -y
+# Skip full upgrade to save time - only install what's needed
+# apt-get upgrade -y  # REMOVED: Takes 10-15 minutes, not necessary for fresh VM
 apt-get clean
-apt-get autoremove -y
 
 # Install required packages
 echo "Installing essential packages..."
@@ -160,7 +159,7 @@ apt-get install -y ca-certificates curl git gnupg lsb-release cloud-guest-utils
 # Install Docker
 echo "Installing Docker..."
 curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list
 apt-get update
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 echo "Docker installed."
@@ -175,7 +174,16 @@ echo "Docker started."
 
 # Verify and set MTU to 1460 on docker0 interface (CRITICAL for GCP VPC compatibility)
 echo "Verifying Docker MTU configuration..."
-actual_mtu=$(ip link show docker0 2>/dev/null | grep -oP "mtu \K[0-9]+" || echo "0")
+# Wait for docker0 interface to be created (Docker might take a moment)
+for i in {1..30}; do
+  actual_mtu=$(ip link show docker0 2>/dev/null | grep -oP "mtu \K[0-9]+" || echo "0")
+  if [ "$actual_mtu" != "0" ]; then
+    break
+  fi
+  echo "Waiting for docker0 interface to be created... ($i/30)"
+  sleep 2
+done
+
 if [ "$actual_mtu" -eq 1460 ]; then
   echo "✓ Docker MTU is correctly set to 1460."
 else
@@ -190,7 +198,9 @@ else
     echo "✗ CRITICAL: Failed to set Docker MTU to 1460. Current MTU: $actual_mtu"
     echo "✗ MTU 1460 is required for GCP VPC compatibility to prevent TLS handshake timeouts."
     echo "✗ VM setup cannot proceed without correct MTU configuration."
-    exit 1
+    echo "✗ See https://forums.docker.com/t/changing-mtu-value/74114 for more information."
+    # Force exit even if running in subshell
+    kill $$
   fi
 fi
 
@@ -225,7 +235,7 @@ echo "gcloud CLI installed."
 
 # Create the SSH user (from VM_SSH_USER environment variable)
 SSH_USER="${SSH_USER}"
-if ! id -u "$SSH_USER" >/dev/null 2>&1; then
+if ! id -u "$SSH_USER"; then
   useradd -m -s /bin/bash "$SSH_USER"
   echo "$SSH_USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$SSH_USER
 fi
@@ -240,7 +250,7 @@ chown -R "$SSH_USER:$SSH_USER" "$REPO_DIR"
 echo ""
 echo "=== Verifying installed tools ==="
 for tool in git docker node npm gcloud; do
-  if command -v $tool &>/dev/null; then
+  if command -v $tool; then
     echo "  ✓ $tool is installed"
   else
     echo "  ✗ WARNING: $tool is MISSING"

@@ -51,10 +51,10 @@ if (activeAccount && activeAccount.includes('.gserviceaccount.com')) {
 }
 
 // ---------- Configuration (no defaults) ----------
-const MACHINE_TYPE = 'e2-micro';
+const MACHINE_TYPE = process.env.GCP_MACHINE_TYPE || 'e2-micro'; // Configurable, defaults to e2-micro
 const IMAGE_PROJECT = 'debian-cloud';
 const IMAGE_FAMILY = 'debian-11';
-const DISK_SIZE = '30GB'; // Max free tier limit for stability
+const DISK_SIZE = '100GB'; // Provision 100GB for professional capacity
 const TAGS = ['http-server', 'https-server', 'gocd-deploy-target'];
 const STARTUP_SCRIPT_PATH = path.join(__dirname, '..', 'tmp_startup_script.sh');
 const STATIC_IP_NAME = 'gocd-deploy-target-ip';
@@ -172,7 +172,7 @@ echo "Docker daemon.json configured."
 systemctl enable docker --now
 echo "Docker started."
 
-echo "Ensuring filesystem utilizes full 30GB disk..."
+echo "Ensuring filesystem utilizes full 100GB disk..."
 growpart /dev/sda 1 || echo "Partition already max size"
 resize2fs /dev/sda1 || echo "Filesystem already max size"
 df -h /

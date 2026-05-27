@@ -5,6 +5,12 @@ const { spawn } = require('child_process');
 
 module.exports = async function sshToVM(ctx) {
     ctx.log(`Connecting to ${ctx.SSH_USER}@${ctx.VM_IP} … (type exit to return)`, '\x1b[33m');
+
+    // Pause the menu's readline so it stops competing with SSH for stdin
+    if (ctx.rl) {
+        ctx.rl.pause();
+        ctx.rl.terminal = false;
+    }
     
     return new Promise((resolve, reject) => {
         const ssh = spawn('ssh', [
@@ -23,6 +29,12 @@ module.exports = async function sshToVM(ctx) {
         });
 
         ssh.on('close', async (code) => {
+            // Re-enable readline for the menu
+            if (ctx.rl) {
+                ctx.rl.terminal = true;
+                ctx.rl.resume();
+            }
+
             if (code !== 0) {
                 ctx.log(`SSH session closed with error code ${code}`, '\x1b[31m');
                 await ctx.pause();
@@ -33,6 +45,10 @@ module.exports = async function sshToVM(ctx) {
         });
 
         ssh.on('error', async (err) => {
+            if (ctx.rl) {
+                ctx.rl.terminal = true;
+                ctx.rl.resume();
+            }
             ctx.log(`SSH session error: ${err.message}`, '\x1b[31m');
             await ctx.pause();
             reject(err);

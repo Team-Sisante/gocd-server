@@ -8,11 +8,18 @@ module.exports = async function sshToVM(ctx) {
     
     return new Promise((resolve, reject) => {
         const ssh = spawn('ssh', [
+            '-tt',
             '-i', ctx.SSH_KEY_PATH,
             '-o', 'StrictHostKeyChecking=no',
+            '-o', 'UserKnownHostsFile=/dev/null',
+            '-o', 'ServerAliveInterval=15',
+            '-o', 'ServerAliveCountMax=3',
+            '-o', 'ConnectTimeout=10',
+            '-o', 'LogLevel=ERROR',
             `${ctx.SSH_USER}@${ctx.VM_IP}`
         ], {
-            stdio: 'inherit' // Connects SSH directly to your terminal
+            stdio: 'inherit',
+            env: { ...process.env, TERM: process.env.TERM || 'xterm-256color' }
         });
 
         ssh.on('close', async (code) => {

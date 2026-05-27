@@ -1,26 +1,14 @@
-// Scripts/encryptenvfiles.js
-// Encrypt .env files using AES-256-GCM (Node crypto).
-// File list is read from `envfiles.json`.
+// Scripts/decryptenvfiles.js
+// Decrypt .env files encrypted with AES-256-GCM (Node crypto).
+// Uses envfiles.json to know which files to decrypt.
 
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const readline = require('readline');
-
-// ---------- Confirmation helper ----------
-function askConfirmation() {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    return new Promise(resolve => {
-        rl.question('Are you sure you want to proceed with encryption? (type "yes"): ', answer => {
-            rl.close();
-            resolve(answer.trim() === 'yes');
-        });
-    });
-}
 
 // ------------------------------------------------------------------
-// 1. Read the list of files to encrypt from envfiles.json
+// 1. Read the list of files to decrypt from envfiles.json (same as encryption)
 // ------------------------------------------------------------------
 function getEnvFiles() {
     const listPath = path.join(__dirname, 'envfiles.json');
@@ -43,108 +31,90 @@ function getEnvFiles() {
 }
 
 // ------------------------------------------------------------------
-// 2. Retrieve the passphrase (same way as before)
+// 2. Retrieve the passphrase (same logic as before)
 // ------------------------------------------------------------------
 function getPassphrase() {
     try {
-        const scriptPath = path.join(__dirname, 'get-gh-variable.js');
-        console.log(`Reading passphrase from: ${scriptPath}`);
-        const result = execFileSync('node', [scriptPath], {
-            encoding: 'utf8',
-            stdio: ['pipe', 'pipe', 'pipe']
-        });
-        return result.trim();
+        if (fs.existsSync('env.passphrase.txt')) {
+            return fs.readFileSync('env.passphrase.txt', 'utf8').trim();
+        } else {
+            // Fallback to getting from GitHub variable
+            const scriptPath = path.join(__dirname, 'get-gh-variable.js');
+            const result = execFileSync('node', [scriptPath], {
+                encoding: 'utf8',
+                stdio: ['pipe', 'pipe', 'pipe']
+            });
+            return result.trim();
+        }
     } catch (error) {
-        console.error('ERROR: Failed to get passphrase');
-        console.error('Error message:', error.message);
-        if (error.stderr) console.error('Stderr:', error.stderr.toString());
-        if (error.stdout) console.error('Stdout:', error.stdout.toString());
+        console.error('ERROR: Failed to get passphrase:', error.message);
         process.exit(1);
     }
 }
 
 // ------------------------------------------------------------------
-// 3. Encrypt a file using AES-256-GCM
-//    Output format: [salt (16 bytes)][iv (12 bytes)][authTag (16 bytes)][ciphertext]
+// 3. Decrypt a file encrypted with the format:
+//    [salt (16)] [iv (12)] [authTag (16)] [ciphertext]
 // ------------------------------------------------------------------
-function encryptFile(inputFile, outputFile, passphrase) {
-    const salt = crypto.randomBytes(16);          // new salt each time
+function decryptFile(encryptedFile, outputFile, passphrase) {
+    const input = fs.readFileSync(encryptedFile);
+    if (input.length < 44) {
+        throw new Error('File too short to contain valid encryption data');
+    }
+
+    const salt = input.slice(0, 16);
+    const iv = input.slice(16, 28);
+    const authTag = input.slice(28, 44);
+    const ciphertext = input.slice(44);
+
     const key = crypto.pbkdf2Sync(passphrase, salt, 100000, 32, 'sha256');
-    const iv = crypto.randomBytes(12);
 
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });
-    const plaintext = fs.readFileSync(inputFile);
-    const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
-    const authTag = cipher.getAuthTag();
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });
+    decipher.setAuthTag(authTag);
 
-    // Concatenate: salt + iv + authTag + ciphertext
-    const output = Buffer.concat([salt, iv, authTag, encrypted]);
-    fs.writeFileSync(outputFile, output);
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    fs.writeFileSync(outputFile, decrypted);
 }
 
 // ------------------------------------------------------------------
-// 4. Main encryption process
+// 4. Main decryption process
 // ------------------------------------------------------------------
-async function encryptEnvFiles() {
-    console.log('
-=== Starting Encryption Process (AES-256-GCM) ===
-');
-
-    if (!(await askConfirmation())) {
-        console.log('Encryption aborted.');
-        process.exit(0);
-    }
+function decryptEnvFiles() {
+    console.log('\n=== Starting Decryption Process (AES-256-GCM) ===\n');
 
     const passphrase = getPassphrase();
     console.log(`✓ Passphrase retrieved (length: ${passphrase.length})`);
 
     const envFiles = getEnvFiles();
-    console.log(`Files to encrypt (${envFiles.length}): ${envFiles.join(', ')}
-`);
+    console.log(`Files to decrypt (${envFiles.length}): ${envFiles.join(', ')}\n`);
 
     let successCount = 0;
     let failCount = 0;
 
-    envFiles.forEach(file => {
-        const inputFile = path.resolve(__dirname, '..', file);
-        console.log(`--- Processing: ${file} ---`);
+    envFiles.forEach(baseName => {
+        const encryptedFile = `.e${baseName}.enc`;   // matches encryption output
+        console.log(`--- Processing: ${baseName} ---`);
 
-        if (!fs.existsSync(inputFile)) {
-            console.warn(`⚠ ${file} not found at ${inputFile}. Skipping.`);
+        if (!fs.existsSync(encryptedFile)) {
+            console.warn(`⚠ Encrypted file ${encryptedFile} not found. Skipping.`);
             return;
         }
 
-        console.log(`✓ File exists: ${inputFile}`);
-        const targetFile = path.join(path.dirname(inputFile), '.e' + path.basename(file) + '.enc');
-
         try {
-            encryptFile(inputFile, targetFile, passphrase);
-            const stats = fs.statSync(targetFile);
-            console.log(`✓ Encrypted -> ${targetFile} (${stats.size} bytes)`);
+            decryptFile(encryptedFile, baseName, passphrase);
+            console.log(`✓ Decrypted to ${baseName}`);
             successCount++;
         } catch (error) {
-            console.error(`✗ Failed to encrypt ${file}: ${error.message}`);
+            console.error(`✗ Failed to decrypt ${baseName}: ${error.message}`);
             failCount++;
         }
     });
 
-    // Save passphrase to file
-    console.log(`
---- Saving Passphrase ---`);
-    const passFile = 'env.passphrase.txt';
-    try {
-        fs.writeFileSync(path.join(__dirname, passFile), passphrase);
-        console.log(`✓ Passphrase saved to ${passFile}`);
-    } catch (error) {
-        console.error(`✗ Failed to save passphrase: ${error.message}`);
-    }
-
-    console.log(`
-=== Encryption Summary ===`);
+    console.log(`\n=== Decryption Summary ===`);
     console.log(`Success: ${successCount}`);
     console.log(`Failed: ${failCount}`);
 
     if (failCount > 0) process.exit(1);
 }
 
-encryptEnvFiles();
+decryptEnvFiles();

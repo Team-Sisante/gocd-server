@@ -20,7 +20,7 @@ function askConfirmation() {
 }
 
 // ------------------------------------------------------------------
-// 1. Read the list of files to decrypt from envfiles.json
+// 1. Read the list of files to decrypt from envfiles.json (same as encryption)
 // ------------------------------------------------------------------
 function getEnvFiles() {
     const listPath = path.join(__dirname, 'envfiles.json');
@@ -47,8 +47,8 @@ function getEnvFiles() {
 // ------------------------------------------------------------------
 function getPassphrase() {
     try {
-        if (fs.existsSync(path.join(__dirname, 'env.passphrase.txt'))) {
-            return fs.readFileSync(path.join(__dirname, 'env.passphrase.txt'), 'utf8').trim();
+        if (fs.existsSync('env.passphrase.txt')) {
+            return fs.readFileSync('env.passphrase.txt', 'utf8').trim();
         } else {
             // Fallback to getting from GitHub variable
             const scriptPath = path.join(__dirname, 'get-gh-variable.js');
@@ -92,21 +92,17 @@ function decryptFile(encryptedFile, outputFile, passphrase) {
 // 4. Main decryption process
 // ------------------------------------------------------------------
 async function decryptEnvFiles() {
-    console.log('
-=== Starting Decryption Process (AES-256-GCM) ===
-');
+    console.log('\n=== Starting Decryption Process (AES-256-GCM) ===\n');
 
     if (!(await askConfirmation())) {
         console.log('Decryption aborted.');
         process.exit(0);
     }
-
     const passphrase = getPassphrase();
     console.log(`✓ Passphrase retrieved (length: ${passphrase.length})`);
 
     const envFiles = getEnvFiles();
-    console.log(`Files to decrypt (${envFiles.length}): ${envFiles.join(', ')}
-`);
+    console.log(`Files to decrypt (${envFiles.length}): ${envFiles.join(', ')}\n`);
 
     let successCount = 0;
     let failCount = 0;
@@ -132,8 +128,7 @@ async function decryptEnvFiles() {
         }
     });
 
-    console.log(`
-=== Decryption Summary ===`);
+    console.log(`\n=== Decryption Summary ===`);
     console.log(`Success: ${successCount}`);
     console.log(`Failed: ${failCount}`);
 

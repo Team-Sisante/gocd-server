@@ -193,8 +193,8 @@ async function showMenu() {
                 // Aliases used by vmSetup and other SSH‑based options
                 SSH_USER: VM_SSH_USER,
                 VM_IP:   GCP_VM_IP,
-                STAGING_APP_URL: process.env.STAGING_APP_URL,       
-                PRODUCTION_APP_URL: process.env.PRODUCTION_APP_URL,  
+                STAGING_APP_URL: GCP_VM_IP ? `https://${GCP_VM_IP}:8443` : (process.env.STAGING_APP_URL || ''),
+                PRODUCTION_APP_URL: GCP_VM_IP ? `https://${GCP_VM_IP}:9443` : (process.env.PRODUCTION_APP_URL || ''),  
                 rl, setErrorDisplayed, errorDisplayed,
                 SSH_KEY_PATH: path.join(__dirname, '..', 'secrets', 'agent-key')
             };

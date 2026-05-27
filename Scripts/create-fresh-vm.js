@@ -164,9 +164,9 @@ apt-get update
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 echo "Docker installed."
 
-# Configure Docker DNS (MTU is handled by docker-compose network)
-echo "Configuring Docker DNS for reliable registry access on GCP..."
-echo '{"dns":["8.8.8.8"]}' | sudo tee /etc/docker/daemon.json
+# Configure Docker DNS & MTU (Critical for registry access on GCP)
+echo "Configuring Docker daemon for reliable registry access on GCP (DNS=8.8.8.8, MTU=1460)..."
+echo '{"dns":["8.8.8.8"],"mtu":1460}' | sudo tee /etc/docker/daemon.json
 echo "Docker daemon.json configured."
 
 systemctl enable docker --now

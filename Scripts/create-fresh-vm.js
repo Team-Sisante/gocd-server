@@ -21,18 +21,20 @@ const path = require('path');
 const readline = require('readline');
 
 // ---------- Validate required environment variables ----------
-const PROJECT_ID = process.env.GCP_PROJECT_ID;
-const ZONE       = process.env.GCP_ZONE;
+const PROJECT_ID    = process.env.GCP_PROJECT_ID;
+const ZONE          = process.env.GCP_ZONE;
 const INSTANCE_NAME = process.env.GCP_VM_NAME;
-const SSH_USER    = process.env.VM_SSH_USER;
-const DESIRED_IP  = process.env.GCP_VM_IP;
+const SSH_USER      = process.env.VM_SSH_USER;
+const DESIRED_IP    = process.env.GCP_VM_IP;
+const MACHINE_TYPE  = process.env.GCP_MACHINE_TYPE;
 
 const missing = [];
-if (!PROJECT_ID) missing.push('GCP_PROJECT_ID');
-if (!ZONE)       missing.push('GCP_ZONE');
+if (!PROJECT_ID)    missing.push('GCP_PROJECT_ID');
+if (!ZONE)          missing.push('GCP_ZONE');
 if (!INSTANCE_NAME) missing.push('GCP_VM_NAME');
-if (!SSH_USER)   missing.push('VM_SSH_USER');
-if (!DESIRED_IP) missing.push('GCP_VM_IP');
+if (!SSH_USER)      missing.push('VM_SSH_USER');
+if (!DESIRED_IP)    missing.push('GCP_VM_IP');
+if (!MACHINE_TYPE)  missing.push('GCP_MACHINE_TYPE');
 
 if (missing.length > 0) {
     console.error('\x1b[31mERROR: The following required environment variables are missing:\x1b[0m');
@@ -50,8 +52,7 @@ if (activeAccount && activeAccount.includes('.gserviceaccount.com')) {
   process.exit(1);
 }
 
-// ---------- Configuration (no defaults) ----------
-const MACHINE_TYPE = process.env.GCP_MACHINE_TYPE || 'e2-micro'; // Configurable, defaults to e2-micro
+// ---------- Configuration ----------
 const IMAGE_PROJECT = 'debian-cloud';
 const IMAGE_FAMILY = 'debian-11';
 const DISK_SIZE = '100GB'; // Provision 100GB for professional capacity

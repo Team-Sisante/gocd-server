@@ -2,5 +2,14 @@
     ".env.dev", 
     ".env.docker", 
     ".env.staging", 
-    ".env.production"
+    ".env.production",  
+    ".env.dev.template",
+    ".env.docker.template", 
+    ".env.staging.template", 
+    ".env.production.template",
+    ".env.test.dev",
+    ".env.test.docker",
+    ".env.test.staging",
+    ".env.test.production",
+    "secrets/gcp-key.json"
 ]

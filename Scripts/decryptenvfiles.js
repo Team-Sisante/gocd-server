@@ -6,9 +6,21 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const readline = require('readline');
+
+// ---------- Confirmation helper ----------
+function askConfirmation() {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    return new Promise(resolve => {
+        rl.question('Are you sure you want to proceed with decryption? (type "yes"): ', answer => {
+            rl.close();
+            resolve(answer.trim() === 'yes');
+        });
+    });
+}
 
 // ------------------------------------------------------------------
-// 1. Read the list of files to decrypt from envfiles.json (same as encryption)
+// 1. Read the list of files to decrypt from envfiles.json
 // ------------------------------------------------------------------
 function getEnvFiles() {
     const listPath = path.join(__dirname, 'envfiles.json');
@@ -35,8 +47,8 @@ function getEnvFiles() {
 // ------------------------------------------------------------------
 function getPassphrase() {
     try {
-        if (fs.existsSync('env.passphrase.txt')) {
-            return fs.readFileSync('env.passphrase.txt', 'utf8').trim();
+        if (fs.existsSync(path.join(__dirname, 'env.passphrase.txt'))) {
+            return fs.readFileSync(path.join(__dirname, 'env.passphrase.txt'), 'utf8').trim();
         } else {
             // Fallback to getting from GitHub variable
             const scriptPath = path.join(__dirname, 'get-gh-variable.js');
@@ -79,21 +91,31 @@ function decryptFile(encryptedFile, outputFile, passphrase) {
 // ------------------------------------------------------------------
 // 4. Main decryption process
 // ------------------------------------------------------------------
-function decryptEnvFiles() {
-    console.log('\n=== Starting Decryption Process (AES-256-GCM) ===\n');
+async function decryptEnvFiles() {
+    console.log('
+=== Starting Decryption Process (AES-256-GCM) ===
+');
+
+    if (!(await askConfirmation())) {
+        console.log('Decryption aborted.');
+        process.exit(0);
+    }
 
     const passphrase = getPassphrase();
     console.log(`✓ Passphrase retrieved (length: ${passphrase.length})`);
 
     const envFiles = getEnvFiles();
-    console.log(`Files to decrypt (${envFiles.length}): ${envFiles.join(', ')}\n`);
+    console.log(`Files to decrypt (${envFiles.length}): ${envFiles.join(', ')}
+`);
 
     let successCount = 0;
     let failCount = 0;
 
-    envFiles.forEach(baseName => {
-        const encryptedFile = `.e${baseName}.enc`;   // matches encryption output
-        console.log(`--- Processing: ${baseName} ---`);
+    envFiles.forEach(file => {
+        const outputFile = path.resolve(__dirname, '..', file);
+        const encryptedFile = path.join(path.dirname(outputFile), '.e' + path.basename(file) + '.enc');
+        
+        console.log(`--- Processing: ${file} ---`);
 
         if (!fs.existsSync(encryptedFile)) {
             console.warn(`⚠ Encrypted file ${encryptedFile} not found. Skipping.`);
@@ -101,16 +123,17 @@ function decryptEnvFiles() {
         }
 
         try {
-            decryptFile(encryptedFile, baseName, passphrase);
-            console.log(`✓ Decrypted to ${baseName}`);
+            decryptFile(encryptedFile, outputFile, passphrase);
+            console.log(`✓ Decrypted to ${outputFile}`);
             successCount++;
         } catch (error) {
-            console.error(`✗ Failed to decrypt ${baseName}: ${error.message}`);
+            console.error(`✗ Failed to decrypt ${file}: ${error.message}`);
             failCount++;
         }
     });
 
-    console.log(`\n=== Decryption Summary ===`);
+    console.log(`
+=== Decryption Summary ===`);
     console.log(`Success: ${successCount}`);
     console.log(`Failed: ${failCount}`);
 

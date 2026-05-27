@@ -6,6 +6,18 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const readline = require('readline');
+
+// ---------- Confirmation helper ----------
+function askConfirmation() {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    return new Promise(resolve => {
+        rl.question('Are you sure you want to proceed with encryption? (type "yes"): ', answer => {
+            rl.close();
+            resolve(answer.trim() === 'yes');
+        });
+    });
+}
 
 // ------------------------------------------------------------------
 // 1. Read the list of files to encrypt from envfiles.json
@@ -73,31 +85,40 @@ function encryptFile(inputFile, outputFile, passphrase) {
 // ------------------------------------------------------------------
 // 4. Main encryption process
 // ------------------------------------------------------------------
-function encryptEnvFiles() {
-    console.log('\n=== Starting Encryption Process (AES-256-GCM) ===\n');
+async function encryptEnvFiles() {
+    console.log('
+=== Starting Encryption Process (AES-256-GCM) ===
+');
+
+    if (!(await askConfirmation())) {
+        console.log('Encryption aborted.');
+        process.exit(0);
+    }
 
     const passphrase = getPassphrase();
     console.log(`✓ Passphrase retrieved (length: ${passphrase.length})`);
 
     const envFiles = getEnvFiles();
-    console.log(`Files to encrypt (${envFiles.length}): ${envFiles.join(', ')}\n`);
+    console.log(`Files to encrypt (${envFiles.length}): ${envFiles.join(', ')}
+`);
 
     let successCount = 0;
     let failCount = 0;
 
     envFiles.forEach(file => {
+        const inputFile = path.resolve(__dirname, '..', file);
         console.log(`--- Processing: ${file} ---`);
 
-        if (!fs.existsSync(file)) {
-            console.warn(`⚠ ${file} not found. Skipping.`);
+        if (!fs.existsSync(inputFile)) {
+            console.warn(`⚠ ${file} not found at ${inputFile}. Skipping.`);
             return;
         }
 
-        console.log(`✓ File exists: ${file}`);
-        const targetFile = `.e${file}.enc`;   // new extension: .enc instead of .gpg
+        console.log(`✓ File exists: ${inputFile}`);
+        const targetFile = path.join(path.dirname(inputFile), '.e' + path.basename(file) + '.enc');
 
         try {
-            encryptFile(file, targetFile, passphrase);
+            encryptFile(inputFile, targetFile, passphrase);
             const stats = fs.statSync(targetFile);
             console.log(`✓ Encrypted -> ${targetFile} (${stats.size} bytes)`);
             successCount++;
@@ -108,19 +129,20 @@ function encryptEnvFiles() {
     });
 
     // Save passphrase to file
-    console.log(`\n--- Saving Passphrase ---`);
+    console.log(`
+--- Saving Passphrase ---`);
     const passFile = 'env.passphrase.txt';
     try {
-        fs.writeFileSync(passFile, passphrase);
+        fs.writeFileSync(path.join(__dirname, passFile), passphrase);
         console.log(`✓ Passphrase saved to ${passFile}`);
     } catch (error) {
         console.error(`✗ Failed to save passphrase: ${error.message}`);
     }
 
-    console.log(`\n=== Encryption Summary ===`);
+    console.log(`
+=== Encryption Summary ===`);
     console.log(`Success: ${successCount}`);
     console.log(`Failed: ${failCount}`);
-    console.log(`\n⚠ Keep ${passFile} safe!`);
 
     if (failCount > 0) process.exit(1);
 }

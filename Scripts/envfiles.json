@@ -11,5 +11,7 @@
     ".env.test.docker",
     ".env.test.staging",
     ".env.test.production",
-    "secrets/gcp-key.json"
+    "secrets/gcp-key.json",
+    "secrets/agent-key",
+    "secrets/agent-key.pub"
 ]

@@ -347,8 +347,7 @@ function ensureFirewallRule() {
     log(`Firewall rule ${FW_RULE_NAME} already exists.`, '\x1b[32m');
   } else {
     log(`Creating firewall rule ${FW_RULE_NAME}...`);
-    //const ports = BACKENDS.map(b => b.port).join(','); // Devin incorretly used this command
-    const ports = BACKENDS.map(b => `tcp:${b.port}`).join(','); // yields: "tcp:8443,tcp:9443"
+    const rules = BACKENDS.map(b => `tcp:${b.port}`).join(','); // "tcp:8443,tcp:9443"
     run([
       `gcloud compute firewall-rules create ${FW_RULE_NAME}`,
       `--project=${PROJECT_ID}`,
@@ -356,7 +355,7 @@ function ensureFirewallRule() {
       `--priority=1000`,
       `--network=default`,
       `--action=ALLOW`,
-      `--rules=tcp:${ports}`,
+      `--rules=${rules}`,
       `--source-ranges=35.191.0.0/16,130.211.0.0/22`,
       `--target-tags=gocd-deploy-target`,
       `--description="Allow GCP LB health check probes"`,
@@ -386,14 +385,14 @@ function ensureDNSRecords(lbIP) {
     return;
   }
 
-  // Devin incorrectly used this codes to update an "A record" that does not exist.
+    // Devin incorrectly used this codes to update an "A record" that does not exist.
   // Get existing records to avoid duplicates
   // const existingRecords = run(
   //   `gcloud dns record-sets list --zone=${DNS_ZONE} --project=${PROJECT_ID} --format="value(name)"`,
   //   { silent: true }
   // ) || '';
-
-  // List only A records when checking existence. Modify the DNS part of ensureDNSRecords:
+  
+  // List only A records to decide between create vs update
   const existingARecords = run(
     `gcloud dns record-sets list --zone=${DNS_ZONE} --project=${PROJECT_ID} --type=A --format="value(name)"`,
     { silent: true }
@@ -406,9 +405,8 @@ function ensureDNSRecords(lbIP) {
   ];
 
   for (const rec of records) {
-    if (existingRecords.includes(rec.name)) {
+    if (existingARecords.includes(rec.name)) {
       log(`DNS A record for ${rec.desc} already exists. Updating to ${lbIP}...`);
-      // Start a transaction to update
       run(`gcloud dns record-sets update ${rec.name} --zone=${DNS_ZONE} --project=${PROJECT_ID} --type=A --ttl=300 --rrdatas=${lbIP}`, { ignoreError: true });
     } else {
       log(`Creating DNS A record: ${rec.desc} → ${lbIP}...`);

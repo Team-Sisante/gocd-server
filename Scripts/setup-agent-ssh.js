@@ -15,10 +15,16 @@ const path = require('path');
 const os = require('os');
 
 // ---------- Configuration ----------
-const PROJECT_ID = process.env.GCP_PROJECT_ID || 'project-39c0ea08-238b-47b5-915';
-const ZONE = process.env.GCP_ZONE || 'us-west1-b';
-const INSTANCE_NAME = process.env.GCP_VM_NAME || 'gocd-deploy-target';
-const REMOTE_USER = process.env.VM_SSH_USER || 'xmnione';
+const PROJECT_ID = process.env.GCP_PROJECT_ID;
+const ZONE = process.env.GCP_ZONE;
+const INSTANCE_NAME = process.env.GCP_VM_NAME;
+const REMOTE_USER = process.env.VM_SSH_USER;
+
+if (!PROJECT_ID) waitAndExit('ERROR: GCP_PROJECT_ID environment variable is missing.');
+if (!ZONE) waitAndExit('ERROR: GCP_ZONE environment variable is missing.');
+if (!INSTANCE_NAME) waitAndExit('ERROR: GCP_VM_NAME environment variable is missing.');
+if (!REMOTE_USER) waitAndExit('ERROR: VM_SSH_USER environment variable is missing.');
+
 const AGENT_KEY_PATH = path.join(__dirname, '..', 'secrets', 'agent-key');
 const AGENT_KEY_COMMENT = 'gocd-agent';
 
@@ -26,6 +32,17 @@ const scriptStart = Date.now();
 const elapsed = () => Math.floor((Date.now() - scriptStart) / 1000) + 's';
 
 // ---------- Helpers ----------
+function waitAndExit(message) {
+  console.error(`\x1b[31m${message}\x1b[0m`);
+  console.log('\x1b[33mPress Enter to exit and stop the process...\x1b[0m');
+  try {
+    fs.readSync(0, Buffer.alloc(1), 0, 1);
+  } catch (err) {
+    console.log('Non-interactive shell detected, exiting immediately.');
+  }
+  process.exit(1);
+}
+
 function run(cmd, options = {}) {
     const stdio = options.silent ? 'pipe' : 'inherit';
     try {

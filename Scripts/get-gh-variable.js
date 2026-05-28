@@ -17,10 +17,16 @@ function getGitHubVariable(repo = 'xmione/badminton_court', variableName = 'ENV_
       throw new Error('GitHub CLI (gh) is not installed or not in PATH. Install from: https://cli.github.com/');
     }
 
+    // Strip GITHUB_TOKEN from the environment so `gh` uses its own
+    // stored credentials (from `gh auth login`) instead of a potentially
+    // stale token inherited from .env.docker / process.env.
+    const cleanEnv = { ...process.env };
+    delete cleanEnv.GITHUB_TOKEN;
+
     // Get variable list from GitHub
     const output = execSync(
       `gh variable list --repo ${repo} --json name,value`,
-      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: cleanEnv }
     );
 
     // Parse JSON response

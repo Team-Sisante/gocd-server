@@ -1,5 +1,5 @@
 // menu/vmSetup.js
-// GCP VM Setup options (6.1 – 6.24)
+// GCP VM Setup options (6.1 – 6.29)
 
 const viewLogs           = require('./viewLogs');
 const restartService     = require('./restartService');
@@ -11,6 +11,7 @@ const recreateFreshVM    = require('./recreateFreshVM');
 const createVMFromYAML   = require('./createVMFromYAML');
 const sshToVM            = require('./sshToVM');
 const containerDiagnostics = require('./containerDiagnostics');
+const sshTunnelGoCD      = require('./sshTunnelGoCD');
 
 module.exports = {
     '6.1':  async (ctx) => { ctx.sh('node Scripts/create-fresh-vm.js'); await ctx.pause(); },
@@ -103,4 +104,6 @@ module.exports = {
     '6.27': async (ctx) => { await containerDiagnostics(ctx, 'production'); },
     // 6.28 – Enable/Verify Swap Space on VM
     '6.28': async (ctx) => { ctx.sh('node Scripts/enable-swap-on-vm.js'); await ctx.pause(); },
+    // 6.29 – SSH tunnel: expose local GoCD via VM
+    '6.29': sshTunnelGoCD,
 };

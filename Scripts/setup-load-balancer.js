@@ -347,7 +347,8 @@ function ensureFirewallRule() {
     log(`Firewall rule ${FW_RULE_NAME} already exists.`, '\x1b[32m');
   } else {
     log(`Creating firewall rule ${FW_RULE_NAME}...`);
-    const ports = BACKENDS.map(b => b.port).join(',');
+    //const ports = BACKENDS.map(b => b.port).join(','); // Devin incorretly used this command
+    const ports = BACKENDS.map(b => `tcp:${b.port}`).join(','); // yields: "tcp:8443,tcp:9443"
     run([
       `gcloud compute firewall-rules create ${FW_RULE_NAME}`,
       `--project=${PROJECT_ID}`,
@@ -385,9 +386,16 @@ function ensureDNSRecords(lbIP) {
     return;
   }
 
+  // Devin incorrectly used this codes to update an "A record" that does not exist.
   // Get existing records to avoid duplicates
-  const existingRecords = run(
-    `gcloud dns record-sets list --zone=${DNS_ZONE} --project=${PROJECT_ID} --format="value(name)"`,
+  // const existingRecords = run(
+  //   `gcloud dns record-sets list --zone=${DNS_ZONE} --project=${PROJECT_ID} --format="value(name)"`,
+  //   { silent: true }
+  // ) || '';
+
+  // List only A records when checking existence. Modify the DNS part of ensureDNSRecords:
+  const existingARecords = run(
+    `gcloud dns record-sets list --zone=${DNS_ZONE} --project=${PROJECT_ID} --type=A --format="value(name)"`,
     { silent: true }
   ) || '';
 

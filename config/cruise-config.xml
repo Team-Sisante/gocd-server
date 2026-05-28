@@ -195,7 +195,8 @@
                 <arg>-c</arg>
                 <arg><![CDATA[
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
-                  node /humrine_site/Scripts/build-and-push.js
+                  cd /humrine_site
+                  node Scripts/build-and-push.js
                 ]]></arg>
               </exec>
             </tasks>

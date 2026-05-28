@@ -248,7 +248,11 @@ function updateEnvFiles(newIp, newZone, oldIp) {
         path.join(badmintonDir, '.env.dev'),
         path.join(badmintonDir, '.env.docker'),
         path.join(badmintonDir, '.env.staging'),
-        path.join(badmintonDir, '.env.production')
+        path.join(badmintonDir, '.env.production'),
+        path.join(badmintonDir, '.env.test.dev'),
+        path.join(badmintonDir, '.env.test.docker'),
+        path.join(badmintonDir, '.env.test.staging'),
+        path.join(badmintonDir, '.env.test.production')
     ];
 
     for (const filePath of files) {

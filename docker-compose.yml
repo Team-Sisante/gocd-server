@@ -63,13 +63,14 @@ services:
     environment:
       - GO_SERVER_URL=http://gocd-server:8153/go
       - AGENT_AUTO_REGISTER_KEY=default
-      - AGENT_AUTO_REGISTER_RESOURCES=docker,linux,badminton_court
+      - AGENT_AUTO_REGISTER_RESOURCES=docker,linux,badminton_court,humrine_site
       - AGENT_AUTO_REGISTER_HOSTNAME=agent-2
       - AGENT_BOOTSTRAP_ARGS=-Dgo.agent.ssl.verify=false
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./certs/ca.crt:/usr/local/share/ca-certificates/ca.crt:ro
       - ../badminton_court:/badminton_court:rw
+      - ../humrine_site:/humrine_site:rw
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
     depends_on:

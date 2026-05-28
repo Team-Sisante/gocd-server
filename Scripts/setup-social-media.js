@@ -52,8 +52,7 @@ for (const [key, value] of Object.entries(conf)) {
     }
 }
 
-console.log('
------------------------------------');
+console.log('\n-----------------------------------');
 if (missing.length === 0) {
     console.log('\x1b[32m✅ All social media configurations are valid!\x1b[0m');
 } else {

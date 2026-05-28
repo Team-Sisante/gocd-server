@@ -16,6 +16,11 @@
       "placeholder": "__SOLVPN_REPO_URL_WITH_CREDENTIALS__"
     },
     {
+      "name": "pay-sol",
+      "env_var": "GIT_PAYSOL_REPONAME",
+      "placeholder": "__PAYSOL_REPO_URL_WITH_CREDENTIALS__"
+    },
+    {
       "name": "humrine_site",
       "env_var": "GIT_HUMRINE_SITE_REPONAME",
       "placeholder": "__HUMRINE_SITE_REPO_URL_WITH_CREDENTIALS__"

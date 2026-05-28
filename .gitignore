@@ -4,3 +4,8 @@ certs/
 diff.txt
 temp/
 env.passphrase.txt
+
+# Secrets - ignore all, allow encrypted
+secrets/*
+!secrets/*.enc
+!secrets/.gitignore

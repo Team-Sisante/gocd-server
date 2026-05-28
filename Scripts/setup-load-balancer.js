@@ -55,11 +55,20 @@ const BACKENDS = [
     pathMatcher: 'humrine-site-matcher',
   },
   {
+    name: 'humrine-site-staging-backend',
+    namedPort: 'humrine-site-staging',
+    port: 8001,
+    healthCheck: 'humrine-site-staging-health-check',
+    host: DOMAIN,
+    pathMatcher: 'humrine-site-staging-matcher',
+    path: '/staging/*', // Or path as humrine_site.staging
+  },
+  {
     name: 'badminton-staging-backend',
     namedPort: 'staging',
     port: 8443,
     healthCheck: 'staging-health-check',
-    host: DOMAIN, // Switching to path-based on main domain
+    host: DOMAIN,
     pathMatcher: 'badminton-staging-matcher',
     path: '/badminton_court.staging/*',
   },
@@ -68,7 +77,7 @@ const BACKENDS = [
     namedPort: 'production',
     port: 9443,
     healthCheck: 'production-health-check',
-    host: DOMAIN, // Switching to path-based on main domain
+    host: DOMAIN,
     pathMatcher: 'badminton-production-matcher',
     path: '/badminton_court.production/*',
   },

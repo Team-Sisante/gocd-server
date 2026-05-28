@@ -1,4 +1,24 @@
-# .gitignore
+# Node
+node_modules/
+
+# Scripts
+Scripts/fix-node-options-action.ps1
+Scripts/NodeOptionsFixer.cs
+Scripts/fix-node-options-cleanup.ps1
+Scripts/save-open-folders.ps1
+
+# Logs
+error-live-gocd-server.log
+error-live-gocd-agent-2.log
+
+# Temp/Startup
+tmp_startup_script.sh
+
+# AWS/GCP
+secrets/agent-key
+secrets/agent-key.pub
+secrets/gcp-key.json
+
 .env*
 certs/
 diff.txt

@@ -209,6 +209,16 @@ if ! id -u "$SSH_USER"; then
 fi
 usermod -aG docker "$SSH_USER"
 
+# Enable GatewayPorts so reverse SSH tunnels (e.g. option 6.29) bind to
+# all interfaces instead of only localhost.
+echo "Enabling GatewayPorts for SSH reverse tunnels..."
+sed -i 's/^#GatewayPorts no/GatewayPorts yes/' /etc/ssh/sshd_config
+if ! grep -q '^GatewayPorts yes' /etc/ssh/sshd_config; then
+  echo 'GatewayPorts yes' >> /etc/ssh/sshd_config
+fi
+systemctl restart sshd
+echo "GatewayPorts enabled."
+
 # Set up the application directory
 REPO_DIR="/opt/badminton_court"
 mkdir -p "$REPO_DIR"

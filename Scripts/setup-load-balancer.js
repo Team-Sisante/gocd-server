@@ -385,19 +385,6 @@ function ensureDNSRecords(lbIP) {
     return;
   }
 
-    // Devin incorrectly used this codes to update an "A record" that does not exist.
-  // Get existing records to avoid duplicates
-  // const existingRecords = run(
-  //   `gcloud dns record-sets list --zone=${DNS_ZONE} --project=${PROJECT_ID} --format="value(name)"`,
-  //   { silent: true }
-  // ) || '';
-  
-  // List only A records to decide between create vs update
-  const existingARecords = run(
-    `gcloud dns record-sets list --zone=${DNS_ZONE} --project=${PROJECT_ID} --type=A --format="value(name)"`,
-    { silent: true }
-  ) || '';
-
   const records = [
     { name: `${DOMAIN}.`, desc: DOMAIN },
     { name: `staging.${DOMAIN}.`, desc: `staging.${DOMAIN}` },
@@ -405,12 +392,17 @@ function ensureDNSRecords(lbIP) {
   ];
 
   for (const rec of records) {
-    if (existingARecords.includes(rec.name)) {
-      log(`DNS A record for ${rec.desc} already exists. Updating to ${lbIP}...`);
-      run(`gcloud dns record-sets update ${rec.name} --zone=${DNS_ZONE} --project=${PROJECT_ID} --type=A --ttl=300 --rrdatas=${lbIP}`, { ignoreError: true });
+    log(`Processing DNS A record: ${rec.desc} → ${lbIP}...`);
+    const updateCmd = `gcloud dns record-sets update ${rec.name} --zone=${DNS_ZONE} --project=${PROJECT_ID} --type=A --ttl=300 --rrdatas=${lbIP}`;
+    const createCmd = `gcloud dns record-sets create ${rec.name} --zone=${DNS_ZONE} --project=${PROJECT_ID} --type=A --ttl=300 --rrdatas=${lbIP}`;
+
+    // Try update first (idempotent if record already exists); if it fails, create instead
+    const updateResult = run(updateCmd, { silent: true, ignoreError: true });
+    if (updateResult === null) {
+      log(`  Record does not exist, creating...`);
+      run(createCmd);
     } else {
-      log(`Creating DNS A record: ${rec.desc} → ${lbIP}...`);
-      run(`gcloud dns record-sets create ${rec.name} --zone=${DNS_ZONE} --project=${PROJECT_ID} --type=A --ttl=300 --rrdatas=${lbIP}`, { ignoreError: true });
+      log(`  Record updated successfully.`);
     }
   }
 

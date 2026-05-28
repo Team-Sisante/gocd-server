@@ -56,7 +56,8 @@ log(`Found ${existingRules.size} existing rules.`, '\x1b[32m');
 
 ['default-allow-ssh:22', 'default-allow-http:80', 'default-allow-https:443', 
  'allow-staging-http:8001', 'allow-staging-https:8443', 
- 'allow-production-http:8002', 'allow-production-https:9443'].forEach(entry => {
+ 'allow-production-http:8002', 'allow-production-https:9443',
+ 'allow-gocd-web:8153'].forEach(entry => {
   const [name, port] = entry.split(':');
   ensureRule(name, port, existingRules);
 });

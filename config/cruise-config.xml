@@ -22,12 +22,13 @@
       </admins>
     </security>
     <siteUrls>
-      <siteUrl>http://localhost:8153</siteUrl>
+      <siteUrl>__SITE_URL__</siteUrl>
     </siteUrls>
     <artifacts>
       <artifactsDir>artifacts</artifactsDir>
     </artifacts>
   </server>
+
   <pipelines group="badminton_court_group">
     <pipeline name="badminton_court-artifacts">
       <materials>
@@ -44,13 +45,17 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /badminton_court/Scripts/build-and-push.js</arg>
+                <arg><![CDATA[
+                  export GITHUB_TOKEN='__GITHUB_TOKEN__'
+                  node /badminton_court/Scripts/build-and-push.js
+                ]]></arg>
               </exec>
             </tasks>
           </job>
         </jobs>
       </stage>
     </pipeline>
+
     <pipeline name="badminton_court-staging">
       <materials>
         <pipeline pipelineName="badminton_court-artifacts" stageName="build_and_push" />
@@ -73,9 +78,10 @@
         </jobs>
       </stage>
     </pipeline>
+
     <pipeline name="badminton_court-production">
       <materials>
-        <pipeline pipelineName="badminton_court-artifacts" stageName="build_and_push" />
+        <pipeline pipelineName="badminton_court-staging" stageName="deploy_staging" />
       </materials>
       <stage name="deploy_production">
         <approval type="manual" />
@@ -96,7 +102,8 @@
       </stage>
     </pipeline>
   </pipelines>
- <pipelines group="pay-sol-group">
+
+  <pipelines group="pay-sol-group">
     <pipeline name="pay-sol-artifacts">
       <materials>
         <git url="__GIT_REPO_URL_WITH_CREDENTIALS__" branch="master" />
@@ -112,13 +119,17 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /pay-sol/Scripts/build-and-push.js</arg>
+                <arg><![CDATA[
+                  export GITHUB_TOKEN='__GITHUB_TOKEN__'
+                  node /pay-sol/Scripts/build-and-push.js
+                ]]></arg>
               </exec>
             </tasks>
           </job>
         </jobs>
       </stage>
     </pipeline>
+
     <pipeline name="pay-sol-staging">
       <materials>
         <pipeline pipelineName="pay-sol-artifacts" stageName="build_and_push" />
@@ -141,6 +152,7 @@
         </jobs>
       </stage>
     </pipeline>
+
     <pipeline name="pay-sol-production">
       <materials>
         <pipeline pipelineName="pay-sol-staging" stageName="deploy_staging" />
@@ -164,10 +176,11 @@
       </stage>
     </pipeline>
   </pipelines>
+
   <pipelines group="humrine_site_group">
     <pipeline name="humrine_site-artifacts">
       <materials>
-        <git url="__HUMRINE_SITE_REPO_URL_WITH_CREDENTIALS__" branch="master" />
+        <git url="__HUMRINE_SITE_REPO_URL_WITH_CREDENTIALS__" branch="master" dest="humrine_site" />
       </materials>
       <stage name="build_and_push">
         <approval type="manual" />
@@ -180,13 +193,17 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /humrine_site/Scripts/build-and-push.js</arg>
+                <arg><![CDATA[
+                  export GITHUB_TOKEN='__GITHUB_TOKEN__'
+                  node /humrine_site/Scripts/build-and-push.js
+                ]]></arg>
               </exec>
             </tasks>
           </job>
         </jobs>
       </stage>
     </pipeline>
+
     <pipeline name="humrine_site-staging">
       <materials>
         <pipeline pipelineName="humrine_site-artifacts" stageName="build_and_push" />
@@ -209,6 +226,7 @@
         </jobs>
       </stage>
     </pipeline>
+
     <pipeline name="humrine_site-production">
       <materials>
         <pipeline pipelineName="humrine_site-staging" stageName="deploy_staging" />

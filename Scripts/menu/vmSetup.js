@@ -106,4 +106,6 @@ module.exports = {
     '6.28': async (ctx) => { ctx.sh('node Scripts/enable-swap-on-vm.js'); await ctx.pause(); },
     // 6.29 – SSH tunnel: expose local GoCD via VM
     '6.29': sshTunnelGoCD,
+    // 6.30 – Setup Load Balancer (humrine.com)
+    '6.30': async (ctx) => { ctx.sh('node Scripts/setup-load-balancer.js'); await ctx.pause(); },
 };

@@ -16,6 +16,43 @@ under **subdomains** (e.g., `staging.humrine.com`, `app.humrine.com`).
 
 ---
 
+## Automated Setup (Recommended)
+
+Instead of following the manual steps below, you can run everything automatically via
+the gocd-server menu:
+
+```
+npm run menu → option 6.30 (Setup Load Balancer)
+```
+
+Or directly:
+```bash
+node Scripts/setup-load-balancer.js
+```
+
+This script is **idempotent** — it checks if each resource exists before creating it,
+so you can safely re-run it. It creates: Instance Group, Health Checks, Backend Services,
+Static IP, SSL Certificate, URL Map (routing rules), HTTPS Proxy, Forwarding Rules,
+HTTP→HTTPS redirect, Firewall Rule, and DNS A records.
+
+**Prerequisites:**
+- Domain `humrine.com` must already be registered (Part 1 below)
+- `gcloud` CLI must be authenticated with project access
+- Required env vars: `GCP_PROJECT_ID`, `GCP_ZONE`, `GCP_VM_NAME`
+
+After running the script, you still need to:
+1. Wait for the SSL certificate to become ACTIVE (30–60 min after DNS propagates)
+2. Update Django `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS` (Part 6 below)
+3. Update OAuth callback URLs (Part 6 below)
+
+---
+
+## Manual Steps (Reference)
+
+The sections below document each step in detail for manual setup or debugging.
+
+---
+
 ## Resource Inventory
 
 All resource names used in this setup. Reference this table when recreating or debugging.

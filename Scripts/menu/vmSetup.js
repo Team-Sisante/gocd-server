@@ -107,5 +107,16 @@ module.exports = {
     // 6.29 – SSH tunnel: expose local GoCD via VM
     '6.29': sshTunnelGoCD,
     // 6.30 – Setup Load Balancer (humrine.com)
-    '6.30': async (ctx) => { ctx.sh('node Scripts/setup-load-balancer.js'); await ctx.pause(); },
+    '6.30': async (ctx) => {
+        const inquirer = (await import('inquirer')).default;
+        const { appName } = await inquirer.prompt({
+            type: 'list',
+            name: 'appName',
+            message: 'Select application to setup Load Balancer:',
+            choices: ['humrine', 'badminton']
+        });
+        
+        ctx.sh(`node Scripts/setup-load-balancer.js ${appName}`);
+        await ctx.pause();
+    },
 };

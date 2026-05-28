@@ -1,23 +1,47 @@
 #!/usr/bin/env node
 /**
  * Scripts/setup-load-balancer.js
- * Creates (or verifies) a GCP External Application Load Balancer with
- * subdomain-based routing for humrine.com.
+ * Creates (or verifies) a GCP External Application Load Balancer
+ * based on configuration in Scripts/loadbalancer.json.
  *
- * Resources created:
- *   - Unmanaged Instance Group:  humrine-apps-group
- *   - Health checks:             staging-health-check, production-health-check
- *   - Backend services:          badminton-staging-backend, badminton-production-backend
- *   - URL map:                   humrine-main-lb
- *   - SSL certificate:           humrine-managed-cert  (Google-managed)
- *   - Target HTTPS proxy:        humrine-https-proxy
- *   - Forwarding rule (HTTPS):   humrine-https-frontend
- *   - HTTP→HTTPS redirect:       humrine-http-redirect, humrine-http-proxy, humrine-http-frontend
- *   - Firewall rule:             allow-lb-health-checks
- *   - Cloud DNS A records:       humrine.com, staging.humrine.com, app.humrine.com
+ * Usage:
+ *   node Scripts/setup-load-balancer.js <app_name>
+ *   e.g., node Scripts/setup-load-balancer.js humrine
  */
 
 const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+// ----- Load Configuration -----
+const appName = process.argv[2];
+if (!appName) {
+  console.error('\x1b[31mERROR: Missing app name argument (e.g., humrine, badminton)\x1b[0m');
+  process.exit(1);
+}
+
+const configPath = path.join(__dirname, 'loadbalancer.json');
+const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
+// Interpolate environment variables in config
+function interpolate(obj) {
+  for (const key in obj) {
+    if (typeof obj[key] === 'string') {
+      obj[key] = obj[key].replace(/\${(\w+)}/g, (_, varName) => process.env[varName] || '');
+    } else if (typeof obj[key] === 'object' && obj[key] !== null) {
+      interpolate(obj[key]);
+    }
+  }
+}
+
+interpolate(config);
+
+if (!config[appName]) {
+  console.error(`\x1b[31mERROR: Configuration for '${appName}' not found in loadbalancer.json\x1b[0m`);
+  process.exit(1);
+}
+
+const conf = config[appName];
 
 // ----- Required environment -----
 const PROJECT_ID  = process.env.GCP_PROJECT_ID;
@@ -29,62 +53,8 @@ if (!PROJECT_ID || !GCP_ZONE || !GCP_VM_NAME) {
   process.exit(1);
 }
 
-const REGION = GCP_ZONE.replace(/-[a-z]$/, '');  // e.g. asia-southeast1-b → asia-southeast1
-const DOMAIN = process.env.HUMRINE_DOMAIN || 'humrine.com';
-const DNS_ZONE = process.env.HUMRINE_DNS_ZONE || 'humrine-com';
-
-// ----- Resource names -----
-const INSTANCE_GROUP      = 'humrine-apps-group';
-const LB_NAME             = 'humrine-main-lb';
-const STATIC_IP_NAME      = 'humrine-static-ip';
-const CERT_NAME           = 'humrine-managed-cert';
-const HTTPS_PROXY_NAME    = 'humrine-https-proxy';
-const HTTPS_FWD_RULE      = 'humrine-https-frontend';
-const HTTP_REDIRECT_MAP   = 'humrine-http-redirect';
-const HTTP_PROXY_NAME     = 'humrine-http-proxy';
-const HTTP_FWD_RULE       = 'humrine-http-frontend';
-const FW_RULE_NAME        = 'allow-lb-health-checks';
-
-const BACKENDS = [
-  {
-    name: 'humrine-site-backend',
-    namedPort: 'humrine-site',
-    port: 8000,
-    healthCheck: 'humrine-site-health-check',
-    host: DOMAIN,
-    pathMatcher: 'humrine-site-matcher',
-  },
-  {
-    name: 'humrine-site-staging-backend',
-    namedPort: 'humrine-site-staging',
-    port: 8001,
-    healthCheck: 'humrine-site-staging-health-check',
-    host: DOMAIN,
-    pathMatcher: 'humrine-site-staging-matcher',
-    path: '/staging/*', // Or path as humrine_site.staging
-  },
-  {
-    name: 'badminton-staging-backend',
-    namedPort: 'staging',
-    port: 8443,
-    healthCheck: 'staging-health-check',
-    host: DOMAIN,
-    pathMatcher: 'badminton-staging-matcher',
-    path: '/badminton_court.staging/*',
-  },
-  {
-    name: 'badminton-production-backend',
-    namedPort: 'production',
-    port: 9443,
-    healthCheck: 'production-health-check',
-    host: DOMAIN,
-    pathMatcher: 'badminton-production-matcher',
-    path: '/badminton_court.production/*',
-  },
-];
-
-// humrine-site is the default backend
-const DEFAULT_BACKEND = 'humrine-site-backend';
+// Production is the default backend (first one in the array for now, or could be specified)
+const DEFAULT_BACKEND = conf.backends[conf.backends.length - 1].name;
 
 // ----- Helpers -----
 const scriptStart = Date.now();
@@ -112,35 +82,29 @@ function resourceExists(type, name, extra = '') {
   return result && result.length > 0;
 }
 
-function globalFlag(type) {
-  const regional = ['instance-groups'];
-  if (regional.includes(type)) return `--zone=${GCP_ZONE}`;
-  return '--global';
-}
-
 // ----- Step 1: Instance Group -----
 function ensureInstanceGroup() {
   log('Step 1: Ensuring unmanaged instance group exists...', '\x1b[33m');
 
   const exists = run(
-    `gcloud compute instance-groups unmanaged describe ${INSTANCE_GROUP} --zone=${GCP_ZONE} --project=${PROJECT_ID} --format="value(name)"`,
+    `gcloud compute instance-groups unmanaged describe ${conf.instanceGroup} --zone=${GCP_ZONE} --project=${PROJECT_ID} --format="value(name)"`,
     { silent: true, ignoreError: true }
   );
 
   if (exists) {
-    log(`Instance group ${INSTANCE_GROUP} already exists.`, '\x1b[32m');
+    log(`Instance group ${conf.instanceGroup} already exists.`, '\x1b[32m');
   } else {
-    log(`Creating instance group ${INSTANCE_GROUP}...`);
-    run(`gcloud compute instance-groups unmanaged create ${INSTANCE_GROUP} --zone=${GCP_ZONE} --project=${PROJECT_ID}`);
+    log(`Creating instance group ${conf.instanceGroup}...`);
+    run(`gcloud compute instance-groups unmanaged create ${conf.instanceGroup} --zone=${GCP_ZONE} --project=${PROJECT_ID}`);
     log(`Adding VM ${GCP_VM_NAME} to instance group...`);
-    run(`gcloud compute instance-groups unmanaged add-instances ${INSTANCE_GROUP} --zone=${GCP_ZONE} --project=${PROJECT_ID} --instances=${GCP_VM_NAME}`);
-    log(`Instance group ${INSTANCE_GROUP} created.`, '\x1b[32m');
+    run(`gcloud compute instance-groups unmanaged add-instances ${conf.instanceGroup} --zone=${GCP_ZONE} --project=${PROJECT_ID} --instances=${GCP_VM_NAME}`);
+    log(`Instance group ${conf.instanceGroup} created.`, '\x1b[32m');
   }
 
   // Set named ports
-  const ports = BACKENDS.map(b => `${b.namedPort}:${b.port}`).join(',');
+  const ports = conf.backends.map(b => `${b.namedPort}:${b.port}`).join(',');
   log(`Setting named ports: ${ports}`);
-  run(`gcloud compute instance-groups unmanaged set-named-ports ${INSTANCE_GROUP} --zone=${GCP_ZONE} --project=${PROJECT_ID} --named-ports=${ports}`);
+  run(`gcloud compute instance-groups unmanaged set-named-ports ${conf.instanceGroup} --zone=${GCP_ZONE} --project=${PROJECT_ID} --named-ports=${ports}`);
   log('Named ports configured.', '\x1b[32m');
 }
 
@@ -148,7 +112,7 @@ function ensureInstanceGroup() {
 function ensureHealthChecks() {
   log('Step 2: Ensuring health checks exist...', '\x1b[33m');
 
-  for (const b of BACKENDS) {
+  for (const b of conf.backends) {
     if (resourceExists('health-checks', b.healthCheck, '--global')) {
       log(`Health check ${b.healthCheck} already exists.`, '\x1b[32m');
     } else {
@@ -163,7 +127,7 @@ function ensureHealthChecks() {
 function ensureBackendServices() {
   log('Step 3: Ensuring backend services exist...', '\x1b[33m');
 
-  for (const b of BACKENDS) {
+  for (const b of conf.backends) {
     if (resourceExists('backend-services', b.name, '--global')) {
       log(`Backend service ${b.name} already exists.`, '\x1b[32m');
     } else {
@@ -183,7 +147,7 @@ function ensureBackendServices() {
       run([
         `gcloud compute backend-services add-backend ${b.name}`,
         `--project=${PROJECT_ID}`,
-        `--instance-group=${INSTANCE_GROUP}`,
+        `--instance-group=${conf.instanceGroup}`,
         `--instance-group-zone=${GCP_ZONE}`,
         `--balancing-mode=UTILIZATION`,
         `--max-utilization=0.8`,
@@ -199,16 +163,16 @@ function ensureBackendServices() {
 function ensureStaticIP() {
   log('Step 4: Ensuring static IP exists...', '\x1b[33m');
 
-  if (resourceExists('addresses', STATIC_IP_NAME, '--global')) {
-    log(`Static IP ${STATIC_IP_NAME} already exists.`, '\x1b[32m');
+  if (resourceExists('addresses', conf.staticIpName, '--global')) {
+    log(`Static IP ${conf.staticIpName} already exists.`, '\x1b[32m');
   } else {
-    log(`Reserving static IP ${STATIC_IP_NAME}...`);
-    run(`gcloud compute addresses create ${STATIC_IP_NAME} --project=${PROJECT_ID} --global --ip-version=IPV4`);
-    log(`Static IP ${STATIC_IP_NAME} reserved.`, '\x1b[32m');
+    log(`Reserving static IP ${conf.staticIpName}...`);
+    run(`gcloud compute addresses create ${conf.staticIpName} --project=${PROJECT_ID} --global --ip-version=IPV4`);
+    log(`Static IP ${conf.staticIpName} reserved.`, '\x1b[32m');
   }
 
   const ip = run(
-    `gcloud compute addresses describe ${STATIC_IP_NAME} --project=${PROJECT_ID} --global --format="value(address)"`,
+    `gcloud compute addresses describe ${conf.staticIpName} --project=${PROJECT_ID} --global --format="value(address)"`,
     { silent: true }
   );
   log(`Load Balancer IP: ${ip}`, '\x1b[32m');
@@ -219,12 +183,12 @@ function ensureStaticIP() {
 function ensureSSLCert() {
   log('Step 5: Ensuring SSL certificate exists...', '\x1b[33m');
 
-  if (resourceExists('ssl-certificates', CERT_NAME, '--global')) {
-    log(`SSL certificate ${CERT_NAME} already exists.`, '\x1b[32m');
+  if (resourceExists('ssl-certificates', conf.certName, '--global')) {
+    log(`SSL certificate ${conf.certName} already exists.`, '\x1b[32m');
   } else {
-    log(`Creating Google-managed certificate ${CERT_NAME} for ${DOMAIN}...`);
-    run(`gcloud compute ssl-certificates create ${CERT_NAME} --project=${PROJECT_ID} --domains=${DOMAIN} --global`);
-    log(`SSL certificate ${CERT_NAME} created (status: PROVISIONING — will activate after DNS is configured).`, '\x1b[33m');
+    log(`Creating Google-managed certificate ${conf.certName} for ${conf.domain}...`);
+    run(`gcloud compute ssl-certificates create ${conf.certName} --project=${PROJECT_ID} --domains=${conf.domain} --global`);
+    log(`SSL certificate ${conf.certName} created.`, '\x1b[33m');
   }
 }
 
@@ -232,52 +196,32 @@ function ensureSSLCert() {
 function ensureURLMap() {
   log('Step 6: Ensuring URL map exists...', '\x1b[33m');
 
-  if (resourceExists('url-maps', LB_NAME, '--global')) {
-    log(`URL map ${LB_NAME} already exists.`, '\x1b[32m');
+  if (resourceExists('url-maps', conf.lbName, '--global')) {
+    log(`URL map ${conf.lbName} already exists.`, '\x1b[32m');
   } else {
-    log(`Creating URL map ${LB_NAME} (default → ${DEFAULT_BACKEND})...`);
-    run(`gcloud compute url-maps create ${LB_NAME} --project=${PROJECT_ID} --default-service=${DEFAULT_BACKEND} --global`);
-    log(`URL map ${LB_NAME} created.`, '\x1b[32m');
+    log(`Creating URL map ${conf.lbName} (default → ${DEFAULT_BACKEND})...`);
+    run(`gcloud compute url-maps create ${conf.lbName} --project=${PROJECT_ID} --default-service=${DEFAULT_BACKEND} --global`);
+    log(`URL map ${conf.lbName} created.`, '\x1b[32m');
   }
 
-  // Add path matchers for each host and path
-  // Since we now use the same host for multiple backends, we need to group them.
-  const hostGroup = {};
-  for (const b of BACKENDS) {
-    if (!hostGroup[b.host]) hostGroup[b.host] = [];
-    hostGroup[b.host].push(b);
-  }
-
-  for (const host in hostGroup) {
-    const backends = hostGroup[host];
-    const matcherName = backends[0].pathMatcher; // Use the first one's name as group name
-
-    log(`Configuring path matcher ${matcherName} for host ${host}...`);
-    
+  // Add path matchers for each subdomain
+  for (const b of conf.backends) {
+    if (b.name === DEFAULT_BACKEND && !b.host) continue;
+    log(`Adding host rule: ${b.host} → ${b.name}...`);
     // Remove existing path matcher first (idempotent)
     run(
-      `gcloud compute url-maps remove-path-matcher ${LB_NAME} --project=${PROJECT_ID} --path-matcher-name=${matcherName} --global`,
+      `gcloud compute url-maps remove-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${b.pathMatcher} --global`,
       { silent: true, ignoreError: true }
     );
-
-    const pathRules = backends
-      .filter(b => b.path)
-      .map(b => `--path-rules="${b.path}=${b.name}"`)
-      .join(' ');
-
-    const defaultService = backends.find(b => !b.path)?.name || backends[0].name;
-
     run([
-      `gcloud compute url-maps add-path-matcher ${LB_NAME}`,
+      `gcloud compute url-maps add-path-matcher ${conf.lbName}`,
       `--project=${PROJECT_ID}`,
-      `--path-matcher-name=${matcherName}`,
-      `--default-service=${defaultService}`,
-      `--new-hosts=${host}`,
-      pathRules,
+      `--path-matcher-name=${b.pathMatcher}`,
+      `--default-service=${b.name}`,
+      `--new-hosts=${b.host}`,
       `--global`,
     ].join(' '));
-    
-    log(`Path matcher ${matcherName} configured for ${host}.`, '\x1b[32m');
+    log(`Host rule ${b.host} → ${b.name} configured.`, '\x1b[32m');
   }
 }
 
@@ -285,18 +229,18 @@ function ensureURLMap() {
 function ensureHTTPSProxy() {
   log('Step 7: Ensuring HTTPS proxy exists...', '\x1b[33m');
 
-  if (resourceExists('target-https-proxies', HTTPS_PROXY_NAME, '--global')) {
-    log(`HTTPS proxy ${HTTPS_PROXY_NAME} already exists.`, '\x1b[32m');
+  if (resourceExists('target-https-proxies', conf.httpsProxyName, '--global')) {
+    log(`HTTPS proxy ${conf.httpsProxyName} already exists.`, '\x1b[32m');
   } else {
-    log(`Creating HTTPS proxy ${HTTPS_PROXY_NAME}...`);
+    log(`Creating HTTPS proxy ${conf.httpsProxyName}...`);
     run([
-      `gcloud compute target-https-proxies create ${HTTPS_PROXY_NAME}`,
+      `gcloud compute target-https-proxies create ${conf.httpsProxyName}`,
       `--project=${PROJECT_ID}`,
-      `--url-map=${LB_NAME}`,
-      `--ssl-certificates=${CERT_NAME}`,
+      `--url-map=${conf.lbName}`,
+      `--ssl-certificates=${conf.certName}`,
       `--global`,
     ].join(' '));
-    log(`HTTPS proxy ${HTTPS_PROXY_NAME} created.`, '\x1b[32m');
+    log(`HTTPS proxy ${conf.httpsProxyName} created.`, '\x1b[32m');
   }
 }
 
@@ -304,19 +248,19 @@ function ensureHTTPSProxy() {
 function ensureHTTPSForwardingRule() {
   log('Step 8: Ensuring HTTPS forwarding rule exists...', '\x1b[33m');
 
-  if (resourceExists('forwarding-rules', HTTPS_FWD_RULE, '--global')) {
-    log(`Forwarding rule ${HTTPS_FWD_RULE} already exists.`, '\x1b[32m');
+  if (resourceExists('forwarding-rules', conf.httpsFwdRule, '--global')) {
+    log(`Forwarding rule ${conf.httpsFwdRule} already exists.`, '\x1b[32m');
   } else {
-    log(`Creating forwarding rule ${HTTPS_FWD_RULE}...`);
+    log(`Creating forwarding rule ${conf.httpsFwdRule}...`);
     run([
-      `gcloud compute forwarding-rules create ${HTTPS_FWD_RULE}`,
+      `gcloud compute forwarding-rules create ${conf.httpsFwdRule}`,
       `--project=${PROJECT_ID}`,
-      `--address=${STATIC_IP_NAME}`,
-      `--target-https-proxy=${HTTPS_PROXY_NAME}`,
+      `--address=${conf.staticIpName}`,
+      `--target-https-proxy=${conf.httpsProxyName}`,
       `--ports=443`,
       `--global`,
     ].join(' '));
-    log(`Forwarding rule ${HTTPS_FWD_RULE} created.`, '\x1b[32m');
+    log(`Forwarding rule ${conf.httpsFwdRule} created.`, '\x1b[32m');
   }
 }
 
@@ -325,50 +269,49 @@ function ensureHTTPRedirect() {
   log('Step 9: Ensuring HTTP→HTTPS redirect exists...', '\x1b[33m');
 
   // URL map for redirect
-  if (!resourceExists('url-maps', HTTP_REDIRECT_MAP, '--global')) {
-    log(`Creating HTTP redirect URL map ${HTTP_REDIRECT_MAP}...`);
-    // gcloud doesn't support --default-url-redirect-https-redirect directly in create,
-    // so we import a YAML config via stdin.
+  if (!resourceExists('url-maps', conf.httpRedirectMap, '--global')) {
+    log(`Creating HTTP redirect URL map ${conf.httpRedirectMap}...`);
     const yaml = [
-      `name: ${HTTP_REDIRECT_MAP}`,
+      `name: ${conf.httpRedirectMap}`,
       `defaultUrlRedirect:`,
       `  httpsRedirect: true`,
       `  redirectResponseCode: MOVED_PERMANENTLY_DEFAULT`,
-    ].join('\n');
+    ].join('
+');
     try {
       execSync(
-        `gcloud compute url-maps import ${HTTP_REDIRECT_MAP} --project=${PROJECT_ID} --global --source=-`,
+        `gcloud compute url-maps import ${conf.httpRedirectMap} --project=${PROJECT_ID} --global --source=-`,
         { input: yaml, encoding: 'utf8', stdio: ['pipe', 'inherit', 'inherit'] }
       );
     } catch {
       log(`Warning: HTTP redirect URL map creation may have failed.`, '\x1b[33m');
     }
   } else {
-    log(`HTTP redirect URL map ${HTTP_REDIRECT_MAP} already exists.`, '\x1b[32m');
+    log(`HTTP redirect URL map ${conf.httpRedirectMap} already exists.`, '\x1b[32m');
   }
 
   // HTTP proxy
-  if (!resourceExists('target-http-proxies', HTTP_PROXY_NAME, '--global')) {
-    log(`Creating HTTP proxy ${HTTP_PROXY_NAME}...`);
-    run(`gcloud compute target-http-proxies create ${HTTP_PROXY_NAME} --project=${PROJECT_ID} --url-map=${HTTP_REDIRECT_MAP} --global`);
+  if (!resourceExists('target-http-proxies', conf.httpProxyName, '--global')) {
+    log(`Creating HTTP proxy ${conf.httpProxyName}...`);
+    run(`gcloud compute target-http-proxies create ${conf.httpProxyName} --project=${PROJECT_ID} --url-map=${conf.httpRedirectMap} --global`);
   } else {
-    log(`HTTP proxy ${HTTP_PROXY_NAME} already exists.`, '\x1b[32m');
+    log(`HTTP proxy ${conf.httpProxyName} already exists.`, '\x1b[32m');
   }
 
   // HTTP forwarding rule
-  if (!resourceExists('forwarding-rules', HTTP_FWD_RULE, '--global')) {
-    log(`Creating HTTP forwarding rule ${HTTP_FWD_RULE}...`);
+  if (!resourceExists('forwarding-rules', conf.httpFwdRule, '--global')) {
+    log(`Creating HTTP forwarding rule ${conf.httpFwdRule}...`);
     run([
-      `gcloud compute forwarding-rules create ${HTTP_FWD_RULE}`,
+      `gcloud compute forwarding-rules create ${conf.httpFwdRule}`,
       `--project=${PROJECT_ID}`,
-      `--address=${STATIC_IP_NAME}`,
-      `--target-http-proxy=${HTTP_PROXY_NAME}`,
+      `--address=${conf.staticIpName}`,
+      `--target-http-proxy=${conf.httpProxyName}`,
       `--ports=80`,
       `--global`,
     ].join(' '));
     log(`HTTP→HTTPS redirect configured.`, '\x1b[32m');
   } else {
-    log(`HTTP forwarding rule ${HTTP_FWD_RULE} already exists.`, '\x1b[32m');
+    log(`HTTP forwarding rule ${conf.httpFwdRule} already exists.`, '\x1b[32m');
   }
 }
 
@@ -380,26 +323,27 @@ function ensureFirewallRule() {
     `gcloud compute firewall-rules list --project=${PROJECT_ID} --format="value(name)"`,
     { silent: true }
   ) || '';
-  const existing = new Set(rawRules.split('\n').map(r => r.trim()));
+  const existing = new Set(rawRules.split('
+').map(r => r.trim()));
 
-  if (existing.has(FW_RULE_NAME)) {
-    log(`Firewall rule ${FW_RULE_NAME} already exists.`, '\x1b[32m');
+  if (existing.has(conf.fwRuleName)) {
+    log(`Firewall rule ${conf.fwRuleName} already exists.`, '\x1b[32m');
   } else {
-    log(`Creating firewall rule ${FW_RULE_NAME}...`);
-    const rules = BACKENDS.map(b => `tcp:${b.port}`).join(','); // "tcp:8443,tcp:9443"
+    log(`Creating firewall rule ${conf.fwRuleName}...`);
+    const ports = conf.backends.map(b => b.port).join(',');
     run([
-      `gcloud compute firewall-rules create ${FW_RULE_NAME}`,
+      `gcloud compute firewall-rules create ${conf.fwRuleName}`,
       `--project=${PROJECT_ID}`,
       `--direction=INGRESS`,
       `--priority=1000`,
       `--network=default`,
       `--action=ALLOW`,
-      `--rules=${rules}`,
+      `--rules=tcp:${ports}`,
       `--source-ranges=35.191.0.0/16,130.211.0.0/22`,
       `--target-tags=gocd-deploy-target`,
       `--description="Allow GCP LB health check probes"`,
     ].join(' '));
-    log(`Firewall rule ${FW_RULE_NAME} created.`, '\x1b[32m');
+    log(`Firewall rule ${conf.fwRuleName} created.`, '\x1b[32m');
   }
 }
 
@@ -409,39 +353,38 @@ function ensureDNSRecords(lbIP) {
 
   if (!lbIP) {
     log('WARNING: Could not determine Load Balancer IP. Skipping DNS configuration.', '\x1b[33m');
-    log('You must manually add A records in Cloud DNS pointing to the LB IP.', '\x1b[33m');
     return;
   }
 
   // Check if DNS zone exists
   const zoneCheck = run(
-    `gcloud dns managed-zones describe ${DNS_ZONE} --project=${PROJECT_ID} --format="value(name)"`,
+    `gcloud dns managed-zones describe ${conf.dnsZone} --project=${PROJECT_ID} --format="value(name)"`,
     { silent: true, ignoreError: true }
   );
   if (!zoneCheck) {
-    log(`WARNING: DNS zone ${DNS_ZONE} not found. Skipping DNS configuration.`, '\x1b[33m');
-    log(`Create it via Cloud DNS or domain registration, then re-run this script.`, '\x1b[33m');
+    log(`WARNING: DNS zone ${conf.dnsZone} not found. Skipping DNS configuration.`, '\x1b[33m');
     return;
   }
 
+  // Get existing records to avoid duplicates
+  const existingRecords = run(
+    `gcloud dns record-sets list --zone=${conf.dnsZone} --project=${PROJECT_ID} --format="value(name)"`,
+    { silent: true }
+  ) || '';
+
   const records = [
-    { name: `${DOMAIN}.`, desc: DOMAIN },
-    { name: `staging.${DOMAIN}.`, desc: `staging.${DOMAIN}` },
-    { name: `app.${DOMAIN}.`, desc: `app.${DOMAIN}` },
+    { name: `${conf.domain}.`, desc: conf.domain },
+    { name: `staging.${conf.domain}.`, desc: `staging.${conf.domain}` },
+    { name: `app.${conf.domain}.`, desc: `app.${conf.domain}` },
   ];
 
   for (const rec of records) {
-    log(`Processing DNS A record: ${rec.desc} → ${lbIP}...`);
-    const updateCmd = `gcloud dns record-sets update ${rec.name} --zone=${DNS_ZONE} --project=${PROJECT_ID} --type=A --ttl=300 --rrdatas=${lbIP}`;
-    const createCmd = `gcloud dns record-sets create ${rec.name} --zone=${DNS_ZONE} --project=${PROJECT_ID} --type=A --ttl=300 --rrdatas=${lbIP}`;
-
-    // Try update first (idempotent if record already exists); if it fails, create instead
-    const updateResult = run(updateCmd, { silent: true, ignoreError: true });
-    if (updateResult === null) {
-      log(`  Record does not exist, creating...`);
-      run(createCmd);
+    if (existingRecords.includes(rec.name)) {
+      log(`DNS A record for ${rec.desc} already exists. Updating to ${lbIP}...`);
+      run(`gcloud dns record-sets update ${rec.name} --zone=${conf.dnsZone} --project=${PROJECT_ID} --type=A --ttl=300 --rrdatas=${lbIP}`, { ignoreError: true });
     } else {
-      log(`  Record updated successfully.`);
+      log(`Creating DNS A record: ${rec.desc} → ${lbIP}...`);
+      run(`gcloud dns record-sets create ${rec.name} --zone=${conf.dnsZone} --project=${PROJECT_ID} --type=A --ttl=300 --rrdatas=${lbIP}`, { ignoreError: true });
     }
   }
 
@@ -451,10 +394,11 @@ function ensureDNSRecords(lbIP) {
 // ----- Main -----
 function main() {
   console.log('\x1b[32m========================================\x1b[0m');
-  console.log('\x1b[32m  GCP Load Balancer Setup Script\x1b[0m');
-  console.log('\x1b[32m  Domain: ' + DOMAIN + '\x1b[0m');
+  console.log(`\x1b[32m  GCP Load Balancer Setup (${appName})\x1b[0m`);
+  console.log('\x1b[32m  Domain: ' + conf.domain + '\x1b[0m');
   console.log('\x1b[32m  Project: ' + PROJECT_ID + '\x1b[0m');
-  console.log('\x1b[32m========================================\x1b[0m\n');
+  console.log('\x1b[32m========================================\x1b[0m
+');
 
   ensureInstanceGroup();
   ensureHealthChecks();
@@ -468,20 +412,12 @@ function main() {
   ensureFirewallRule();
   ensureDNSRecords(lbIP);
 
-  console.log('\n\x1b[32m========================================\x1b[0m');
+  console.log('
+\x1b[32m========================================\x1b[0m');
   console.log('\x1b[32m  Setup Complete!\x1b[0m');
-  console.log('\x1b[32m========================================\x1b[0m\n');
+  console.log('\x1b[32m========================================\x1b[0m
+');
   log(`Load Balancer IP: ${lbIP}`, '\x1b[32m');
-  log(`SSL certificate status: PROVISIONING (will activate after DNS propagates, 30-60 min)`, '\x1b[33m');
-  log(`\nURLs (once DNS + SSL are active):`, '\x1b[36m');
-  log(`  Staging:    https://staging.${DOMAIN}`, '\x1b[36m');
-  log(`  Production: https://app.${DOMAIN}`, '\x1b[36m');
-  log(`  Root:       https://${DOMAIN}`, '\x1b[36m');
-  log(`\nNext steps:`, '\x1b[33m');
-  log(`  1. Wait for SSL cert to become ACTIVE (check: gcloud compute ssl-certificates describe ${CERT_NAME} --project=${PROJECT_ID} --global)`, '\x1b[33m');
-  log(`  2. Update ALLOWED_HOSTS and CSRF_TRUSTED_ORIGINS in your env files`, '\x1b[33m');
-  log(`  3. Update OAuth callback URLs at Google/Facebook/Twitter`, '\x1b[33m');
-  log(`  4. Re-deploy via staging/production pipelines`, '\x1b[33m');
 }
 
 main();

@@ -1,0 +1,66 @@
+{
+  "humrine": {
+    "domain": "${HUMRINE_DOMAIN}",
+    "dnsZone": "${HUMRINE_DNS_ZONE}",
+    "instanceGroup": "${HUMRINE_INSTANCE_GROUP}",
+    "lbName": "${HUMRINE_LB_NAME}",
+    "staticIpName": "${HUMRINE_STATIC_IP_NAME}",
+    "certName": "${HUMRINE_CERT_NAME}",
+    "httpsProxyName": "${HUMRINE_HTTPS_PROXY_NAME}",
+    "httpsFwdRule": "${HUMRINE_HTTPS_FWD_RULE}",
+    "httpRedirectMap": "${HUMRINE_HTTP_REDIRECT_MAP}",
+    "httpProxyName": "${HUMRINE_HTTP_PROXY_NAME}",
+    "httpFwdRule": "${HUMRINE_HTTP_FWD_RULE}",
+    "fwRuleName": "${HUMRINE_FW_RULE_NAME}",
+    "backends": [
+      {
+        "name": "humrine-staging-backend",
+        "namedPort": "staging",
+        "port": "${WEB_HTTPS_PORT_STAGING}",
+        "healthCheck": "staging-health-check",
+        "host": "staging.${HUMRINE_DOMAIN}",
+        "pathMatcher": "staging-matcher"
+      },
+      {
+        "name": "humrine-production-backend",
+        "namedPort": "production",
+        "port": "${WEB_HTTPS_PORT_PRODUCTION}",
+        "healthCheck": "production-health-check",
+        "host": "app.${HUMRINE_DOMAIN}",
+        "pathMatcher": "production-matcher"
+      }
+    ]
+  },
+  "badminton": {
+    "domain": "${BADMINTON_DOMAIN}",
+    "dnsZone": "${BADMINTON_DNS_ZONE}",
+    "instanceGroup": "${BADMINTON_INSTANCE_GROUP}",
+    "lbName": "${BADMINTON_LB_NAME}",
+    "staticIpName": "${BADMINTON_STATIC_IP_NAME}",
+    "certName": "${BADMINTON_CERT_NAME}",
+    "httpsProxyName": "${BADMINTON_HTTPS_PROXY_NAME}",
+    "httpsFwdRule": "${BADMINTON_HTTPS_FWD_RULE}",
+    "httpRedirectMap": "${BADMINTON_HTTP_REDIRECT_MAP}",
+    "httpProxyName": "${BADMINTON_HTTP_PROXY_NAME}",
+    "httpFwdRule": "${BADMINTON_HTTP_FWD_RULE}",
+    "fwRuleName": "${BADMINTON_FW_RULE_NAME}",
+    "backends": [
+      {
+        "name": "badminton-staging-backend",
+        "namedPort": "staging",
+        "port": "${WEB_HTTPS_PORT_STAGING_BADMINTON}",
+        "healthCheck": "staging-health-check",
+        "host": "staging.${BADMINTON_DOMAIN}",
+        "pathMatcher": "staging-matcher"
+      },
+      {
+        "name": "badminton-production-backend",
+        "namedPort": "production",
+        "port": "${WEB_HTTPS_PORT_PRODUCTION_BADMINTON}",
+        "healthCheck": "production-health-check",
+        "host": "app.${BADMINTON_DOMAIN}",
+        "pathMatcher": "production-matcher"
+      }
+    ]
+  }
+}

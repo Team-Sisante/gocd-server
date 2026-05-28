@@ -47,25 +47,35 @@ const FW_RULE_NAME        = 'allow-lb-health-checks';
 
 const BACKENDS = [
   {
+    name: 'humrine-site-backend',
+    namedPort: 'humrine-site',
+    port: 8000,
+    healthCheck: 'humrine-site-health-check',
+    host: DOMAIN,
+    pathMatcher: 'humrine-site-matcher',
+  },
+  {
     name: 'badminton-staging-backend',
     namedPort: 'staging',
     port: 8443,
     healthCheck: 'staging-health-check',
-    host: `staging.${DOMAIN}`,
-    pathMatcher: 'staging-matcher',
+    host: DOMAIN, // Switching to path-based on main domain
+    pathMatcher: 'badminton-staging-matcher',
+    path: '/badminton_court.staging/*',
   },
   {
     name: 'badminton-production-backend',
     namedPort: 'production',
     port: 9443,
     healthCheck: 'production-health-check',
-    host: `app.${DOMAIN}`,
-    pathMatcher: 'production-matcher',
+    host: DOMAIN, // Switching to path-based on main domain
+    pathMatcher: 'badminton-production-matcher',
+    path: '/badminton_court.production/*',
   },
 ];
 
-// Production is the default backend
-const DEFAULT_BACKEND = 'badminton-production-backend';
+// humrine-site is the default backend
+const DEFAULT_BACKEND = 'humrine-site-backend';
 
 // ----- Helpers -----
 const scriptStart = Date.now();
@@ -221,24 +231,44 @@ function ensureURLMap() {
     log(`URL map ${LB_NAME} created.`, '\x1b[32m');
   }
 
-  // Add path matchers for each subdomain
+  // Add path matchers for each host and path
+  // Since we now use the same host for multiple backends, we need to group them.
+  const hostGroup = {};
   for (const b of BACKENDS) {
-    if (b.name === DEFAULT_BACKEND && !b.host) continue;
-    log(`Adding host rule: ${b.host} → ${b.name}...`);
+    if (!hostGroup[b.host]) hostGroup[b.host] = [];
+    hostGroup[b.host].push(b);
+  }
+
+  for (const host in hostGroup) {
+    const backends = hostGroup[host];
+    const matcherName = backends[0].pathMatcher; // Use the first one's name as group name
+
+    log(`Configuring path matcher ${matcherName} for host ${host}...`);
+    
     // Remove existing path matcher first (idempotent)
     run(
-      `gcloud compute url-maps remove-path-matcher ${LB_NAME} --project=${PROJECT_ID} --path-matcher-name=${b.pathMatcher} --global`,
+      `gcloud compute url-maps remove-path-matcher ${LB_NAME} --project=${PROJECT_ID} --path-matcher-name=${matcherName} --global`,
       { silent: true, ignoreError: true }
     );
+
+    const pathRules = backends
+      .filter(b => b.path)
+      .map(b => `--path-rules="${b.path}=${b.name}"`)
+      .join(' ');
+
+    const defaultService = backends.find(b => !b.path)?.name || backends[0].name;
+
     run([
       `gcloud compute url-maps add-path-matcher ${LB_NAME}`,
       `--project=${PROJECT_ID}`,
-      `--path-matcher-name=${b.pathMatcher}`,
-      `--default-service=${b.name}`,
-      `--new-hosts=${b.host}`,
+      `--path-matcher-name=${matcherName}`,
+      `--default-service=${defaultService}`,
+      `--new-hosts=${host}`,
+      pathRules,
       `--global`,
     ].join(' '));
-    log(`Host rule ${b.host} → ${b.name} configured.`, '\x1b[32m');
+    
+    log(`Path matcher ${matcherName} configured for ${host}.`, '\x1b[32m');
   }
 }
 

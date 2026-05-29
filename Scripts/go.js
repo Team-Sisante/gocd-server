@@ -62,7 +62,8 @@ function validateAndAuth() {
     if (token && user) {
         log(`Authenticating with GitHub Registry as ${user}...`);
         try {
-            sh(`echo "${token}" | docker login ghcr.io -u "${user}" --password-stdin`, { silent: true });
+            // sh(`echo "${token}" | docker login ghcr.io -u "${user}" --password-stdin`, { silent: true });
+            sh(`echo "${token}" | docker login ghcr.io -u "${user}" --password-stdin`);
             log('✓ Registry authentication successful.', '\x1b[32m');
         } catch (e) {
             log('⚠️  Registry authentication failed. Pulling images might fail.', '\x1b[33m');

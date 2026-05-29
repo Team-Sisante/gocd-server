@@ -84,6 +84,37 @@ module.exports = {
         await ctx.pause();
     },
     '1.8': async (ctx) => {
+        ctx.log('Restarting Docker Engine...', '\x1b[33m');
+        ctx.sh('sudo systemctl restart docker');
+        
+        ctx.log('Waiting for Docker Engine to become responsive...', '\x1b[33m');
+        let engineReady = false;
+        const startTime = Date.now();
+        
+        // Polling loop
+        for (let attempt = 1; attempt <= 12; attempt++) {
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            process.stdout.write(`\x1b[36m  [${elapsed}s] Attempt ${attempt}/12... \x1b[0m\r`);
+            
+            try {
+                // Check if docker is responding
+                execSync('docker ps', { stdio: 'pipe', timeout: 5000 });
+                engineReady = true;
+                break;
+            } catch (_) {
+                await ctx.sleep(5000);
+            }
+        }
+        process.stdout.write('\n'); // Clear the line
+
+        if (engineReady) {
+            ctx.log('✅ Docker Engine restarted and is ready.', '\x1b[32m');
+        } else {
+            ctx.log('❌ Docker Engine did not become ready within 60 seconds.', '\x1b[31m');
+        }
+        await ctx.pause();
+    },
+    '1.9': async (ctx) => {
         ctx.log('Restarting Docker Engine (admin required)...', '\x1b[33m');
         const confirmEngine = await ctx.ask('This will stop all containers and restart the Docker Engine. Continue? (y/N): ');
         if (confirmEngine.toLowerCase() === 'y') {

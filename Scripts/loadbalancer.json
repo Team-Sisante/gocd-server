@@ -1,6 +1,11 @@
 {
   "humrine_site": {
     "domain": "${HUMRINE_DOMAIN}",
+    "certDomains": [
+      "${HUMRINE_DOMAIN}",
+      "staging.${HUMRINE_DOMAIN}",
+      "app.${HUMRINE_DOMAIN}"
+    ],
     "dnsZone": "${HUMRINE_DNS_ZONE}",
     "instanceGroup": "${HUMRINE_INSTANCE_GROUP}",
     "lbName": "${HUMRINE_LB_NAME}",
@@ -33,6 +38,11 @@
   },
   "badminton_court": {
     "domain": "${BADMINTON_DOMAIN}",
+    "certDomains": [
+      "${BADMINTON_DOMAIN}",
+      "staging.${BADMINTON_DOMAIN}",
+      "app.${BADMINTON_DOMAIN}"
+    ],
     "dnsZone": "${BADMINTON_DNS_ZONE}",
     "instanceGroup": "${BADMINTON_INSTANCE_GROUP}",
     "lbName": "${BADMINTON_LB_NAME}",

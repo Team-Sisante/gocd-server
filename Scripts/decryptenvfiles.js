@@ -6,18 +6,6 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const readline = require('readline');
-
-// ---------- Confirmation helper ----------
-function askConfirmation() {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    return new Promise(resolve => {
-        rl.question('Are you sure you want to proceed with decryption? (type "yes"): ', answer => {
-            rl.close();
-            resolve(answer.trim() === 'yes');
-        });
-    });
-}
 
 // ------------------------------------------------------------------
 // 1. Read the list of files to decrypt from envfiles.json (same as encryption)
@@ -60,6 +48,24 @@ function getPassphrase() {
         }
     } catch (error) {
         console.error('ERROR: Failed to get passphrase:', error.message);
+        
+        // Check if this is a GitHub authentication error
+        const errorOutput = (error.stderr || error.stdout || error.message || '').toString();
+        if (errorOutput.includes('HTTP 401') || errorOutput.includes('Bad credentials')) {
+            console.error('\x1b[31m');
+            console.error('========================================');
+            console.error('GITHUB AUTHENTICATION ERROR');
+            console.error('========================================\x1b[0m');
+            console.error('Your GitHub credentials are invalid or expired.');
+            console.error('Please run menu option \x1b[36m13.17\x1b[0m to fix your GITHUB_TOKEN.');
+            console.error('');
+            console.error('Recommended option: \x1b[36m13.17 option 2\x1b[0m (gh auth login)');
+            console.error('This will authenticate via GitHub CLI and verify your credentials.');
+            console.error('');
+            console.error('Alternative option: \x1b[36m13.17 option 1\x1b[0m (manual)');
+            console.error('This will read GITHUB_TOKEN from your .env file and set it automatically.');
+        }
+        
         process.exit(1);
     }
 }
@@ -91,13 +97,9 @@ function decryptFile(encryptedFile, outputFile, passphrase) {
 // ------------------------------------------------------------------
 // 4. Main decryption process
 // ------------------------------------------------------------------
-async function decryptEnvFiles() {
+function decryptEnvFiles() {
     console.log('\n=== Starting Decryption Process (AES-256-GCM) ===\n');
 
-    if (!(await askConfirmation())) {
-        console.log('Decryption aborted.');
-        process.exit(0);
-    }
     const passphrase = getPassphrase();
     console.log(`✓ Passphrase retrieved (length: ${passphrase.length})`);
 
@@ -107,11 +109,9 @@ async function decryptEnvFiles() {
     let successCount = 0;
     let failCount = 0;
 
-    envFiles.forEach(file => {
-        const outputFile = path.resolve(__dirname, '..', file);
-        const encryptedFile = path.join(path.dirname(outputFile), '.e' + path.basename(file) + '.enc');
-        
-        console.log(`--- Processing: ${file} ---`);
+    envFiles.forEach(baseName => {
+        const encryptedFile = `.e${baseName}.enc`;   // matches encryption output
+        console.log(`--- Processing: ${baseName} ---`);
 
         if (!fs.existsSync(encryptedFile)) {
             console.warn(`⚠ Encrypted file ${encryptedFile} not found. Skipping.`);
@@ -119,11 +119,11 @@ async function decryptEnvFiles() {
         }
 
         try {
-            decryptFile(encryptedFile, outputFile, passphrase);
-            console.log(`✓ Decrypted to ${outputFile}`);
+            decryptFile(encryptedFile, baseName, passphrase);
+            console.log(`✓ Decrypted to ${baseName}`);
             successCount++;
         } catch (error) {
-            console.error(`✗ Failed to decrypt ${file}: ${error.message}`);
+            console.error(`✗ Failed to decrypt ${baseName}: ${error.message}`);
             failCount++;
         }
     });

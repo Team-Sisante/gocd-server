@@ -160,23 +160,40 @@ function ensureBackendServices() {
 }
 
 // ----- Step 4: Static IP -----
-function ensureStaticIP() {
-  log('Step 4: Ensuring static IP exists...', '\x1b[33m');
+function ensureSSLCert() {
+  log('Step 5: Ensuring SSL certificate exists...', '\x1b[33m');
 
-  if (resourceExists('addresses', conf.staticIpName, '--global')) {
-    log('Static IP ' + conf.staticIpName + ' already exists.', '\x1b[32m');
-  } else {
-    log('Reserving static IP ' + conf.staticIpName + '...');
-    run('gcloud compute addresses create ' + conf.staticIpName + ' --project=' + PROJECT_ID + ' --global --ip-version=IPV4');
-    log('Static IP ' + conf.staticIpName + ' reserved.', '\x1b[32m');
+  if (resourceExists('ssl-certificates', conf.certName, '--global')) {
+    log('SSL certificate ' + conf.certName + ' already exists.', '\x1b[32m');
+    // Optionally delete and recreate to include new domains – we do that below.
   }
 
-  const ip = run(
-    'gcloud compute addresses describe ' + conf.staticIpName + ' --project=' + PROJECT_ID + ' --global --format="value(address)"',
-    { silent: true }
-  );
-  log('Load Balancer IP: ' + ip, '\x1b[32m');
-  return ip;
+  // Always delete the old certificate to make sure we have all required domains.
+  deleteSSLCertIfExists();
+
+  if (!conf.certDomains || !Array.isArray(conf.certDomains) || conf.certDomains.length === 0) {
+    console.error('\x1b[31mERROR: No certDomains defined in loadbalancer.json for ' + appName + '\x1b[0m');
+    process.exit(1);
+  }
+  const domainList = conf.certDomains.join(',');
+
+  log('Creating Google-managed certificate ' + conf.certName + ' for domains: ' + domainList + '...');
+  run('gcloud compute ssl-certificates create ' + conf.certName +
+      ' --project=' + PROJECT_ID +
+      ' --domains=' + domainList +
+      ' --global');
+  log('SSL certificate ' + conf.certName + ' created.', '\x1b[33m');
+  log('Note: It may take 30-60 minutes for the certificate to become ACTIVE. Check status with:\n' +
+      '  gcloud compute ssl-certificates describe ' + conf.certName + ' --global --project=' + PROJECT_ID, '\x1b[33m');
+}
+
+// Add this helper above ensureSSLCert()
+function deleteSSLCertIfExists() {
+  if (resourceExists('ssl-certificates', conf.certName, '--global')) {
+    log('Deleting existing SSL certificate ' + conf.certName + ' to recreate with all domains...');
+    run('gcloud compute ssl-certificates delete ' + conf.certName + ' --global --project=' + PROJECT_ID + ' --quiet', { silent: true });
+    log('Old certificate deleted.', '\x1b[32m');
+  }
 }
 
 // ----- Step 5: SSL Certificate -----

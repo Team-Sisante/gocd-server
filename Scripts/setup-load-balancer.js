@@ -215,7 +215,7 @@ function ensureBackendServices() {
       run([
         'gcloud compute backend-services create ' + b.name,
         '--project=' + PROJECT_ID,
-        '--protocol=HTTPS',
+        '--protocol=HTTP',
         '--port-name=' + b.namedPort,
         '--health-checks=' + b.healthCheck,
         '--global',

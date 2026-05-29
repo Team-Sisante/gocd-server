@@ -29,6 +29,80 @@
     </artifacts>
   </server>
 
+  <pipelines group="humrine_site_group">
+    <pipeline name="humrine_site-artifacts">
+      <materials>
+        <git url="__HUMRINE_SITE_REPO_URL_WITH_CREDENTIALS__" branch="master" dest="humrine_site" />
+      </materials>
+      <stage name="build_and_push">
+        <approval type="manual" />
+        <jobs>
+          <job name="artifact_generation">
+            <resources>
+              <resource>docker</resource>
+              <resource>humrine_site</resource>
+            </resources>
+            <tasks>
+              <exec command="bash">
+                <arg>-c</arg>
+                <arg><![CDATA[
+                  export GITHUB_TOKEN='__GITHUB_TOKEN__'
+                  cd /humrine_site
+                  node Scripts/build-and-push.js
+                ]]></arg>
+              </exec>
+            </tasks>
+          </job>
+        </jobs>
+      </stage>
+    </pipeline>
+
+    <pipeline name="humrine_site-staging">
+      <materials>
+        <pipeline pipelineName="humrine_site-artifacts" stageName="build_and_push" />
+      </materials>
+      <stage name="deploy_staging">
+        <approval type="manual" />
+        <jobs>
+          <job name="remote_deploy">
+            <resources>
+              <resource>docker</resource>
+              <resource>humrine_site</resource>
+            </resources>
+            <tasks>
+              <exec command="bash">
+                <arg>-c</arg>
+                <arg>node /humrine_site/Scripts/deploy.js staging __GITHUB_TOKEN__</arg>
+              </exec>
+            </tasks>
+          </job>
+        </jobs>
+      </stage>
+    </pipeline>
+
+    <pipeline name="humrine_site-production">
+      <materials>
+        <pipeline pipelineName="humrine_site-staging" stageName="deploy_staging" />
+      </materials>
+      <stage name="deploy_production">
+        <approval type="manual" />
+        <jobs>
+          <job name="remote_deploy">
+            <resources>
+              <resource>docker</resource>
+              <resource>humrine_site</resource>
+            </resources>
+            <tasks>
+              <exec command="bash">
+                <arg>-c</arg>
+                <arg>node /humrine_site/Scripts/deploy.js production __GITHUB_TOKEN__</arg>
+              </exec>
+            </tasks>
+          </job>
+        </jobs>
+      </stage>
+    </pipeline>
+  </pipelines>
   <pipelines group="badminton_court_group">
     <pipeline name="badminton_court-artifacts">
       <materials>
@@ -177,78 +251,4 @@
     </pipeline>
   </pipelines>
 
-  <pipelines group="humrine_site_group">
-    <pipeline name="humrine_site-artifacts">
-      <materials>
-        <git url="__HUMRINE_SITE_REPO_URL_WITH_CREDENTIALS__" branch="master" dest="humrine_site" />
-      </materials>
-      <stage name="build_and_push">
-        <approval type="manual" />
-        <jobs>
-          <job name="artifact_generation">
-            <resources>
-              <resource>docker</resource>
-              <resource>humrine_site</resource>
-            </resources>
-            <tasks>
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg><![CDATA[
-                  export GITHUB_TOKEN='__GITHUB_TOKEN__'
-                  cd /humrine_site
-                  node Scripts/build-and-push.js
-                ]]></arg>
-              </exec>
-            </tasks>
-          </job>
-        </jobs>
-      </stage>
-    </pipeline>
-
-    <pipeline name="humrine_site-staging">
-      <materials>
-        <pipeline pipelineName="humrine_site-artifacts" stageName="build_and_push" />
-      </materials>
-      <stage name="deploy_staging">
-        <approval type="manual" />
-        <jobs>
-          <job name="remote_deploy">
-            <resources>
-              <resource>docker</resource>
-              <resource>humrine_site</resource>
-            </resources>
-            <tasks>
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>node /humrine_site/Scripts/deploy.js staging __GITHUB_TOKEN__</arg>
-              </exec>
-            </tasks>
-          </job>
-        </jobs>
-      </stage>
-    </pipeline>
-
-    <pipeline name="humrine_site-production">
-      <materials>
-        <pipeline pipelineName="humrine_site-staging" stageName="deploy_staging" />
-      </materials>
-      <stage name="deploy_production">
-        <approval type="manual" />
-        <jobs>
-          <job name="remote_deploy">
-            <resources>
-              <resource>docker</resource>
-              <resource>humrine_site</resource>
-            </resources>
-            <tasks>
-              <exec command="bash">
-                <arg>-c</arg>
-                <arg>node /humrine_site/Scripts/deploy.js production __GITHUB_TOKEN__</arg>
-              </exec>
-            </tasks>
-          </job>
-        </jobs>
-      </stage>
-    </pipeline>
-  </pipelines>
 </cruise>

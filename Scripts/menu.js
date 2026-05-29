@@ -185,6 +185,8 @@ async function showMenu() {
             console.log('   6.29. SSH tunnel: access GoCD from VM');
             console.log('   6.30. Setup Load Balancer (Generic)');
             console.log('   6.31. Validate Social Media Configs');
+            console.log('   6.32. List SSL certificates (global)');
+            console.log('   6.33. Delete SSL certificate(s)');            
             console.log('\n\x1b[36m0. Exit\x1b[0m\n');
 
             const choice = await ask('Select an option: ');
@@ -274,6 +276,13 @@ async function showMenu() {
                 case '6.25': case '6.26': case '6.27':
                 case '6.29': case '6.30': case '6.31':
                     await vmSetup[choice](ctx); break;
+                case '6.32': case '6.33':
+                    // Lazy-load the new SSL modules
+                    const listSSLCerts = require('./menu/listSSLCerts');
+                    const deleteSSLCert = require('./menu/deleteSSLCert');
+                    if (choice === '6.32') await listSSLCerts(ctx);
+                    else await deleteSSLCert(ctx);
+                    break;                    
                 case '0':
                     rl.close();
                     process.exit(0);

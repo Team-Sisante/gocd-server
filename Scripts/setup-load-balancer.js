@@ -351,11 +351,11 @@ function ensureURLMap() {
     return;
   }
 
-  // Create new URL map with default backend
+  // Create new URL map with default backend (last backend in JSON)
   log('Creating URL map ' + conf.lbName + ' (default → ' + DEFAULT_BACKEND + ')...');
   run('gcloud compute url-maps create ' + conf.lbName + ' --project=' + PROJECT_ID + ' --default-service=' + DEFAULT_BACKEND + ' --global');
 
-  // 1. Add host rules for backends without pathPrefix
+  // 1. Add host rules for backends without pathPrefix (subdomain‑based)
   const hostBackends = conf.backends.filter(b => b.host && !b.pathPrefix);
   for (const b of hostBackends) {
     log('Adding host rule: ' + b.host + ' → ' + b.name + '...');
@@ -369,34 +369,28 @@ function ensureURLMap() {
     ].join(' '));
   }
 
-  // 2. For path‑based backends, first ensure a host rule exists for the bare domain
+  // 2. Ensure a host rule for the bare domain (for path‑based backends) exists FIRST
   const pathBackends = conf.backends.filter(b => b.host && b.pathPrefix);
   const bareHosts = [...new Set(pathBackends.map(b => b.host))];
   for (const bareHost of bareHosts) {
-    const existingHosts = run(
-      `gcloud compute url-maps describe ${conf.lbName} --project=${PROJECT_ID} --global --format="value(hostRules.hosts)"`,
-      { silent: true, ignoreError: true }
-    ) || '';
-    const hostList = existingHosts.split(';').map(h => h.trim());
-    if (!hostList.includes(bareHost)) {
-      log(`Creating host rule for bare domain: ${bareHost} → ${DEFAULT_BACKEND}...`);
-      run([
-        'gcloud compute url-maps add-path-matcher ' + conf.lbName,
-        '--project=' + PROJECT_ID,
-        '--path-matcher-name=' + bareHost.replace(/\./g, '-') + '-default',
-        '--default-service=' + DEFAULT_BACKEND,
-        '--new-hosts=' + bareHost,
-        '--global',
-      ].join(' '));
-    }
+    log('Creating host rule for bare domain: ' + bareHost + ' → ' + DEFAULT_BACKEND + '...');
+    // We use a unique matcher name for the bare host (e.g., "humrine-com-default")
+    const bareHostMatcher = bareHost.replace(/\./g, '-') + '-default';
+    run('gcloud compute url-maps remove-path-matcher ' + conf.lbName + ' --project=' + PROJECT_ID + ' --path-matcher-name=' + bareHostMatcher + ' --global', { silent: true, ignoreError: true });
+    run([
+      'gcloud compute url-maps add-path-matcher ' + conf.lbName,
+      '--project=' + PROJECT_ID,
+      '--path-matcher-name=' + bareHostMatcher,
+      '--default-service=' + DEFAULT_BACKEND,
+      '--new-hosts=' + bareHost,
+      '--global',
+    ].join(' '));
   }
 
-  // 3. Add path rules for backends with pathPrefix
+  // 3. Now add path rules for the path‑based backends, attaching them to the existing host rule
   for (const b of pathBackends) {
     log(`Adding path rule: ${b.host}${b.pathPrefix} → ${b.name}...`);
-    // Remove old matcher first (idempotent) – ignore errors if it doesn't exist
     run('gcloud compute url-maps remove-path-matcher ' + conf.lbName + ' --project=' + PROJECT_ID + ' --path-matcher-name=' + b.pathMatcher + ' --global', { silent: true, ignoreError: true });
-    // *** Add --delete-orphaned-path-matcher to handle any leftover matcher ***
     run([
       'gcloud compute url-maps add-path-matcher ' + conf.lbName,
       '--project=' + PROJECT_ID,
@@ -404,7 +398,7 @@ function ensureURLMap() {
       '--default-service=' + b.name,
       '--existing-host=' + b.host,
       '--path-rules=' + b.pathPrefix + '/*=' + b.name,
-      '--delete-orphaned-path-matcher',   // <-- fix
+      '--delete-orphaned-path-matcher',
       '--global',
     ].join(' '));
   }
@@ -413,7 +407,7 @@ function ensureURLMap() {
 }
 
 function updateURLMapRules() {
-  // 1. Ensure host rules for backends without pathPrefix
+  // 1. Ensure host rules for subdomain‑based backends
   for (const b of conf.backends) {
     if (b.host && !b.pathPrefix) {
       log(`Ensuring host rule: ${b.host} → ${b.name}...`);
@@ -429,21 +423,23 @@ function updateURLMapRules() {
     }
   }
 
-  // 2. Ensure host rule for bare domain(s) used by path‑based backends
+  // 2. Ensure bare‑domain host rules exist for each unique host used by path‑based backends
   const pathBackends = conf.backends.filter(b => b.host && b.pathPrefix);
   const bareHosts = [...new Set(pathBackends.map(b => b.host))];
   for (const bareHost of bareHosts) {
-    const existingHosts = run(
+    const bareHostMatcher = bareHost.replace(/\./g, '-') + '-default';
+    // Check if host rule already exists
+    const existingHostsOutput = run(
       `gcloud compute url-maps describe ${conf.lbName} --project=${PROJECT_ID} --global --format="value(hostRules.hosts)"`,
       { silent: true, ignoreError: true }
     ) || '';
-    const hostList = existingHosts.split(';').map(h => h.trim());
+    const hostList = existingHostsOutput.split(';').map(h => h.trim());
     if (!hostList.includes(bareHost)) {
       log(`Creating host rule for bare domain: ${bareHost} → ${DEFAULT_BACKEND}...`);
       run([
         'gcloud compute url-maps add-path-matcher ' + conf.lbName,
         '--project=' + PROJECT_ID,
-        '--path-matcher-name=' + bareHost.replace(/\./g, '-') + '-default',
+        '--path-matcher-name=' + bareHostMatcher,
         '--default-service=' + DEFAULT_BACKEND,
         '--new-hosts=' + bareHost,
         '--global',
@@ -451,7 +447,7 @@ function updateURLMapRules() {
     }
   }
 
-  // 3. Add/update path rules (with --delete-orphaned-path-matcher)
+  // 3. Add/update path rules for path‑based backends (attach to existing host)
   for (const b of pathBackends) {
     log(`Ensuring path rule: ${b.host}${b.pathPrefix} → ${b.name}...`);
     run('gcloud compute url-maps remove-path-matcher ' + conf.lbName + ' --project=' + PROJECT_ID + ' --path-matcher-name=' + b.pathMatcher + ' --global', { silent: true, ignoreError: true });
@@ -462,7 +458,7 @@ function updateURLMapRules() {
       '--default-service=' + b.name,
       '--existing-host=' + b.host,
       '--path-rules=' + b.pathPrefix + '/*=' + b.name,
-      '--delete-orphaned-path-matcher',   // <-- fix
+      '--delete-orphaned-path-matcher',
       '--global',
     ].join(' '));
   }

@@ -1,32 +1,32 @@
 // menu/vmSetup.js
 // GCP VM Setup options (6.1 – 6.29)
 
-const viewLogs           = require('./viewLogs');
-const restartService     = require('./restartService');
-const openStagingApp     = require('./openStagingApp');
-const openProductionApp     = require('./openProductionApp');
+const viewLogs = require('./viewLogs');
+const restartService = require('./restartService');
+const openStagingApp = require('./openStagingApp');
+const openProductionApp = require('./openProductionApp');
 const healthCheckStaging = require('./healthCheckStaging');
-const clearSSHHostKey    = require('./clearSSHHostKey');
-const recreateFreshVM    = require('./recreateFreshVM');
-const createVMFromYAML   = require('./createVMFromYAML');
-const sshToVM            = require('./sshToVM');
+const clearSSHHostKey = require('./clearSSHHostKey');
+const recreateFreshVM = require('./recreateFreshVM');
+const createVMFromYAML = require('./createVMFromYAML');
+const sshToVM = require('./sshToVM');
 const containerDiagnostics = require('./containerDiagnostics');
-const sshTunnelGoCD      = require('./sshTunnelGoCD');
+const sshTunnelGoCD = require('./sshTunnelGoCD');
 
 module.exports = {
-    '6.1':  async (ctx) => { ctx.sh('node Scripts/create-fresh-vm.js'); await ctx.pause(); },
-    '6.2':  async (ctx) => { ctx.sh('node Scripts/setup-firewall-rules.js'); await ctx.pause(); },
-    '6.3':  async (ctx) => { ctx.sh('node Scripts/setup-agent-ssh.js'); await ctx.pause(); },
-    '6.4':  async (ctx) => { ctx.sh('node Scripts/wait-for-vm-tools.js'); ctx.log('VM tools are now ready.', '\x1b[32m'); await ctx.pause(); },
-    '6.5':  async (ctx) => { ctx.sh('node Scripts/setup-gcp-secrets-access.js'); await ctx.pause(); },
-    '6.6':  async (ctx) => { ctx.sh('node Scripts/check-vm-reachability.js'); await ctx.pause(); },
-    '6.7':  async (ctx) => { ctx.sh('node Scripts/apply-pipeline-config.js'); await ctx.pause(); },
-    '6.8':  async (ctx) => {
+    '6.1': async (ctx) => { ctx.sh('node Scripts/create-fresh-vm.js'); await ctx.pause(); },
+    '6.2': async (ctx) => { ctx.sh('node Scripts/setup-firewall-rules.js'); await ctx.pause(); },
+    '6.3': async (ctx) => { ctx.sh('node Scripts/setup-agent-ssh.js'); await ctx.pause(); },
+    '6.4': async (ctx) => { ctx.sh('node Scripts/wait-for-vm-tools.js'); ctx.log('VM tools are now ready.', '\x1b[32m'); await ctx.pause(); },
+    '6.5': async (ctx) => { ctx.sh('node Scripts/setup-gcp-secrets-access.js'); await ctx.pause(); },
+    '6.6': async (ctx) => { ctx.sh('node Scripts/check-vm-reachability.js'); await ctx.pause(); },
+    '6.7': async (ctx) => { ctx.sh('node Scripts/apply-pipeline-config.js'); await ctx.pause(); },
+    '6.8': async (ctx) => {
         ctx.sh(`docker exec gocd-server curl -s -u "${ctx.GOCD_USER}:${ctx.GOCD_PASS}" -H "Confirm: true" -X POST ${ctx.GOCD_BASE}/go/api/pipelines/badminton_court-artifacts/schedule`);
         ctx.log('Pipeline triggered. Staging will start automatically after artifacts succeed.', '\x1b[32m');
         await ctx.pause();
     },
-    '6.9':  async (ctx) => {
+    '6.9': async (ctx) => {
         ctx.sh(`gcloud compute instances describe ${ctx.GCP_VM_NAME} --zone=${ctx.GCP_ZONE} --project=${ctx.GCP_PROJECT_ID} --format="table[box](name, status, machineType, networkInterfaces[0].accessConfigs[0].natIP)"`);
         await ctx.pause();
     },
@@ -108,19 +108,8 @@ module.exports = {
     '6.29': sshTunnelGoCD,
     // 6.30 – Setup Load Balancer (humrine.com)
     '6.30': async (ctx) => {
-        const inquirer = (await import('inquirer')).default;
-        
-        ctx.rl.pause();
-        const { appName } = await inquirer.prompt([{
-            type: 'list',
-            name: 'appName',
-            message: 'Select application to setup Load Balancer:',
-            choices: ['humrine_site', 'badminton_court']
-        }]);
-        ctx.rl.resume();
-        
         try {
-            ctx.execSync(`node Scripts/setup-load-balancer.js ${appName}`, { stdio: 'inherit' });
+            ctx.execSync('node Scripts/setup-load-balancer.js humrine_site', { stdio: 'inherit' });
         } catch (err) {
             console.error('\x1b[31mSetup failed:\x1b[0m', err.message);
         }
@@ -129,7 +118,7 @@ module.exports = {
     // 6.31 – Validate Social Media Configs
     '6.31': async (ctx) => {
         const inquirer = (await import('inquirer')).default;
-        
+
         ctx.rl.pause();
         const { appName, envName } = await inquirer.prompt([
             {
@@ -146,7 +135,7 @@ module.exports = {
             }
         ]);
         ctx.rl.resume();
-        
+
         try {
             ctx.execSync(`node Scripts/setup-social-media.js ${appName} ${envName}`, { stdio: 'inherit' });
         } catch (err) {

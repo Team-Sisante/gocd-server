@@ -7,12 +7,49 @@
  * Usage:
  *   node Scripts/setup-load-balancer.js <app_name>
  *   e.g., node Scripts/setup-load-balancer.js humrine
+ * 
+ * All console output is simultaneously written to a log file:
+ *   setup-load-balancer-YYYY-MMM-DD.log
  */
 
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 
+// ------------------------------------------------------------------
+// Log file: setup-load-balancer-YYYY-MMM-DD.log in the Scripts folder
+// ------------------------------------------------------------------
+const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const now = new Date();
+const yyyy = now.getFullYear();
+const mmm = months[now.getMonth()];
+const dd = String(now.getDate()).padStart(2,'0');
+const hh = String(now.getHours()).padStart(2,'0');
+const min = String(now.getMinutes()).padStart(2,'0');
+const logFileName = `setup-load-balancer-${yyyy}-${mmm}-${dd}-${hh}-${min}.log`;
+const logFilePath = path.join(__dirname, logFileName);
+
+// Open log stream (append mode)
+const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+
+// Override console.log to also write to log file
+const originalConsoleLog = console.log;
+console.log = function(...args) {
+  const message = args.map(String).join(' ');
+  originalConsoleLog.apply(console, args);
+  logStream.write(message + '\n');
+};
+
+// Also capture console.error (for command failures, etc.)
+const originalConsoleError = console.error;
+console.error = function(...args) {
+  const message = args.map(String).join(' ');
+  originalConsoleError.apply(console, args);
+  logStream.write(message + '\n');
+};
+
+// ------------------------------------------------------------------
 // ----- Load Configuration -----
 const appName = process.argv[2];
 if (!appName) {
@@ -23,13 +60,21 @@ if (!appName) {
 const configPath = path.join(__dirname, 'loadbalancer.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
-// Interpolate environment variables in config
+// Interpolate environment variables in config (recursively)
 function interpolate(obj) {
   for (const key in obj) {
-    if (typeof obj[key] === 'string') {
-      obj[key] = obj[key].replace(/\${(\w+)}/g, (_, varName) => process.env[varName] || '');
-    } else if (typeof obj[key] === 'object' && obj[key] !== null) {
-      interpolate(obj[key]);
+    const val = obj[key];
+    if (typeof val === 'string') {
+      obj[key] = val.replace(/\${(\w+)}/g, (_, varName) => process.env[varName] || '');
+    } else if (Array.isArray(val)) {
+      val.forEach((item, idx) => {
+        if (typeof item === 'object' && item !== null) interpolate(item);
+        else if (typeof item === 'string') {
+          val[idx] = item.replace(/\${(\w+)}/g, (_, varName) => process.env[varName] || '');
+        }
+      });
+    } else if (typeof val === 'object' && val !== null) {
+      interpolate(val);
     }
   }
 }
@@ -87,6 +132,30 @@ function sleep(ms) {
   while (Date.now() < end);
 }
 
+// Interactive prompt
+function ask(question) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(resolve => {
+    rl.question(`\x1b[33m${question}\x1b[0m`, answer => {
+      rl.close();
+      resolve(answer.trim().toLowerCase());
+    });
+  });
+}
+
+// ----- Certificate versioning (unchanged) -----
+function getAttachedCerts(proxyName) {
+  const output = run(
+    `gcloud compute target-https-proxies describe ${proxyName} --project=${PROJECT_ID} --global --format="value(sslCertificates)"`,
+    { silent: true, ignoreError: true }
+  );
+  if (!output) return [];
+  return output.split(';').map(url => {
+    const parts = url.split('/');
+    return parts[parts.length - 1];
+  });
+}
+
 // ----- New certificate versioning -----
 // We'll use a versioned certificate name to avoid deletion conflicts.
 // The actual certificate name is stored in conf.certName. We'll create
@@ -109,18 +178,6 @@ function getVersionedCertName() {
   // New version = max + 1
   const newVersion = maxVersion + 1;
   return base + '-v' + newVersion;
-}
-
-function getAttachedCerts(proxyName) {
-  const output = run(
-    `gcloud compute target-https-proxies describe ${proxyName} --project=${PROJECT_ID} --global --format="value(sslCertificates)"`,
-    { silent: true, ignoreError: true }
-  );
-  if (!output) return [];
-  return output.split(';').map(url => {
-    const parts = url.split('/');
-    return parts[parts.length - 1];
-  });
 }
 
 function updateProxyCertificates(proxyName, certNames) {
@@ -168,9 +225,7 @@ function ensureSSLCert() {
   log(`You can later delete old certificates (e.g., ${conf.certName}) after the new one is ACTIVE.`, '\x1b[33m');
 }
 
-// ----- Steps 1-4, 6-11 remain unchanged -----
-// (Copy exactly from the previous full file, except we no longer need deleteSSLCertIfExists)
-
+// ----- Step 1: Instance Group -----
 function ensureInstanceGroup() {
   log('Step 1: Ensuring unmanaged instance group exists...', '\x1b[33m');
   const exists = run(
@@ -192,19 +247,21 @@ function ensureInstanceGroup() {
   log('Named ports configured.', '\x1b[32m');
 }
 
+// ----- Step 2: Health Checks (HTTP) -----
 function ensureHealthChecks() {
   log('Step 2: Ensuring health checks exist...', '\x1b[33m');
   for (const b of conf.backends) {
     if (resourceExists('health-checks', b.healthCheck, '--global')) {
       log('Health check ' + b.healthCheck + ' already exists.', '\x1b[32m');
     } else {
-      log('Creating health check ' + b.healthCheck + ' (HTTPS port ' + b.port + ')...');
-      run('gcloud compute health-checks create https ' + b.healthCheck + ' --project=' + PROJECT_ID + ' --port=' + b.port + ' --request-path=/ --global');
+      log('Creating health check ' + b.healthCheck + ' (HTTP port ' + b.port + ')...');
+      run('gcloud compute health-checks create http ' + b.healthCheck + ' --project=' + PROJECT_ID + ' --port=' + b.port + ' --request-path=/ --global');
       log('Health check ' + b.healthCheck + ' created.', '\x1b[32m');
     }
   }
 }
 
+// ----- Step 3: Backend Services (HTTP) -----
 function ensureBackendServices() {
   log('Step 3: Ensuring backend services exist...', '\x1b[33m');
   for (const b of conf.backends) {
@@ -237,6 +294,7 @@ function ensureBackendServices() {
   }
 }
 
+// ----- Step 4: Static IP -----
 function ensureStaticIP() {
   log('Step 4: Ensuring static IP exists...', '\x1b[33m');
   if (resourceExists('addresses', conf.staticIpName, '--global')) {
@@ -254,19 +312,51 @@ function ensureStaticIP() {
   return ip;
 }
 
-function ensureURLMap() {
-  log('Step 6: Ensuring URL map exists...', '\x1b[33m');
-  if (resourceExists('url-maps', conf.lbName, '--global')) {
-    log('URL map ' + conf.lbName + ' already exists.', '\x1b[32m');
-  } else {
-    log('Creating URL map ' + conf.lbName + ' (default → ' + DEFAULT_BACKEND + ')...');
-    run('gcloud compute url-maps create ' + conf.lbName + ' --project=' + PROJECT_ID + ' --default-service=' + DEFAULT_BACKEND + ' --global');
-    log('URL map ' + conf.lbName + ' created.', '\x1b[32m');
+// ----- Recreate confirmation -----
+async function confirmRecreateLoadBalancer() {
+  const lbExists = resourceExists('url-maps', conf.lbName, '--global');
+  if (!lbExists) return;
+
+  log('\n⚠️  The load balancer "' + conf.lbName + '" already exists.');
+  log('Recreating it will delete all routing rules and rebuild them from the JSON config.');
+  log('Any manually added rules will be lost.');
+  const answer = await ask('Do you want to delete and recreate the load balancer? (y/N): ');
+
+  if (answer !== 'y') {
+    log('Skipping load balancer recreation. Existing configuration preserved.', '\x1b[33m');
+    throw new Error('SKIP_LB_RECREATE');
   }
-  for (const b of conf.backends) {
-    if (b.name === DEFAULT_BACKEND && !b.host) continue;
+
+  log('Deleting existing forwarding rules...');
+  run(`gcloud compute forwarding-rules delete ${conf.httpsFwdRule} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
+  run(`gcloud compute forwarding-rules delete ${conf.httpFwdRule} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
+
+  log('Deleting HTTPS and HTTP proxies...');
+  run(`gcloud compute target-https-proxies delete ${conf.httpsProxyName} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
+  run(`gcloud compute target-http-proxies delete ${conf.httpProxyName} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
+
+  log('Deleting URL map...');
+  run(`gcloud compute url-maps delete ${conf.lbName} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
+}
+
+// ----- Step 6: URL Map (host & path rules) -----
+function ensureURLMap() {
+  log('Step 6: Ensuring URL map exists with host and path rules...', '\x1b[33m');
+
+  if (resourceExists('url-maps', conf.lbName, '--global')) {
+    log('URL map ' + conf.lbName + ' already exists. Updating rules...');
+    updateURLMapRules();
+    return;
+  }
+
+  // Create new URL map with default backend
+  log('Creating URL map ' + conf.lbName + ' (default → ' + DEFAULT_BACKEND + ')...');
+  run('gcloud compute url-maps create ' + conf.lbName + ' --project=' + PROJECT_ID + ' --default-service=' + DEFAULT_BACKEND + ' --global');
+
+  // 1. Add host rules for backends without pathPrefix
+  const hostBackends = conf.backends.filter(b => b.host && !b.pathPrefix);
+  for (const b of hostBackends) {
     log('Adding host rule: ' + b.host + ' → ' + b.name + '...');
-    run('gcloud compute url-maps remove-path-matcher ' + conf.lbName + ' --project=' + PROJECT_ID + ' --path-matcher-name=' + b.pathMatcher + ' --global', { silent: true, ignoreError: true });
     run([
       'gcloud compute url-maps add-path-matcher ' + conf.lbName,
       '--project=' + PROJECT_ID,
@@ -275,10 +365,108 @@ function ensureURLMap() {
       '--new-hosts=' + b.host,
       '--global',
     ].join(' '));
-    log('Host rule ' + b.host + ' → ' + b.name + ' configured.', '\x1b[32m');
+  }
+
+  // 2. For path‑based backends, first ensure a host rule exists for the bare domain
+  const pathBackends = conf.backends.filter(b => b.host && b.pathPrefix);
+  const bareHosts = [...new Set(pathBackends.map(b => b.host))];
+  for (const bareHost of bareHosts) {
+    const existingHosts = run(
+      `gcloud compute url-maps describe ${conf.lbName} --project=${PROJECT_ID} --global --format="value(hostRules.hosts)"`,
+      { silent: true, ignoreError: true }
+    ) || '';
+    const hostList = existingHosts.split(';').map(h => h.trim());
+    if (!hostList.includes(bareHost)) {
+      log(`Creating host rule for bare domain: ${bareHost} → ${DEFAULT_BACKEND}...`);
+      run([
+        'gcloud compute url-maps add-path-matcher ' + conf.lbName,
+        '--project=' + PROJECT_ID,
+        '--path-matcher-name=' + bareHost.replace(/\./g, '-') + '-default',
+        '--default-service=' + DEFAULT_BACKEND,
+        '--new-hosts=' + bareHost,
+        '--global',
+      ].join(' '));
+    }
+  }
+
+  // 3. Add path rules for backends with pathPrefix
+  for (const b of pathBackends) {
+    log(`Adding path rule: ${b.host}${b.pathPrefix} → ${b.name}...`);
+    // Remove old matcher first (idempotent) – ignore errors if it doesn't exist
+    run('gcloud compute url-maps remove-path-matcher ' + conf.lbName + ' --project=' + PROJECT_ID + ' --path-matcher-name=' + b.pathMatcher + ' --global', { silent: true, ignoreError: true });
+    // *** Add --delete-orphaned-path-matcher to handle any leftover matcher ***
+    run([
+      'gcloud compute url-maps add-path-matcher ' + conf.lbName,
+      '--project=' + PROJECT_ID,
+      '--path-matcher-name=' + b.pathMatcher,
+      '--default-service=' + b.name,
+      '--existing-host=' + b.host,
+      '--path-rules=' + b.pathPrefix + '/*=' + b.name,
+      '--delete-orphaned-path-matcher',   // <-- fix
+      '--global',
+    ].join(' '));
+  }
+
+  log('URL map configured.', '\x1b[32m');
+}
+
+function updateURLMapRules() {
+  // 1. Ensure host rules for backends without pathPrefix
+  for (const b of conf.backends) {
+    if (b.host && !b.pathPrefix) {
+      log(`Ensuring host rule: ${b.host} → ${b.name}...`);
+      run('gcloud compute url-maps remove-path-matcher ' + conf.lbName + ' --project=' + PROJECT_ID + ' --path-matcher-name=' + b.pathMatcher + ' --global', { silent: true, ignoreError: true });
+      run([
+        'gcloud compute url-maps add-path-matcher ' + conf.lbName,
+        '--project=' + PROJECT_ID,
+        '--path-matcher-name=' + b.pathMatcher,
+        '--default-service=' + b.name,
+        '--new-hosts=' + b.host,
+        '--global',
+      ].join(' '));
+    }
+  }
+
+  // 2. Ensure host rule for bare domain(s) used by path‑based backends
+  const pathBackends = conf.backends.filter(b => b.host && b.pathPrefix);
+  const bareHosts = [...new Set(pathBackends.map(b => b.host))];
+  for (const bareHost of bareHosts) {
+    const existingHosts = run(
+      `gcloud compute url-maps describe ${conf.lbName} --project=${PROJECT_ID} --global --format="value(hostRules.hosts)"`,
+      { silent: true, ignoreError: true }
+    ) || '';
+    const hostList = existingHosts.split(';').map(h => h.trim());
+    if (!hostList.includes(bareHost)) {
+      log(`Creating host rule for bare domain: ${bareHost} → ${DEFAULT_BACKEND}...`);
+      run([
+        'gcloud compute url-maps add-path-matcher ' + conf.lbName,
+        '--project=' + PROJECT_ID,
+        '--path-matcher-name=' + bareHost.replace(/\./g, '-') + '-default',
+        '--default-service=' + DEFAULT_BACKEND,
+        '--new-hosts=' + bareHost,
+        '--global',
+      ].join(' '));
+    }
+  }
+
+  // 3. Add/update path rules (with --delete-orphaned-path-matcher)
+  for (const b of pathBackends) {
+    log(`Ensuring path rule: ${b.host}${b.pathPrefix} → ${b.name}...`);
+    run('gcloud compute url-maps remove-path-matcher ' + conf.lbName + ' --project=' + PROJECT_ID + ' --path-matcher-name=' + b.pathMatcher + ' --global', { silent: true, ignoreError: true });
+    run([
+      'gcloud compute url-maps add-path-matcher ' + conf.lbName,
+      '--project=' + PROJECT_ID,
+      '--path-matcher-name=' + b.pathMatcher,
+      '--default-service=' + b.name,
+      '--existing-host=' + b.host,
+      '--path-rules=' + b.pathPrefix + '/*=' + b.name,
+      '--delete-orphaned-path-matcher',   // <-- fix
+      '--global',
+    ].join(' '));
   }
 }
 
+// ----- Step 7: Target HTTPS Proxy -----
 function ensureHTTPSProxy() {
   log('Step 7: Ensuring HTTPS proxy exists...', '\x1b[33m');
   // The proxy must be created with at least one certificate.
@@ -317,6 +505,7 @@ function ensureHTTPSProxy() {
   }
 }
 
+// ----- Step 8: Forwarding Rule (HTTPS) -----
 function ensureHTTPSForwardingRule() {
   log('Step 8: Ensuring HTTPS forwarding rule exists...', '\x1b[33m');
   if (resourceExists('forwarding-rules', conf.httpsFwdRule, '--global')) {
@@ -335,6 +524,7 @@ function ensureHTTPSForwardingRule() {
   }
 }
 
+// ----- Step 9: HTTP→HTTPS Redirect -----
 function ensureHTTPRedirect() {
   log('Step 9: Ensuring HTTP→HTTPS redirect exists...', '\x1b[33m');
   if (!resourceExists('url-maps', conf.httpRedirectMap, '--global')) {
@@ -378,6 +568,7 @@ function ensureHTTPRedirect() {
   }
 }
 
+// ----- Step 10: Firewall Rule for Health Checks -----
 function ensureFirewallRule() {
   log('Step 10: Ensuring firewall rule for LB health checks...', '\x1b[33m');
   const rawRules = run(
@@ -406,6 +597,7 @@ function ensureFirewallRule() {
   }
 }
 
+// ----- Step 11: DNS Records -----
 function ensureDNSRecords(lbIP) {
   log('Step 11: Configuring Cloud DNS records...', '\x1b[33m');
   if (!lbIP) {
@@ -442,7 +634,7 @@ function ensureDNSRecords(lbIP) {
 }
 
 // ----- Main -----
-function main() {
+async function main() {
   console.log('\x1b[32m========================================\x1b[0m');
   console.log('\x1b[32m  GCP Load Balancer Setup (' + appName + ')\x1b[0m');
   console.log('\x1b[32m  Domain: ' + conf.domain + '\x1b[0m');
@@ -453,10 +645,21 @@ function main() {
   ensureHealthChecks();
   ensureBackendServices();
   const lbIP = ensureStaticIP();
-  ensureSSLCert();          // creates new versioned cert and updates proxy
-  ensureURLMap();
-  ensureHTTPSProxy();       // creates proxy if needed (uses new cert)
-  ensureHTTPSForwardingRule();
+  ensureSSLCert();
+
+  try {
+    await confirmRecreateLoadBalancer();
+    ensureURLMap();
+    ensureHTTPSProxy();
+    ensureHTTPSForwardingRule();
+  } catch (err) {
+    if (err.message === 'SKIP_LB_RECREATE') {
+      log('Load balancer components (URL map, proxy, forwarding rules) were NOT modified.', '\x1b[33m');
+    } else {
+      throw err;
+    }
+  }
+
   ensureHTTPRedirect();
   ensureFirewallRule();
   ensureDNSRecords(lbIP);
@@ -467,4 +670,10 @@ function main() {
   log('Load Balancer IP: ' + lbIP, '\x1b[32m');
 }
 
-main();
+main().catch(err => {
+  console.error('\x1b[31mFATAL ERROR: ' + err.message + '\x1b[0m');
+  process.exit(1);
+}).finally(() => {
+  logStream.end();
+  originalConsoleLog('Log saved to: ' + logFilePath);
+});

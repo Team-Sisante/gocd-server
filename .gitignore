@@ -22,3 +22,4 @@ secrets/agent-key
 secrets/agent-key.pub
 secrets/gcp-key.json
 .env.docker
+Scripts/setup-load-balancer*.log

@@ -33,6 +33,24 @@
         "healthCheck": "production-health-check",
         "host": "app.${HUMRINE_DOMAIN}",
         "pathMatcher": "production-matcher"
+      },
+      {
+        "name": "badminton-staging-backend",
+        "namedPort": "badminton-staging",
+        "port": "${WEB_HOST_PORT_BADMINTON_STAGING}",
+        "healthCheck": "badminton-staging-health-check",
+        "host": "${HUMRINE_DOMAIN}",
+        "pathPrefix": "/badminton-staging",
+        "pathMatcher": "badminton-staging-matcher"
+      },
+      {
+        "name": "badminton-production-backend",
+        "namedPort": "badminton-production",
+        "port": "${WEB_HOST_PORT_BADMINTON_PRODUCTION}",
+        "healthCheck": "badminton-production-health-check",
+        "host": "${HUMRINE_DOMAIN}",
+        "pathPrefix": "/badminton-production",
+        "pathMatcher": "badminton-production-matcher"
       }
     ]
   },

@@ -187,8 +187,8 @@ function updateProxyCertificates(proxyName, certNames) {
   run(`gcloud compute target-https-proxies update ${proxyName} --project=${PROJECT_ID} --global --ssl-certificates=${certList}`);
 }
 
-// ----- Step 5: SSL Certificate (versioned) -----
-function ensureSSLCert() {
+// ----- Step 5: Create a new versioned SSL certificate (returns its name) -----
+function createVersionedCert() {
   log('Step 5: Ensuring multi-domain SSL certificate exists (versioned)...', '\x1b[33m');
 
   if (!conf.certDomains || !Array.isArray(conf.certDomains) || conf.certDomains.length === 0) {
@@ -215,14 +215,16 @@ function ensureSSLCert() {
         '  gcloud compute ssl-certificates describe ' + newCertName + ' --global --project=' + PROJECT_ID, '\x1b[33m');
   }
 
-  // Update the HTTPS proxy to use this new certificate (replace old ones)
-  // If the proxy doesn't exist yet, it will be created later with this certificate.
-  if (resourceExists('target-https-proxies', conf.httpsProxyName, '--global')) {
-    updateProxyCertificates(conf.httpsProxyName, [newCertName]);
-  }
-
-  // Optionally, after the new cert is ACTIVE, you can manually delete old cert(s).
   log(`You can later delete old certificates (e.g., ${conf.certName}) after the new one is ACTIVE.`, '\x1b[33m');
+  return newCertName;
+}
+
+// ----- Attach a certificate to the HTTPS proxy (or update if already attached) -----
+function attachCertToProxy(certName) {
+  if (!resourceExists('target-https-proxies', conf.httpsProxyName, '--global')) {
+    return;   // proxy not created yet; will be attached during creation
+  }
+  updateProxyCertificates(conf.httpsProxyName, [certName]);
 }
 
 // ----- Step 1: Instance Group -----
@@ -467,38 +469,20 @@ function updateURLMapRules() {
 }
 
 // ----- Step 7: Target HTTPS Proxy -----
-function ensureHTTPSProxy() {
+function ensureHTTPSProxy(certNameToUse) {
   log('Step 7: Ensuring HTTPS proxy exists...', '\x1b[33m');
-  // The proxy must be created with at least one certificate.
-  // We'll use the newest versioned certificate we just created.
-  // But first, determine what certificate to use: if a versioned cert exists, use it,
-  // otherwise fall back to the base cert name for initial creation.
-  // Actually, ensureSSLCert already created a new version, so we can just attach that.
-  const attached = getAttachedCerts(conf.httpsProxyName);
-  const versionedCerts = attached.filter(c => c.startsWith(conf.certName + '-v'));
-  let certToUse;
-  if (versionedCerts.length > 0) {
-    certToUse = versionedCerts.sort().reverse()[0]; // highest version
-  } else {
-    // If no versioned cert attached, perhaps the base cert is attached or none.
-    certToUse = conf.certName; // fallback
-  }
 
   if (resourceExists('target-https-proxies', conf.httpsProxyName, '--global')) {
     log('HTTPS proxy ' + conf.httpsProxyName + ' already exists.', '\x1b[32m');
-    // Update it to use the latest certificate (which our ensureSSLCert may have already done)
-    const newestVersioned = getVersionedCertName(); // this will return the next version, not current!
-    // Instead, we should just ensure the proxy uses the latest cert that exists.
-    // Safer: just skip proxy update here, as ensureSSLCert already updated it.
+    // Update it to use the given certificate
+    updateProxyCertificates(conf.httpsProxyName, [certNameToUse]);
   } else {
     log('Creating HTTPS proxy ' + conf.httpsProxyName + '...');
-    // Use the certName that was just created (the versioned one). But we don't know it here.
-    // So we'll pass the base cert name; ensureSSLCert will later update it.
     run([
       'gcloud compute target-https-proxies create ' + conf.httpsProxyName,
       '--project=' + PROJECT_ID,
       '--url-map=' + conf.lbName,
-      '--ssl-certificates=' + conf.certName,
+      '--ssl-certificates=' + certNameToUse,   // <-- use the versioned cert
       '--global',
     ].join(' '));
     log('HTTPS proxy ' + conf.httpsProxyName + ' created.', '\x1b[32m');
@@ -645,19 +629,28 @@ async function main() {
   ensureHealthChecks();
   ensureBackendServices();
   const lbIP = ensureStaticIP();
-  ensureSSLCert();
+
+  // Create the new versioned certificate (does NOT attach to proxy yet)
+  const newCertName = createVersionedCert();   // <-- returns the cert name
 
   try {
     await confirmRecreateLoadBalancer();
     ensureURLMap();
-    ensureHTTPSProxy();
+    ensureHTTPSProxy(newCertName);             // <-- pass the versioned cert name
     ensureHTTPSForwardingRule();
   } catch (err) {
     if (err.message === 'SKIP_LB_RECREATE') {
       log('Load balancer components (URL map, proxy, forwarding rules) were NOT modified.', '\x1b[33m');
+      // Even if LB not recreated, still update the proxy to the latest cert
+      attachCertToProxy(newCertName);
     } else {
       throw err;
     }
+  }
+
+  // If the proxy already existed and wasn't recreated, attach the new cert now
+  if (resourceExists('target-https-proxies', conf.httpsProxyName, '--global')) {
+    attachCertToProxy(newCertName);
   }
 
   ensureHTTPRedirect();

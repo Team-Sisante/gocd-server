@@ -57,6 +57,7 @@ if (!appName) {
 const configPath = path.join(__dirname, 'loadbalancer.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
+// Interpolate environment variables in config (recursively)
 function interpolate(obj) {
   for (const key in obj) {
     const val = obj[key];
@@ -94,6 +95,7 @@ if (!PROJECT_ID || !GCP_ZONE || !GCP_VM_NAME) {
   process.exit(1);
 }
 
+// Default backend (last one in the array)
 const DEFAULT_BACKEND = conf.backends[conf.backends.length - 1].name;
 
 // ----- Helpers -----
@@ -127,6 +129,7 @@ function sleep(ms) {
   while (Date.now() < end);
 }
 
+// Interactive prompt
 function ask(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise(resolve => {
@@ -571,7 +574,7 @@ function ensureHTTPRedirect() {
 // ----- Step 10: Firewall Rules -----
 function ensureFirewallRules() {
   log('Step 10: Ensuring firewall rules for LB health checks and traffic...', '\x1b[33m');
-  const ports = conf.backends.map(b => b.port).join(',');
+  const ports = conf.backends.map(b => b.port);
 
   // Health check rule (restricted source ranges)
   const hcRule = conf.fwRuleName;
@@ -582,9 +585,11 @@ function ensureFirewallRules() {
   const existing = new Set(rawRules.split('\n').map(r => r.trim()));
   if (existing.has(hcRule)) {
     log(`Firewall rule ${hcRule} already exists – updating ports if necessary...`);
-    run(`gcloud compute firewall-rules update ${hcRule} --project=${PROJECT_ID} --rules=tcp:${ports}`, { silent: true, ignoreError: true });
+    const hcPorts = ports.map(p => `tcp:${p}`).join(',');
+    run(`gcloud compute firewall-rules update ${hcRule} --project=${PROJECT_ID} --rules=${hcPorts}`, { silent: true, ignoreError: true });
   } else {
     log(`Creating firewall rule ${hcRule}...`);
+    const hcPorts = ports.map(p => `tcp:${p}`).join(',');
     run([
       'gcloud compute firewall-rules create ' + hcRule,
       '--project=' + PROJECT_ID,
@@ -592,7 +597,7 @@ function ensureFirewallRules() {
       '--priority=1000',
       '--network=default',
       '--action=ALLOW',
-      '--rules=tcp:' + ports,
+      '--rules=' + hcPorts,
       '--source-ranges=35.191.0.0/16,130.211.0.0/22',
       '--target-tags=gocd-deploy-target',
       '--description="Allow GCP LB health check probes"',
@@ -604,9 +609,11 @@ function ensureFirewallRules() {
   const trafficRuleName = `${conf.fwRuleName}-traffic`;
   if (existing.has(trafficRuleName)) {
     log(`Firewall rule ${trafficRuleName} already exists – updating ports if necessary...`);
-    run(`gcloud compute firewall-rules update ${trafficRuleName} --project=${PROJECT_ID} --rules=tcp:${ports}`, { silent: true, ignoreError: true });
+    const trafficPorts = ports.map(p => `tcp:${p}`).join(',');
+    run(`gcloud compute firewall-rules update ${trafficRuleName} --project=${PROJECT_ID} --rules=${trafficPorts}`, { silent: true, ignoreError: true });
   } else {
     log(`Creating firewall rule ${trafficRuleName} (allow all sources)...`);
+    const trafficPorts = ports.map(p => `tcp:${p}`).join(',');
     run([
       'gcloud compute firewall-rules create ' + trafficRuleName,
       '--project=' + PROJECT_ID,
@@ -614,7 +621,7 @@ function ensureFirewallRules() {
       '--priority=1000',
       '--network=default',
       '--action=ALLOW',
-      '--rules=tcp:' + ports,
+      '--rules=' + trafficPorts,
       '--source-ranges=0.0.0.0/0',
       '--target-tags=gocd-deploy-target',
       '--description="Allow load balancer forwarding traffic"',

@@ -12,6 +12,7 @@ const createVMFromYAML = require('./createVMFromYAML');
 const sshToVM = require('./sshToVM');
 const containerDiagnostics = require('./containerDiagnostics');
 const sshTunnelGoCD = require('./sshTunnelGoCD');
+const showHostRules = require('./showHostRules');
 
 module.exports = {
     '6.1': async (ctx) => { ctx.sh('node Scripts/create-fresh-vm.js'); await ctx.pause(); },
@@ -149,4 +150,8 @@ module.exports = {
         }
         await ctx.ask('\x1b[33m\nPress Enter to continue...\x1b[0m');
     },
+    // 6.37 – Show load balancer host rules
+    '6.37': async (ctx) => {
+        await showHostRules(ctx);
+    },    
 };

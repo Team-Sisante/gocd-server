@@ -190,6 +190,7 @@ async function showMenu() {
             console.log('   6.34. Monitor certificate status');   
             console.log('   6.35. Show active certificate on HTTPS proxy');
             console.log('   6.36. Certificate domain status (detailed)');
+            console.log('   6.37. Show load balancer host rules');
             console.log('\n\x1b[36m0. Exit\x1b[0m\n');
 
             const choice = await ask('Select an option: ');
@@ -277,7 +278,7 @@ async function showMenu() {
                 case '6.17': case '6.18': case '6.19': case '6.20':
                 case '6.21': case '6.22': case '6.23': case '6.24': 
                 case '6.25': case '6.26': case '6.27':
-                case '6.29': case '6.30': case '6.31':
+                case '6.29': case '6.30': case '6.31': case '6.37':
                     await vmSetup[choice](ctx); break;
                 case '6.32': case '6.33':
                     // Lazy-load the new SSL modules

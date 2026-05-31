@@ -193,10 +193,37 @@ function getActiveCertCoveringDomains(requiredDomains) {
 
 function attachCertToProxy(certName) {
   if (!resourceExists('target-https-proxies', conf.httpsProxyName, '--global')) return;
+  if (!certName) {
+    log('No valid certificate to attach – keeping current proxy certificate.', '\x1b[33m');
+    return;
+  }
   updateProxyCertificates(conf.httpsProxyName, [certName]);
 }
 
-// ----- Step 5: SSL Certificate (versioned) -----
+// ----- Wait for a certificate to become ACTIVE (or fail) -----
+function waitForCertActive(certName, maxWaitMinutes = 60) {
+  const deadline = Date.now() + maxWaitMinutes * 60 * 1000;
+  let lastStatus = null;
+  while (Date.now() < deadline) {
+    const status = run(
+      `gcloud compute ssl-certificates describe ${certName} --global --project=${PROJECT_ID} --format="value(managed.status)"`,
+      { silent: true, ignoreError: true }
+    );
+    if (status === 'ACTIVE') return true;
+    if (status && status !== 'PROVISIONING' && status !== lastStatus) {
+      log(`Certificate ${certName} status: ${status}`, '\x1b[33m');
+      lastStatus = status;
+    }
+    if (status && status.includes('FAILED')) {
+      log(`Certificate ${certName} provisioning failed: ${status}`, '\x1b[31m');
+      return false;
+    }
+    sleep(15000);   // check every 15 seconds
+  }
+  return false;
+}
+
+// ----- Step 5: SSL Certificate (versioned, with automatic waiting) -----
 function createVersionedCert() {
   log('Step 5: Ensuring multi-domain SSL certificate exists (versioned)...', '\x1b[33m');
 
@@ -206,12 +233,14 @@ function createVersionedCert() {
   }
   const domainList = conf.certDomains;
 
+  // If an active certificate already covers all domains, use it (skip provisioning)
   const existingActiveCert = getActiveCertCoveringDomains(domainList);
   if (existingActiveCert) {
     log(`Using existing active certificate: ${existingActiveCert}`, '\x1b[32m');
     return existingActiveCert;
   }
 
+  // Create a new versioned certificate
   const newCertName = getVersionedCertName();
   log(`Will create new certificate: ${newCertName}`);
 
@@ -224,11 +253,18 @@ function createVersionedCert() {
       throw new Error(`Failed to create SSL certificate ${newCertName}.`);
     }
     log(`Certificate ${newCertName} created.`, '\x1b[33m');
-    log('Note: It may take 30-60 minutes for the certificate to become ACTIVE. Check status with:\n' +
-        '  gcloud compute ssl-certificates describe ' + newCertName + ' --global --project=' + PROJECT_ID, '\x1b[33m');
   }
 
-  log(`You can later delete old certificates (e.g., ${conf.certName}) after the new one is ACTIVE.`, '\x1b[33m');
+  // Wait for the certificate to become ACTIVE before returning it
+  log(`Waiting for ${newCertName} to become ACTIVE (this may take 30-60 minutes)...`, '\x1b[33m');
+  const certReady = waitForCertActive(newCertName);
+  if (!certReady) {
+    log(`Certificate ${newCertName} did not become ACTIVE within the timeout. You may need to check DNS or recreate it.`, '\x1b[31m');
+    // Don't fail – the old certificate is still attached
+    return null;
+  }
+
+  log(`Certificate ${newCertName} is ACTIVE.`, '\x1b[32m');
   return newCertName;
 }
 
@@ -492,16 +528,21 @@ function updateURLMapRules() {
 function ensureHTTPSProxy(certNameToUse) {
   log('Step 7: Ensuring HTTPS proxy exists...', '\x1b[33m');
 
+  // Fallback to base cert name if no valid cert provided (should rarely happen)
+  const cert = certNameToUse || conf.certName;
+
   if (resourceExists('target-https-proxies', conf.httpsProxyName, '--global')) {
     log('HTTPS proxy ' + conf.httpsProxyName + ' already exists.', '\x1b[32m');
-    updateProxyCertificates(conf.httpsProxyName, [certNameToUse]);
+    if (certNameToUse) {
+      updateProxyCertificates(conf.httpsProxyName, [cert]);
+    }
   } else {
     log('Creating HTTPS proxy ' + conf.httpsProxyName + '...');
     run([
       'gcloud compute target-https-proxies create ' + conf.httpsProxyName,
       '--project=' + PROJECT_ID,
       '--url-map=' + conf.lbName,
-      '--ssl-certificates=' + certNameToUse,
+      '--ssl-certificates=' + cert,
       '--global',
     ].join(' '));
     log('HTTPS proxy ' + conf.httpsProxyName + ' created.', '\x1b[32m');

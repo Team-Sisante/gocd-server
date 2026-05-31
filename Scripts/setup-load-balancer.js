@@ -1,15 +1,78 @@
 #!/usr/bin/env node
 /**
  * Scripts/setup-load-balancer.js
- * Creates (or verifies) a GCP External Application Load Balancer
- * based on configuration in Scripts/loadbalancer.json.
+ * Self‑healing GCP External Application Load Balancer setup.
  *
  * Usage:
  *   node Scripts/setup-load-balancer.js <app_name>
- *   e.g., node Scripts/setup-load-balancer.js humrine
- * 
- * All console output is simultaneously written to a log file:
- *   setup-load-balancer-YYYY-MMM-DD-hh-mm.log
+ *   e.g., node Scripts/setup-load-balancer.js humrine_site
+ *
+ * The script reads its configuration from Scripts/loadbalancer.json,
+ * interpolates environment variables (like ${HUMRINE_DOMAIN}), and then
+ * idempotently inspects and corrects the following components:
+ *
+ *   - Instance group (named ports)
+ *   - Health checks (request paths)
+ *   - Backend services (protocol, port)
+ *   - Static IP address
+ *   - SSL certificate (reuse / create / wait / auto‑diagnose on failure)
+ *   - URL map (host rules, path rules)
+ *   - Target HTTPS proxy
+ *   - Forwarding rules
+ *   - HTTP→HTTPS redirect
+ *   - Firewall rules (health‑check & traffic)
+ *   - Cloud DNS records
+ *
+ * All console output is simultaneously written to a timestamped log file.
+ *
+ * =========================================================================
+ * SELF‑HEALING SCENARIOS (what the script fixes automatically)
+ * =========================================================================
+ *
+ * CERTIFICATE
+ *  - No certificate exists → create new versioned cert, wait for ACTIVE, attach.
+ *  - ACTIVE cert covers all domains → reuse it immediately (no downtime).
+ *  - Only PROVISIONING / FAILED certs exist → delete failed, create new version,
+ *    wait for ACTIVE (up to 60 min), retry 3 times on failure.
+ *  - ACTIVE cert exists but misses domains → create new cert with all domains,
+ *    wait for ACTIVE, attach.
+ *  - Multiple ACTIVE certs → attach the highest‑version one, delete unused.
+ *  - New cert becomes FAILED_NOT_VISIBLE / FAILED → delete immediately, retry.
+ *    After final failure, automatically display detailed domain status.
+ *  - Script runs again while a cert is still PROVISIONING → recognise it,
+ *    wait for ACTIVE, attach only when ready.
+ *
+ * BACKEND SERVICES
+ *  - Missing → create with HTTP protocol and correct named port.
+ *  - Protocol is HTTPS → update to HTTP.
+ *  - Named port is wrong → correct it.
+ *
+ * HEALTH CHECKS
+ *  - Missing → create with correct request path (/prefix/ or /).
+ *  - Request path wrong → update to correct path.
+ *
+ * URL MAP
+ *  - Missing → create with default backend + all host/path rules.
+ *  - Host rule for a subdomain missing → add it.
+ *  - Bare‑domain host rule missing → create it with correct default + all
+ *    exact and wildcard path rules.
+ *  - Path rules incomplete or missing → remove and recreate host rule.
+ *
+ * FIREWALL RULES
+ *  - Health‑check rule missing → create with restricted source ranges.
+ *  - Health‑check rule port list outdated → update.
+ *  - Traffic rule (all sources) missing → create with 0.0.0.0/0.
+ *  - Traffic rule port list outdated → update.
+ *
+ * DNS RECORDS
+ *  - Missing A records for domain / subdomains → create.
+ *  - Existing A records pointing to wrong IP → update.
+ *
+ * The script NEVER deletes the URL map or proxies unless the user explicitly
+ * confirms when the load balancer already exists.
+ * It NEVER leaves the proxy without a valid certificate.
+ *
+ * =========================================================================
  */
 
 const { execSync } = require('child_process');
@@ -50,14 +113,13 @@ console.error = function(...args) {
 // ----- Load Configuration -----
 const appName = process.argv[2];
 if (!appName) {
-  console.error('\x1b[31mERROR: Missing app name argument (e.g., humrine, badminton)\x1b[0m');
+  console.error('\x1b[31mERROR: Missing app name argument (e.g., humrine_site)\x1b[0m');
   process.exit(1);
 }
 
 const configPath = path.join(__dirname, 'loadbalancer.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
-// Interpolate environment variables in config (recursively)
 function interpolate(obj) {
   for (const key in obj) {
     const val = obj[key];
@@ -95,7 +157,6 @@ if (!PROJECT_ID || !GCP_ZONE || !GCP_VM_NAME) {
   process.exit(1);
 }
 
-// Default backend (last one in the array)
 const DEFAULT_BACKEND = conf.backends[conf.backends.length - 1].name;
 
 // ----- Helpers -----
@@ -129,8 +190,7 @@ function sleep(ms) {
   while (Date.now() < end);
 }
 
-// Interactive prompt
-function ask(question) {
+async function ask(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise(resolve => {
     rl.question(`\x1b[33m${question}\x1b[0m`, answer => {
@@ -148,28 +208,6 @@ function getAttachedCerts(proxyName) {
   );
   if (!output) return [];
   return output.split(';').map(url => url.split('/').pop());
-}
-
-function getVersionedCertName() {
-  const base = conf.certName;
-  const attached = getAttachedCerts(conf.httpsProxyName);
-  let maxVersion = 0;
-  attached.forEach(certName => {
-    if (certName.startsWith(base + '-v')) {
-      const ver = parseInt(certName.split('-v')[1], 10);
-      if (!isNaN(ver) && ver > maxVersion) maxVersion = ver;
-    } else if (certName === base) {
-      maxVersion = Math.max(maxVersion, 1);
-    }
-  });
-  return base + '-v' + (maxVersion + 1);
-}
-
-function updateProxyCertificates(proxyName, certNames) {
-  if (!resourceExists('target-https-proxies', proxyName, '--global')) return;
-  const certList = certNames.join(',');
-  log(`Updating HTTPS proxy ${proxyName} to use certificates: ${certList}...`);
-  run(`gcloud compute target-https-proxies update ${proxyName} --project=${PROJECT_ID} --global --ssl-certificates=${certList}`);
 }
 
 function getActiveCertCoveringDomains(requiredDomains) {
@@ -191,39 +229,86 @@ function getActiveCertCoveringDomains(requiredDomains) {
   return null;
 }
 
-function attachCertToProxy(certName) {
-  if (!resourceExists('target-https-proxies', conf.httpsProxyName, '--global')) return;
-  if (!certName) {
-    log('No valid certificate to attach – keeping current proxy certificate.', '\x1b[33m');
-    return;
-  }
-  updateProxyCertificates(conf.httpsProxyName, [certName]);
+function updateProxyCertificates(proxyName, certNames) {
+  if (!resourceExists('target-https-proxies', proxyName, '--global')) return;
+  const certList = certNames.join(',');
+  log(`Updating HTTPS proxy ${proxyName} to use certificates: ${certList}...`);
+  run(`gcloud compute target-https-proxies update ${proxyName} --project=${PROJECT_ID} --global --ssl-certificates=${certList}`);
 }
 
-// ----- Wait for a certificate to become ACTIVE (or fail) -----
+function showCertDomainStatus(certName) {
+  try {
+    const details = JSON.parse(execSync(
+      `gcloud compute ssl-certificates describe ${certName} --global --project=${PROJECT_ID} --format="json"`,
+      { encoding: 'utf8', stdio: 'pipe' }
+    ));
+    if (details.managed && details.managed.domainStatus) {
+      console.log(`\n\x1b[36mDetailed domain status for ${certName}:\x1b[0m`);
+      for (const [domain, status] of Object.entries(details.managed.domainStatus)) {
+        let color = '\x1b[32m';
+        if (status === 'PROVISIONING') color = '\x1b[33m';
+        if (status.startsWith('FAILED')) color = '\x1b[31m';
+        console.log(`  ${domain}: ${color}${status}\x1b[0m`);
+      }
+    }
+  } catch (e) {
+    log('Could not retrieve domain status.', '\x1b[31m');
+  }
+}
+
 function waitForCertActive(certName, maxWaitMinutes = 60) {
   const deadline = Date.now() + maxWaitMinutes * 60 * 1000;
   let lastStatus = null;
+  log(`Waiting for ${certName} to become ACTIVE (checking every 15s, up to ${maxWaitMinutes} min)...`);
   while (Date.now() < deadline) {
     const status = run(
       `gcloud compute ssl-certificates describe ${certName} --global --project=${PROJECT_ID} --format="value(managed.status)"`,
       { silent: true, ignoreError: true }
     );
     if (status === 'ACTIVE') return true;
-    if (status && status !== 'PROVISIONING' && status !== lastStatus) {
+    if (status && status !== lastStatus) {
       log(`Certificate ${certName} status: ${status}`, '\x1b[33m');
       lastStatus = status;
     }
     if (status && status.includes('FAILED')) {
       log(`Certificate ${certName} provisioning failed: ${status}`, '\x1b[31m');
+      showCertDomainStatus(certName);
       return false;
     }
-    sleep(15000);   // check every 15 seconds
+    process.stdout.write(`\r[${elapsed()}] Waiting... (${status || 'unknown'})   `);
+    sleep(15000);
   }
+  log(`\nCertificate ${certName} did not become ACTIVE within the timeout.`, '\x1b[31m');
+  showCertDomainStatus(certName);
   return false;
 }
 
-// ----- Step 5: SSL Certificate (versioned, with automatic waiting) -----
+function deleteCertIfExists(certName) {
+  if (resourceExists('ssl-certificates', certName, '--global')) {
+    log(`Deleting certificate ${certName}...`);
+    run(`gcloud compute ssl-certificates delete ${certName} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
+  }
+}
+
+function getHighestVersion() {
+  const output = run(
+    `gcloud compute ssl-certificates list --global --project=${PROJECT_ID} --format="value(name)"`,
+    { silent: true, ignoreError: true }
+  );
+  if (!output) return 0;
+  const base = conf.certName;
+  let maxVer = 0;
+  output.split('\n').forEach(name => {
+    if (name === base) maxVer = Math.max(maxVer, 1);
+    else if (name.startsWith(base + '-v')) {
+      const ver = parseInt(name.split('-v')[1], 10);
+      if (!isNaN(ver) && ver > maxVer) maxVer = ver;
+    }
+  });
+  return maxVer;
+}
+
+// ----- Step 5: SSL Certificate (versioned, with automatic waiting and diagnostics) -----
 function createVersionedCert() {
   log('Step 5: Ensuring multi-domain SSL certificate exists (versioned)...', '\x1b[33m');
 
@@ -240,31 +325,32 @@ function createVersionedCert() {
     return existingActiveCert;
   }
 
-  // Create a new versioned certificate
-  const newCertName = getVersionedCertName();
-  log(`Will create new certificate: ${newCertName}`);
+  // No valid ACTIVE cert – create a new one, with retries
+  let newCertName = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const versionedName = conf.certName + '-v' + (getHighestVersion() + 1);
+    log(`Attempt ${attempt}: creating ${versionedName}...`);
 
-  if (resourceExists('ssl-certificates', newCertName, '--global')) {
-    log(`Certificate ${newCertName} already exists.`, '\x1b[32m');
-  } else {
-    log(`Creating Google-managed certificate ${newCertName} for domains: ${domainList.join(',')}...`);
-    run(`gcloud compute ssl-certificates create ${newCertName} --project=${PROJECT_ID} --domains=${domainList.join(',')} --global`);
-    if (!resourceExists('ssl-certificates', newCertName, '--global')) {
-      throw new Error(`Failed to create SSL certificate ${newCertName}.`);
+    deleteCertIfExists(versionedName);
+
+    run(`gcloud compute ssl-certificates create ${versionedName} --project=${PROJECT_ID} --domains=${domainList.join(',')} --global`, { stdio: 'inherit' });
+    log(`Waiting for ${versionedName} to become ACTIVE...`);
+    const ready = waitForCertActive(versionedName, 60);
+    if (ready) {
+      newCertName = versionedName;
+      break;
+    } else {
+      log(`Certificate ${versionedName} failed or timed out. Deleting and retrying...`, '\x1b[31m');
+      deleteCertIfExists(versionedName);
     }
-    log(`Certificate ${newCertName} created.`, '\x1b[33m');
   }
 
-  // Wait for the certificate to become ACTIVE before returning it
-  log(`Waiting for ${newCertName} to become ACTIVE (this may take 30-60 minutes)...`, '\x1b[33m');
-  const certReady = waitForCertActive(newCertName);
-  if (!certReady) {
-    log(`Certificate ${newCertName} did not become ACTIVE within the timeout. You may need to check DNS or recreate it.`, '\x1b[31m');
-    // Don't fail – the old certificate is still attached
+  if (!newCertName) {
+    log('ERROR: Could not provision a new certificate after 3 attempts. The load balancer will keep its current certificate.', '\x1b[31m');
     return null;
   }
 
-  log(`Certificate ${newCertName} is ACTIVE.`, '\x1b[32m');
+  log(`New certificate ${newCertName} is ACTIVE.`, '\x1b[32m');
   return newCertName;
 }
 
@@ -398,106 +484,56 @@ function ensureStaticIP() {
 // ----- Recreate confirmation -----
 async function confirmRecreateLoadBalancer() {
   const lbExists = resourceExists('url-maps', conf.lbName, '--global');
-  if (!lbExists) return;
+  if (!lbExists) return true;   // nothing to delete, proceed
 
   log('\n⚠️  The load balancer "' + conf.lbName + '" already exists.');
   log('Recreating it will delete all routing rules and rebuild them from the JSON config.');
-  log('Any manually added rules will be lost.');
   const answer = await ask('Do you want to delete and recreate the load balancer? (y/N): ');
-
-  if (answer !== 'y') {
-    log('Skipping load balancer recreation. Existing configuration preserved.', '\x1b[33m');
-    throw new Error('SKIP_LB_RECREATE');
-  }
-
-  log('Deleting existing forwarding rules...');
-  run(`gcloud compute forwarding-rules delete ${conf.httpsFwdRule} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
-  run(`gcloud compute forwarding-rules delete ${conf.httpFwdRule} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
-
-  log('Deleting HTTPS and HTTP proxies...');
-  run(`gcloud compute target-https-proxies delete ${conf.httpsProxyName} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
-  run(`gcloud compute target-http-proxies delete ${conf.httpProxyName} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
-
-  log('Deleting URL map...');
-  run(`gcloud compute url-maps delete ${conf.lbName} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
+  return answer === 'y';
 }
 
-// ----- Step 6: URL Map (host & path rules) -----
+// ----- Step 6: URL Map (host & path rules) – corrected refresh logic -----
 function ensureURLMap() {
   log('Step 6: Ensuring URL map exists with host and path rules...', '\x1b[33m');
 
-  if (resourceExists('url-maps', conf.lbName, '--global')) {
-    log('URL map ' + conf.lbName + ' already exists. Updating rules...');
-    updateURLMapRules();
+  if (!resourceExists('url-maps', conf.lbName, '--global')) {
+    log(`Creating URL map ${conf.lbName}...`);
+    run(`gcloud compute url-maps create ${conf.lbName} --project=${PROJECT_ID} --default-service=${DEFAULT_BACKEND} --global`);
+    addAllHostAndPathRules();
     return;
   }
 
-  log('Creating URL map ' + conf.lbName + ' (default → ' + DEFAULT_BACKEND + ')...');
-  run('gcloud compute url-maps create ' + conf.lbName + ' --project=' + PROJECT_ID + ' --default-service=' + DEFAULT_BACKEND + ' --global');
+  // URL map exists – fetch existing hosts via JSON (reliable)
+  let existingHosts = [];
+  try {
+    const json = execSync(
+      `gcloud compute url-maps describe ${conf.lbName} --project=${PROJECT_ID} --global --format="json"`,
+      { encoding: 'utf8', stdio: 'pipe' }
+    );
+    const urlMap = JSON.parse(json);
+    if (urlMap.hostRules) {
+      urlMap.hostRules.forEach(rule => {
+        if (rule.hosts) existingHosts.push(...rule.hosts);
+      });
+    }
+  } catch (e) {
+    log('Warning: Could not read existing host rules. Proceeding to add all rules (duplicates will be ignored).', '\x1b[33m');
+  }
 
-  // 1. Add host rules for subdomain‑based backends (without pathPrefix)
+  log(`Existing hosts: ${existingHosts.join(', ') || '(none)'}`);
+
+  // Subdomain‑based backends
   const hostBackends = conf.backends.filter(b => b.host && !b.pathPrefix);
   for (const b of hostBackends) {
-    log('Adding host rule: ' + b.host + ' → ' + b.name + '...');
-    run([
-      'gcloud compute url-maps add-path-matcher ' + conf.lbName,
-      '--project=' + PROJECT_ID,
-      '--path-matcher-name=' + b.pathMatcher,
-      '--default-service=' + b.name,
-      '--new-hosts=' + b.host,
-      '--global',
-    ].join(' '));
-  }
-
-  // 2. For each unique bare domain used in path‑based backends, create ONE host rule
-  const pathBackends = conf.backends.filter(b => b.host && b.pathPrefix);
-  const bareHosts = [...new Set(pathBackends.map(b => b.host))];
-  for (const bareHost of bareHosts) {
-    const matcherName = bareHost.replace(/\./g, '-') + '-default';
-
-    // Build path rules: for each backend, add both exact path and wildcard
-    const rules = [];
-    pathBackends.filter(b => b.host === bareHost).forEach(b => {
-      rules.push(b.pathPrefix + '=' + b.name);
-      rules.push(b.pathPrefix + '/*=' + b.name);
-    });
-    const pathsForThisHost = rules.join(',');
-
-    log(`Creating host rule for ${bareHost} with default → ${DEFAULT_BACKEND} and paths ${pathsForThisHost}...`);
-    run('gcloud compute url-maps remove-path-matcher ' + conf.lbName + ' --project=' + PROJECT_ID + ' --path-matcher-name=' + matcherName + ' --global', { silent: true, ignoreError: true });
-    run([
-      'gcloud compute url-maps add-path-matcher ' + conf.lbName,
-      '--project=' + PROJECT_ID,
-      '--path-matcher-name=' + matcherName,
-      '--default-service=' + DEFAULT_BACKEND,
-      '--new-hosts=' + bareHost,
-      '--path-rules=' + pathsForThisHost,
-      '--delete-orphaned-path-matcher',
-      '--global',
-    ].join(' '));
-  }
-
-  log('URL map configured.', '\x1b[32m');
-}
-
-function updateURLMapRules() {
-  // 1. Ensure host rules for subdomain‑based backends
-  for (const b of conf.backends) {
-    if (b.host && !b.pathPrefix) {
-      log(`Ensuring host rule: ${b.host} → ${b.name}...`);
-      run('gcloud compute url-maps remove-path-matcher ' + conf.lbName + ' --project=' + PROJECT_ID + ' --path-matcher-name=' + b.pathMatcher + ' --global', { silent: true, ignoreError: true });
-      run([
-        'gcloud compute url-maps add-path-matcher ' + conf.lbName,
-        '--project=' + PROJECT_ID,
-        '--path-matcher-name=' + b.pathMatcher,
-        '--default-service=' + b.name,
-        '--new-hosts=' + b.host,
-        '--global',
-      ].join(' '));
+    if (!existingHosts.includes(b.host)) {
+      log(`Adding missing host rule: ${b.host} → ${b.name}...`);
+      run(`gcloud compute url-maps add-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${b.pathMatcher} --default-service=${b.name} --new-hosts=${b.host} --global`);
+    } else {
+      log(`Host rule for ${b.host} already exists.`, '\x1b[32m');
     }
   }
 
-  // 2. For each unique bare domain, recreate the host rule with the correct default + all path rules
+  // Path‑based backends – for existing hosts, remove and recreate the host rule
   const pathBackends = conf.backends.filter(b => b.host && b.pathPrefix);
   const bareHosts = [...new Set(pathBackends.map(b => b.host))];
   for (const bareHost of bareHosts) {
@@ -509,18 +545,38 @@ function updateURLMapRules() {
     });
     const pathsForThisHost = rules.join(',');
 
-    log(`Ensuring host rule for ${bareHost} with default → ${DEFAULT_BACKEND} and paths ${pathsForThisHost}...`);
-    run('gcloud compute url-maps remove-path-matcher ' + conf.lbName + ' --project=' + PROJECT_ID + ' --path-matcher-name=' + matcherName + ' --global', { silent: true, ignoreError: true });
-    run([
-      'gcloud compute url-maps add-path-matcher ' + conf.lbName,
-      '--project=' + PROJECT_ID,
-      '--path-matcher-name=' + matcherName,
-      '--default-service=' + DEFAULT_BACKEND,
-      '--new-hosts=' + bareHost,
-      '--path-rules=' + pathsForThisHost,
-      '--delete-orphaned-path-matcher',
-      '--global',
-    ].join(' '));
+    if (!existingHosts.includes(bareHost)) {
+      log(`Creating host rule for ${bareHost} with default → ${DEFAULT_BACKEND} and paths ${pathsForThisHost}...`);
+      run(`gcloud compute url-maps add-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${matcherName} --default-service=${DEFAULT_BACKEND} --new-hosts=${bareHost} --path-rules=${pathsForThisHost} --delete-orphaned-path-matcher --global`);
+    } else {
+      // Host exists – remove the existing matcher (which deletes the host rule) and recreate with new rules
+      log(`Refreshing path rules for ${bareHost}...`);
+      run(`gcloud compute url-maps remove-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${matcherName} --global --quiet`, { silent: true, ignoreError: true });
+      run(`gcloud compute url-maps add-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${matcherName} --default-service=${DEFAULT_BACKEND} --new-hosts=${bareHost} --path-rules=${pathsForThisHost} --delete-orphaned-path-matcher --global`);
+    }
+  }
+
+  log('URL map updated.', '\x1b[32m');
+}
+
+function addAllHostAndPathRules() {
+  const hostBackends = conf.backends.filter(b => b.host && !b.pathPrefix);
+  for (const b of hostBackends) {
+    log(`Adding host rule: ${b.host} → ${b.name}...`);
+    run(`gcloud compute url-maps add-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${b.pathMatcher} --default-service=${b.name} --new-hosts=${b.host} --global`);
+  }
+  const pathBackends = conf.backends.filter(b => b.host && b.pathPrefix);
+  const bareHosts = [...new Set(pathBackends.map(b => b.host))];
+  for (const bareHost of bareHosts) {
+    const matcherName = bareHost.replace(/\./g, '-') + '-default';
+    const rules = [];
+    pathBackends.filter(b => b.host === bareHost).forEach(b => {
+      rules.push(b.pathPrefix + '=' + b.name);
+      rules.push(b.pathPrefix + '/*=' + b.name);
+    });
+    const pathsForThisHost = rules.join(',');
+    log(`Creating host rule for ${bareHost} with default → ${DEFAULT_BACKEND} and paths ${pathsForThisHost}...`);
+    run(`gcloud compute url-maps add-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${matcherName} --default-service=${DEFAULT_BACKEND} --new-hosts=${bareHost} --path-rules=${pathsForThisHost} --delete-orphaned-path-matcher --global`);
   }
 }
 
@@ -528,13 +584,15 @@ function updateURLMapRules() {
 function ensureHTTPSProxy(certNameToUse) {
   log('Step 7: Ensuring HTTPS proxy exists...', '\x1b[33m');
 
-  // Fallback to base cert name if no valid cert provided (should rarely happen)
   const cert = certNameToUse || conf.certName;
 
   if (resourceExists('target-https-proxies', conf.httpsProxyName, '--global')) {
     log('HTTPS proxy ' + conf.httpsProxyName + ' already exists.', '\x1b[32m');
     if (certNameToUse) {
-      updateProxyCertificates(conf.httpsProxyName, [cert]);
+      const attached = getAttachedCerts(conf.httpsProxyName);
+      if (!attached.includes(cert)) {
+        updateProxyCertificates(conf.httpsProxyName, [cert]);
+      }
     }
   } else {
     log('Creating HTTPS proxy ' + conf.httpsProxyName + '...');
@@ -616,21 +674,20 @@ function ensureHTTPRedirect() {
 function ensureFirewallRules() {
   log('Step 10: Ensuring firewall rules for LB health checks and traffic...', '\x1b[33m');
   const ports = conf.backends.map(b => b.port);
-
-  // Health check rule (restricted source ranges)
-  const hcRule = conf.fwRuleName;
   const rawRules = run(
     'gcloud compute firewall-rules list --project=' + PROJECT_ID + ' --format="value(name)"',
     { silent: true }
   ) || '';
   const existing = new Set(rawRules.split('\n').map(r => r.trim()));
+
+  // Health check rule (restricted source ranges)
+  const hcRule = conf.fwRuleName;
+  const hcPorts = ports.map(p => `tcp:${p}`).join(',');
   if (existing.has(hcRule)) {
     log(`Firewall rule ${hcRule} already exists – updating ports if necessary...`);
-    const hcPorts = ports.map(p => `tcp:${p}`).join(',');
     run(`gcloud compute firewall-rules update ${hcRule} --project=${PROJECT_ID} --rules=${hcPorts}`, { silent: true, ignoreError: true });
   } else {
     log(`Creating firewall rule ${hcRule}...`);
-    const hcPorts = ports.map(p => `tcp:${p}`).join(',');
     run([
       'gcloud compute firewall-rules create ' + hcRule,
       '--project=' + PROJECT_ID,
@@ -648,13 +705,12 @@ function ensureFirewallRules() {
 
   // Traffic rule for actual load‑balancer forwarding (all sources)
   const trafficRuleName = `${conf.fwRuleName}-traffic`;
+  const trafficPorts = ports.map(p => `tcp:${p}`).join(',');
   if (existing.has(trafficRuleName)) {
     log(`Firewall rule ${trafficRuleName} already exists – updating ports if necessary...`);
-    const trafficPorts = ports.map(p => `tcp:${p}`).join(',');
     run(`gcloud compute firewall-rules update ${trafficRuleName} --project=${PROJECT_ID} --rules=${trafficPorts}`, { silent: true, ignoreError: true });
   } else {
     log(`Creating firewall rule ${trafficRuleName} (allow all sources)...`);
-    const trafficPorts = ports.map(p => `tcp:${p}`).join(',');
     run([
       'gcloud compute firewall-rules create ' + trafficRuleName,
       '--project=' + PROJECT_ID,
@@ -722,24 +778,20 @@ async function main() {
 
   const newCertName = createVersionedCert();
 
-  try {
-    await confirmRecreateLoadBalancer();
-    ensureURLMap();
-    ensureHTTPSProxy(newCertName);
-    ensureHTTPSForwardingRule();
-  } catch (err) {
-    if (err.message === 'SKIP_LB_RECREATE') {
-      log('Load balancer components (URL map, proxy, forwarding rules) were NOT modified.', '\x1b[33m');
-      attachCertToProxy(newCertName);
-    } else {
-      throw err;
-    }
+  const shouldRebuild = await confirmRecreateLoadBalancer();
+  if (shouldRebuild) {
+    // Only delete the load balancer if the user explicitly confirms
+    log('Rebuilding load balancer components...');
+    run(`gcloud compute forwarding-rules delete ${conf.httpsFwdRule} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
+    run(`gcloud compute forwarding-rules delete ${conf.httpFwdRule} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
+    run(`gcloud compute target-https-proxies delete ${conf.httpsProxyName} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
+    run(`gcloud compute target-http-proxies delete ${conf.httpProxyName} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
+    run(`gcloud compute url-maps delete ${conf.lbName} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
   }
 
-  if (resourceExists('target-https-proxies', conf.httpsProxyName, '--global')) {
-    attachCertToProxy(newCertName);
-  }
-
+  ensureURLMap();
+  ensureHTTPSProxy(newCertName);
+  ensureHTTPSForwardingRule();
   ensureHTTPRedirect();
   ensureFirewallRules();
   ensureDNSRecords(lbIP);

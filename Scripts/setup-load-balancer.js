@@ -18,7 +18,7 @@ const path = require('path');
 const readline = require('readline');
 
 // ------------------------------------------------------------------
-// Log file: setup-load-balancer-YYYY-MMM-DD-hh-mm.log in the Scripts folder
+// Log file
 // ------------------------------------------------------------------
 const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const now = new Date();
@@ -30,10 +30,8 @@ const minLog = String(now.getMinutes()).padStart(2,'0');
 const logFileName = `setup-load-balancer-${yyyy}-${mmm}-${dd}-${hhLog}-${minLog}.log`;
 const logFilePath = path.join(__dirname, logFileName);
 
-// Open log stream (append mode)
 const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
 
-// Override console.log to also write to log file
 const originalConsoleLog = console.log;
 console.log = function(...args) {
   const message = args.map(String).join(' ');
@@ -41,7 +39,6 @@ console.log = function(...args) {
   logStream.write(message + '\n');
 };
 
-// Also capture console.error (for command failures, etc.)
 const originalConsoleError = console.error;
 console.error = function(...args) {
   const message = args.map(String).join(' ');
@@ -60,7 +57,6 @@ if (!appName) {
 const configPath = path.join(__dirname, 'loadbalancer.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
-// Interpolate environment variables in config (recursively)
 function interpolate(obj) {
   for (const key in obj) {
     const val = obj[key];
@@ -98,7 +94,6 @@ if (!PROJECT_ID || !GCP_ZONE || !GCP_VM_NAME) {
   process.exit(1);
 }
 
-// Default backend (last one in the array)
 const DEFAULT_BACKEND = conf.backends[conf.backends.length - 1].name;
 
 // ----- Helpers -----
@@ -132,7 +127,6 @@ function sleep(ms) {
   while (Date.now() < end);
 }
 
-// Interactive prompt
 function ask(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise(resolve => {
@@ -153,10 +147,6 @@ function getAttachedCerts(proxyName) {
   return output.split(';').map(url => url.split('/').pop());
 }
 
-// ----- New certificate versioning -----
-// We'll use a versioned certificate name to avoid deletion conflicts.
-// The actual certificate name is stored in conf.certName. We'll create
-// a new one with "-v<N>" appended. The proxy will be updated to use that.
 function getVersionedCertName() {
   const base = conf.certName;
   const attached = getAttachedCerts(conf.httpsProxyName);
@@ -222,7 +212,6 @@ function createVersionedCert() {
   const newCertName = getVersionedCertName();
   log(`Will create new certificate: ${newCertName}`);
 
-  // Check if the exact certificate already exists (unlikely but safe)
   if (resourceExists('ssl-certificates', newCertName, '--global')) {
     log(`Certificate ${newCertName} already exists.`, '\x1b[32m');
   } else {
@@ -262,26 +251,66 @@ function ensureInstanceGroup() {
   log('Named ports configured.', '\x1b[32m');
 }
 
+// ----- Helper to read current health check request path -----
+function getHealthCheckRequestPath(healthCheckName) {
+  const path = run(
+    `gcloud compute health-checks describe ${healthCheckName} --global --project=${PROJECT_ID} --format="value(httpHealthCheck.requestPath)"`,
+    { silent: true, ignoreError: true }
+  );
+  return path ? path.trim() : null;
+}
+
 // ----- Step 2: Health Checks (HTTP) -----
 function ensureHealthChecks() {
-  log('Step 2: Ensuring health checks exist...', '\x1b[33m');
+  log('Step 2: Ensuring health checks exist with correct request paths...', '\x1b[33m');
+
   for (const b of conf.backends) {
+    const healthPath = b.pathPrefix ? (b.pathPrefix + '/') : '/';
+
     if (resourceExists('health-checks', b.healthCheck, '--global')) {
-      log('Health check ' + b.healthCheck + ' already exists.', '\x1b[32m');
+      const currentPath = getHealthCheckRequestPath(b.healthCheck);
+      if (currentPath !== healthPath) {
+        log(`Updating health check ${b.healthCheck} request path from ${currentPath} to ${healthPath}...`);
+        run(`gcloud compute health-checks update http ${b.healthCheck} --global --project=${PROJECT_ID} --request-path=${healthPath}`, { stdio: 'inherit' });
+      } else {
+        log(`Health check ${b.healthCheck} already exists with correct path.`, '\x1b[32m');
+      }
     } else {
-      log('Creating health check ' + b.healthCheck + ' (HTTP port ' + b.port + ')...');
-      run('gcloud compute health-checks create http ' + b.healthCheck + ' --project=' + PROJECT_ID + ' --port=' + b.port + ' --request-path=/ --global');
-      log('Health check ' + b.healthCheck + ' created.', '\x1b[32m');
+      log(`Creating health check ${b.healthCheck} (HTTP port ${b.port}, path ${healthPath})...`);
+      run(`gcloud compute health-checks create http ${b.healthCheck} --project=${PROJECT_ID} --port=${b.port} --request-path=${healthPath} --global`);
+      log(`Health check ${b.healthCheck} created.`, '\x1b[32m');
     }
   }
 }
 
 // ----- Step 3: Backend Services (HTTP) -----
 function ensureBackendServices() {
-  log('Step 3: Ensuring backend services exist...', '\x1b[33m');
+  log('Step 3: Ensuring backend services exist with correct protocol and port...', '\x1b[33m');
   for (const b of conf.backends) {
     if (resourceExists('backend-services', b.name, '--global')) {
-      log('Backend service ' + b.name + ' already exists.', '\x1b[32m');
+      const info = run(
+        `gcloud compute backend-services describe ${b.name} --global --project=${PROJECT_ID} --format="value(protocol,portName)"`,
+        { silent: true, ignoreError: true }
+      );
+      if (info) {
+        const [currentProtocol, currentPort] = info.split('\t');
+        let needsUpdate = false;
+        const updateArgs = [];
+        if (currentProtocol !== 'HTTP') {
+          updateArgs.push('--protocol=HTTP');
+          needsUpdate = true;
+        }
+        if (currentPort !== b.namedPort) {
+          updateArgs.push(`--port-name=${b.namedPort}`);
+          needsUpdate = true;
+        }
+        if (needsUpdate) {
+          log(`Updating backend service ${b.name} (protocol ${currentProtocol}→HTTP, port ${currentPort}→${b.namedPort})...`);
+          run(`gcloud compute backend-services update ${b.name} --global --project=${PROJECT_ID} ${updateArgs.join(' ')}`);
+        } else {
+          log(`Backend service ${b.name} already correct.`, '\x1b[32m');
+        }
+      }
     } else {
       log('Creating backend service ' + b.name + '...');
       run([
@@ -364,7 +393,6 @@ function ensureURLMap() {
     return;
   }
 
-  // Create new URL map with default backend (last backend in JSON)
   log('Creating URL map ' + conf.lbName + ' (default → ' + DEFAULT_BACKEND + ')...');
   run('gcloud compute url-maps create ' + conf.lbName + ' --project=' + PROJECT_ID + ' --default-service=' + DEFAULT_BACKEND + ' --global');
 
@@ -388,10 +416,13 @@ function ensureURLMap() {
   for (const bareHost of bareHosts) {
     const matcherName = bareHost.replace(/\./g, '-') + '-default';
 
-    const pathsForThisHost = pathBackends
-      .filter(b => b.host === bareHost)
-      .map(b => b.pathPrefix + '/*=' + b.name)
-      .join(',');
+    // Build path rules: for each backend, add both exact path and wildcard
+    const rules = [];
+    pathBackends.filter(b => b.host === bareHost).forEach(b => {
+      rules.push(b.pathPrefix + '=' + b.name);
+      rules.push(b.pathPrefix + '/*=' + b.name);
+    });
+    const pathsForThisHost = rules.join(',');
 
     log(`Creating host rule for ${bareHost} with default → ${DEFAULT_BACKEND} and paths ${pathsForThisHost}...`);
     run('gcloud compute url-maps remove-path-matcher ' + conf.lbName + ' --project=' + PROJECT_ID + ' --path-matcher-name=' + matcherName + ' --global', { silent: true, ignoreError: true });
@@ -432,10 +463,12 @@ function updateURLMapRules() {
   const bareHosts = [...new Set(pathBackends.map(b => b.host))];
   for (const bareHost of bareHosts) {
     const matcherName = bareHost.replace(/\./g, '-') + '-default';
-    const pathsForThisHost = pathBackends
-      .filter(b => b.host === bareHost)
-      .map(b => b.pathPrefix + '/*=' + b.name)
-      .join(',');
+    const rules = [];
+    pathBackends.filter(b => b.host === bareHost).forEach(b => {
+      rules.push(b.pathPrefix + '=' + b.name);
+      rules.push(b.pathPrefix + '/*=' + b.name);
+    });
+    const pathsForThisHost = rules.join(',');
 
     log(`Ensuring host rule for ${bareHost} with default → ${DEFAULT_BACKEND} and paths ${pathsForThisHost}...`);
     run('gcloud compute url-maps remove-path-matcher ' + conf.lbName + ' --project=' + PROJECT_ID + ' --path-matcher-name=' + matcherName + ' --global', { silent: true, ignoreError: true });
@@ -458,7 +491,6 @@ function ensureHTTPSProxy(certNameToUse) {
 
   if (resourceExists('target-https-proxies', conf.httpsProxyName, '--global')) {
     log('HTTPS proxy ' + conf.httpsProxyName + ' already exists.', '\x1b[32m');
-    // Update it to use the given certificate
     updateProxyCertificates(conf.httpsProxyName, [certNameToUse]);
   } else {
     log('Creating HTTPS proxy ' + conf.httpsProxyName + '...');
@@ -536,21 +568,25 @@ function ensureHTTPRedirect() {
   }
 }
 
-// ----- Step 10: Firewall Rule for Health Checks -----
-function ensureFirewallRule() {
-  log('Step 10: Ensuring firewall rule for LB health checks...', '\x1b[33m');
+// ----- Step 10: Firewall Rules -----
+function ensureFirewallRules() {
+  log('Step 10: Ensuring firewall rules for LB health checks and traffic...', '\x1b[33m');
+  const ports = conf.backends.map(b => b.port).join(',');
+
+  // Health check rule (restricted source ranges)
+  const hcRule = conf.fwRuleName;
   const rawRules = run(
     'gcloud compute firewall-rules list --project=' + PROJECT_ID + ' --format="value(name)"',
     { silent: true }
   ) || '';
   const existing = new Set(rawRules.split('\n').map(r => r.trim()));
-  if (existing.has(conf.fwRuleName)) {
-    log('Firewall rule ' + conf.fwRuleName + ' already exists.', '\x1b[32m');
+  if (existing.has(hcRule)) {
+    log(`Firewall rule ${hcRule} already exists – updating ports if necessary...`);
+    run(`gcloud compute firewall-rules update ${hcRule} --project=${PROJECT_ID} --rules=tcp:${ports}`, { silent: true, ignoreError: true });
   } else {
-    log('Creating firewall rule ' + conf.fwRuleName + '...');
-    const ports = conf.backends.map(b => b.port).join(',');
+    log(`Creating firewall rule ${hcRule}...`);
     run([
-      'gcloud compute firewall-rules create ' + conf.fwRuleName,
+      'gcloud compute firewall-rules create ' + hcRule,
       '--project=' + PROJECT_ID,
       '--direction=INGRESS',
       '--priority=1000',
@@ -561,7 +597,29 @@ function ensureFirewallRule() {
       '--target-tags=gocd-deploy-target',
       '--description="Allow GCP LB health check probes"',
     ].join(' '));
-    log('Firewall rule ' + conf.fwRuleName + ' created.', '\x1b[32m');
+    log(`Firewall rule ${hcRule} created.`, '\x1b[32m');
+  }
+
+  // Traffic rule for actual load‑balancer forwarding (all sources)
+  const trafficRuleName = `${conf.fwRuleName}-traffic`;
+  if (existing.has(trafficRuleName)) {
+    log(`Firewall rule ${trafficRuleName} already exists – updating ports if necessary...`);
+    run(`gcloud compute firewall-rules update ${trafficRuleName} --project=${PROJECT_ID} --rules=tcp:${ports}`, { silent: true, ignoreError: true });
+  } else {
+    log(`Creating firewall rule ${trafficRuleName} (allow all sources)...`);
+    run([
+      'gcloud compute firewall-rules create ' + trafficRuleName,
+      '--project=' + PROJECT_ID,
+      '--direction=INGRESS',
+      '--priority=1000',
+      '--network=default',
+      '--action=ALLOW',
+      '--rules=tcp:' + ports,
+      '--source-ranges=0.0.0.0/0',
+      '--target-tags=gocd-deploy-target',
+      '--description="Allow load balancer forwarding traffic"',
+    ].join(' '));
+    log(`Firewall rule ${trafficRuleName} created.`, '\x1b[32m');
   }
 }
 
@@ -614,31 +672,28 @@ async function main() {
   ensureBackendServices();
   const lbIP = ensureStaticIP();
 
-  // Create the new versioned certificate (does NOT attach to proxy yet)
-  const newCertName = createVersionedCert();   // <-- returns the cert name
+  const newCertName = createVersionedCert();
 
   try {
     await confirmRecreateLoadBalancer();
     ensureURLMap();
-    ensureHTTPSProxy(newCertName);             // <-- pass the versioned cert name
+    ensureHTTPSProxy(newCertName);
     ensureHTTPSForwardingRule();
   } catch (err) {
     if (err.message === 'SKIP_LB_RECREATE') {
       log('Load balancer components (URL map, proxy, forwarding rules) were NOT modified.', '\x1b[33m');
-      // Even if LB not recreated, still update the proxy to the latest cert
       attachCertToProxy(newCertName);
     } else {
       throw err;
     }
   }
 
-  // If the proxy already existed and wasn't recreated, attach the new cert now
   if (resourceExists('target-https-proxies', conf.httpsProxyName, '--global')) {
     attachCertToProxy(newCertName);
   }
 
   ensureHTTPRedirect();
-  ensureFirewallRule();
+  ensureFirewallRules();
   ensureDNSRecords(lbIP);
 
   console.log('\n\x1b[32m========================================\x1b[0m');

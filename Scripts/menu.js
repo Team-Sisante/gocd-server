@@ -188,6 +188,7 @@ async function showMenu() {
             console.log('   6.32. List SSL certificates (global)');
             console.log('   6.33. Delete SSL certificate(s)');         
             console.log('   6.34. Monitor certificate status');   
+            console.log('   6.35. Show active certificate on HTTPS proxy');
             console.log('\n\x1b[36m0. Exit\x1b[0m\n');
 
             const choice = await ask('Select an option: ');
@@ -287,7 +288,11 @@ async function showMenu() {
                 case '6.34':
                     const monitorCert = require('./menu/monitorCert');
                     await monitorCert(ctx);
-                    break;                    
+                    break;          
+                case '6.35':
+                    const activeProxyCert = require('./menu/activeProxyCert');
+                    await activeProxyCert(ctx);
+                    break;                              
                 case '0':
                     rl.close();
                     process.exit(0);

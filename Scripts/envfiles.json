@@ -1,5 +1,7 @@
 [
     ".env.common", 
+    ".env.common.safe", 
+    ".env.common.template", 
     ".env.dev",
     ".env.docker", 
     ".env.staging", 

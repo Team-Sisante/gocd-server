@@ -72,7 +72,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /humrine_site/Scripts/deploy.js staging __GITHUB_TOKEN__</arg>
+                <arg>node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -82,7 +82,7 @@
 
     <pipeline name="humrine_site-production">
       <materials>
-        <pipeline pipelineName="humrine_site-staging" stageName="build_and_push" />
+        <pipeline pipelineName="humrine_site-artifacts" stageName="build_and_push" />
       </materials>
       <stage name="deploy_production">
         <approval type="manual" />
@@ -95,7 +95,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /humrine_site/Scripts/deploy.js production __GITHUB_TOKEN__</arg>
+                <arg>node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -103,6 +103,7 @@
       </stage>
     </pipeline>
   </pipelines>
+
   <pipelines group="badminton_court_group">
     <pipeline name="badminton_court-artifacts">
       <materials>
@@ -145,7 +146,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /badminton_court/Scripts/deploy.js staging __GITHUB_TOKEN__</arg>
+                <arg>node /gocd-server/Scripts/deploy.js badminton_court staging __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -155,7 +156,7 @@
 
     <pipeline name="badminton_court-production">
       <materials>
-        <pipeline pipelineName="badminton_court-staging" stageName="build_and_push" />
+        <pipeline pipelineName="badminton_court-artifacts" stageName="build_and_push" />
       </materials>
       <stage name="deploy_production">
         <approval type="manual" />
@@ -168,7 +169,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /badminton_court/Scripts/deploy.js production __GITHUB_TOKEN__</arg>
+                <arg>node /gocd-server/Scripts/deploy.js badminton_court production __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -178,6 +179,7 @@
   </pipelines>
 
   <pipelines group="pay-sol-group">
+    <!-- unchanged -->
     <pipeline name="pay-sol-artifacts">
       <materials>
         <git url="__GIT_REPO_URL_WITH_CREDENTIALS__" branch="master" />
@@ -229,7 +231,7 @@
 
     <pipeline name="pay-sol-production">
       <materials>
-        <pipeline pipelineName="pay-sol-staging" stageName="deploy_staging" />
+        <pipeline pipelineName="pay-sol-artifacts" stageName="build_and_push" />
       </materials>
       <stage name="deploy_production">
         <approval type="manual" />

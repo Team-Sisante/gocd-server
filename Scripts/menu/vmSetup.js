@@ -13,6 +13,7 @@ const sshToVM = require('./sshToVM');
 const containerDiagnostics = require('./containerDiagnostics');
 const sshTunnelGoCD = require('./sshTunnelGoCD');
 const showHostRules = require('./showHostRules');
+const siteDiagnostics = require('./siteDiagnostics');
 
 module.exports = {
     '6.1': async (ctx) => { ctx.sh('node Scripts/create-fresh-vm.js'); await ctx.pause(); },
@@ -101,8 +102,11 @@ module.exports = {
     // 6.25 – Open production app in browser
     '6.25': openProductionApp,
     // Container diagnostics
-    '6.26': async (ctx) => { await containerDiagnostics(ctx, 'staging'); },
-    '6.27': async (ctx) => { await containerDiagnostics(ctx, 'production'); },
+    // Replace:
+    // '6.26': async (ctx) => { await containerDiagnostics(ctx, 'staging'); },
+    // '6.27': async (ctx) => { await containerDiagnostics(ctx, 'production'); },
+    // With:
+    '6.26': async (ctx) => { await siteDiagnostics(ctx); },
     // 6.28 – Enable/Verify Swap Space on VM
     '6.28': async (ctx) => { ctx.sh('node Scripts/enable-swap-on-vm.js'); await ctx.pause(); },
     // 6.29 – SSH tunnel: expose local GoCD via VM

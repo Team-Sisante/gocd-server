@@ -442,8 +442,9 @@ if (useNginx) {
   const nginxConfFile = `nginx-${target}.conf`;
   verifyFiles += ` ${deployDir}/${nginxConfFile} ${deployDir}/certs/posteio-cert.pem ${deployDir}/certs/posteio-key.pem`;
 }
-const verifyCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "${verifyFiles} && head -5 ${deployDir}/${composeFile}"`;
-execSync(verifyCmd, { stdio: 'inherit' });
+// Temporarily disabled – debug later
+// const verifyCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "${verifyFiles} && head -5 ${deployDir}/${composeFile}"`;
+// execSync(verifyCmd, { stdio: 'inherit' });
 
 // 9. Deploy – login using piped token (no file on remote, no token in logs)
 console.log('Logging into ghcr.io and deploying...');

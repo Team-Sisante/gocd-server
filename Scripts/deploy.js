@@ -158,9 +158,6 @@ if (!cfg) {
 const projectName = `${appConf.projectPrefix}-${cfg.env}`;
 const composeFile = 'docker-compose.vm.yml';
 
-// Change to the app’s working directory (mounted by GoCD)
-process.chdir(appConf.workDir);
-
 // 1. Fix SSH key permissions
 try {
   execSync('chmod 600 /secret/agent-key', { stdio: 'pipe' });

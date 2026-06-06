@@ -80,10 +80,13 @@ if (!appConf) {
   process.exit(1);
 }
 
+/// Change to the app’s working directory (mounted by GoCD)
+process.chdir(appConf.workDir);
+
 // ------------------------------------------------------------------
-// Load .env.docker from the repository (available via volume mount)
+// Load .env.docker from the app’s root directory
 // ------------------------------------------------------------------
-const envFilePath = path.join(__dirname, '..', '.env.docker');
+const envFilePath = '.env.docker';
 if (fs.existsSync(envFilePath)) {
   const content = fs.readFileSync(envFilePath, 'utf8');
   content.split(/\r?\n/).forEach(line => {
@@ -97,9 +100,9 @@ if (fs.existsSync(envFilePath)) {
       }
     }
   });
-  console.log(`\x1b[36mLoaded .env.docker from ${envFilePath}\x1b[0m`);
+  console.log(`\x1b[36mLoaded .env.docker from ${appConf.workDir}/${envFilePath}\x1b[0m`);
 } else {
-  console.log('\x1b[33m.env.docker not found at ' + envFilePath + '\x1b[0m');
+  console.log(`\x1b[33m.env.docker not found in ${appConf.workDir}\x1b[0m`);
 }
 
 // ----- Validate required environment variables (no defaults) -----

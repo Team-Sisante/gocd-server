@@ -73,6 +73,7 @@ services:
       - ../humrine_site:/humrine_site:rw
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
+      - .:/gocd-server:ro
     depends_on:
       - gocd-server
 
@@ -122,6 +123,7 @@ services:
       - ../humrine_site:/humrine_site:rw
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
+      - .:/gocd-server:ro
     depends_on:
       - gocd-server
 
@@ -147,6 +149,7 @@ services:
       - ../humrine_site:/humrine_site:rw
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
+      - .:/gocd-server:ro
     depends_on:
       - gocd-server
 
@@ -172,6 +175,7 @@ services:
       - ../humrine_site:/humrine_site:rw
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
+      - .:/gocd-server:ro
     depends_on:
       - gocd-server
 
@@ -197,6 +201,7 @@ services:
       - ../humrine_site:/humrine_site:rw
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
+      - .:/gocd-server:ro
     depends_on:
       - gocd-server
 
@@ -222,6 +227,7 @@ services:
       - ../humrine_site:/humrine_site:rw
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
+      - .:/gocd-server:ro
     depends_on:
       - gocd-server
 
@@ -247,6 +253,7 @@ services:
       - ../humrine_site:/humrine_site:rw
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
+      - .:/gocd-server:ro
     depends_on:
       - gocd-server
 
@@ -272,6 +279,7 @@ services:
       - ../humrine_site:/humrine_site:rw
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
+      - .:/gocd-server:ro
     depends_on:
       - gocd-server
       

@@ -422,14 +422,22 @@ if (useNginx) {
   execSync(`${scpBase} -r certs ${vmDest}`, { stdio: 'inherit' });
 }
 
-// Copy mail init script (required by mail-staging / mail-production)
-execSync(`${scpBase} Scripts/mail-setup.sh ${vmDest}Scripts/`, { stdio: 'inherit' });
-// Ensure the script is executable on the VM (idempotent)
-execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "chmod +x ${deployDir}/Scripts/mail-setup.sh"`, { stdio: 'inherit' });
+// Copy mail init script only if the app has one (required by mail-staging / mail-production)
+const mailSetupScript = 'Scripts/mail-setup.sh';
+if (fs.existsSync(mailSetupScript)) {
+  execSync(`${scpBase} ${mailSetupScript} ${vmDest}Scripts/`, { stdio: 'inherit' });
+  // Ensure the script is executable on the VM (idempotent)
+  execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "chmod +x ${deployDir}/Scripts/mail-setup.sh"`, { stdio: 'inherit' });
+} else {
+  console.log(`\x1b[33m${mailSetupScript} not found – skipping mail setup script upload.\x1b[0m`);
+}
 
 // 8. Verify files
 console.log('Verifying uploaded files…');
-let verifyFiles = `ls -la ${deployDir}/${composeFile} ${deployDir}/${cfg.envFile} ${deployDir}/.env.common ${deployDir}/Scripts/mail-setup.sh`;
+let verifyFiles = `ls -la ${deployDir}/${composeFile} ${deployDir}/${cfg.envFile} ${deployDir}/.env.common`;
+if (fs.existsSync(mailSetupScript)) {
+  verifyFiles += ` ${deployDir}/Scripts/mail-setup.sh`;
+}
 if (useNginx) {
   const nginxConfFile = `nginx-${target}.conf`;
   verifyFiles += ` ${deployDir}/${nginxConfFile} ${deployDir}/certs/posteio-cert.pem ${deployDir}/certs/posteio-key.pem`;

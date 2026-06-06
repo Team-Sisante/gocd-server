@@ -12,10 +12,10 @@ module.exports = async function siteDiagnostics(ctx) {
       name: 'site',
       message: 'Select the site to diagnose:',
       choices: [
-        { name: 'humrine.com (production)',         value: 'humrine-production' },
-        { name: 'app.humrine.com (production)',      value: 'humrine-production' },   // same project
-        { name: 'staging.humrine.com (staging)',     value: 'humrine-staging' },
-        { name: 'humrine.com/court (badminton prod)', value: 'badminton-production' },
+        { name: 'humrine.com (production)',           value: 'humrine-production' },
+        { name: 'app.humrine.com (production)',        value: 'humrine-production' },
+        { name: 'staging.humrine.com (staging)',       value: 'humrine-staging' },
+        { name: 'humrine.com/court (badminton prod)',  value: 'badminton-production' },
         { name: 'humrine.com/court-staging (badminton staging)', value: 'badminton-staging' },
       ],
     },
@@ -25,6 +25,8 @@ module.exports = async function siteDiagnostics(ctx) {
   const projects = {
     'humrine-production': {
       dir: '/opt/humrine_site',
+      composeFile: 'docker-compose.vm.yml',
+      project: 'humrine-production',
       envFile: '.env.production',
       webContainer: 'humrine-web-production',
       nginxContainer: 'humrine-nginx-production',
@@ -32,6 +34,8 @@ module.exports = async function siteDiagnostics(ctx) {
     },
     'humrine-staging': {
       dir: '/opt/humrine_site',
+      composeFile: 'docker-compose.vm.yml',
+      project: 'humrine-staging',
       envFile: '.env.staging',
       webContainer: 'humrine-web-staging',
       nginxContainer: 'humrine-nginx-staging',
@@ -39,13 +43,17 @@ module.exports = async function siteDiagnostics(ctx) {
     },
     'badminton-production': {
       dir: '/opt/badminton_court',
+      composeFile: 'docker-compose.vm.yml',
+      project: 'badminton-production',
       envFile: '.env.production',
-      webContainer: 'badminton-production-web-production-1',   // exact name from your output
+      webContainer: 'badminton-production-web-production-1',
       nginxContainer: 'badminton_court-nginx-production',
       label: 'Badminton Court Production (humrine.com/court)',
     },
     'badminton-staging': {
       dir: '/opt/badminton_court',
+      composeFile: 'docker-compose.vm.yml',
+      project: 'badminton-staging',
       envFile: '.env.staging',
       webContainer: 'badminton-staging-web-staging-1',
       nginxContainer: 'badminton_court-nginx-staging',
@@ -78,15 +86,14 @@ module.exports = async function siteDiagnostics(ctx) {
 
   console.log(`\n\x1b[33m=== Diagnostics for ${p.label} ===\x1b[0m\n`);
 
-  // 1. Container status
-  log('Container status:', '\x1b[36m');
-  const psOut = remoteExec(
-    `sudo docker ps -a --filter "name=${p.webContainer}" --filter "name=${p.nginxContainer}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"`
-  );
-  console.log(psOut ? psOut.trim() : 'No containers found.');
+  // 1. Full project container status (all services)
+  log('Container status (all services):', '\x1b[36m');
+  const psCmd = `cd ${p.dir} && sudo docker compose -p ${p.project} -f ${p.composeFile} --env-file ${p.envFile} ps -a`;
+  const psOut = remoteExec(psCmd);
+  console.log(psOut ? psOut.trim() : 'No containers found or compose command failed.');
 
-  // 2. Environment file contents
-  log('\nEnvironment variables:', '\x1b[36m');
+  // 2. Environment file contents (with sensitive data warning)
+  log('\n⚠️  Environment variables (passwords/tokens/secrets are visible):', '\x1b[33m');
   const envPath = `${p.dir}/${p.envFile}`;
   const envOut = remoteExec(`cat ${envPath}`);
   if (envOut) {
@@ -95,22 +102,47 @@ module.exports = async function siteDiagnostics(ctx) {
     log(`Could not read ${envPath}.`, '\x1b[31m');
   }
 
-  // 3. Web container logs
+  // 3. Web container logs (merge stdout and stderr)
   log(`\nRecent logs for ${p.webContainer} (last 20 lines):`, '\x1b[36m');
-  const logsOut = remoteExec(`sudo docker logs --tail 20 ${p.webContainer}`);
-  if (logsOut) {
+  const logsOut = remoteExec(`sudo docker logs --tail 20 ${p.webContainer} 2>&1`);
+  if (logsOut && logsOut.trim()) {
     console.log(logsOut.trim());
   } else {
-    log(`Could not retrieve logs for ${p.webContainer}.`, '\x1b[31m');
+    log(`No logs available for ${p.webContainer}. (The binary may not output to console.)`, '\x1b[33m');
   }
 
-  // 4. (Optional) Nginx logs
+  // 4. Container health details (restart count, exit code, timestamps)
+  log(`\nContainer health details for ${p.webContainer}:`, '\x1b[36m');
+  const inspectOut = remoteExec(
+    `sudo docker inspect --format='State: {{.State.Status}}, ExitCode: {{.State.ExitCode}}, RestartCount: {{.RestartCount}}, StartedAt: {{.State.StartedAt}}, FinishedAt: {{.State.FinishedAt}}' ${p.webContainer}`
+  );
+  console.log(inspectOut ? inspectOut.trim() : 'Unable to inspect container.');
+
+  // 5. Direct app connectivity test (from within the web container)
+  log(`\nDirect app response from within ${p.webContainer} (localhost:8000):`, '\x1b[36m');
+  const appTest = remoteExec(
+    `sudo docker exec ${p.webContainer} curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/ --connect-timeout 5 || echo "curl failed"`
+  );
+  console.log(`App response: ${appTest ? appTest.trim() : 'no response'}`);
+
+  // 6. Resource usage (CPU and memory) for all project containers
+  log(`\nResource usage (CPU / MEM) for project containers:`, '\x1b[36m');
+  const statsOut = remoteExec(
+    `sudo docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" $(sudo docker ps -q --filter "name=${p.project}")`
+  );
+  if (statsOut) {
+    console.log(statsOut.trim());
+  } else {
+    log('Could not retrieve stats.', '\x1b[31m');
+  }
+
+  // 7. Nginx logs (last 20 lines)
   log(`\nRecent nginx logs for ${p.nginxContainer} (last 20 lines):`, '\x1b[36m');
-  const nginxLogs = remoteExec(`sudo docker logs --tail 20 ${p.nginxContainer}`);
-  if (nginxLogs) {
+  const nginxLogs = remoteExec(`sudo docker logs --tail 20 ${p.nginxContainer} 2>&1`);
+  if (nginxLogs && nginxLogs.trim()) {
     console.log(nginxLogs.trim());
   } else {
-    log(`Could not retrieve nginx logs.`, '\x1b[31m');
+    log(`No nginx logs available.`, '\x1b[33m');
   }
 
   console.log(`\n\x1b[33m=== End of diagnostics for ${p.label} ===\x1b[0m\n`);

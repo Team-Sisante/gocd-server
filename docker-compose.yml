@@ -100,6 +100,181 @@ services:
     depends_on:
       - gocd-server
 
+  gocd-agent-4:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: gocd-agent-4
+    restart: unless-stopped
+    dns: 8.8.8.8
+    env_file:
+      - .env.docker
+    environment:
+      - GO_SERVER_URL=http://gocd-server:8153/go
+      - AGENT_AUTO_REGISTER_KEY=default
+      - AGENT_AUTO_REGISTER_RESOURCES=docker,linux,badminton_court,humrine_site
+      - AGENT_AUTO_REGISTER_HOSTNAME=agent-4
+      - AGENT_BOOTSTRAP_ARGS=-Dgo.agent.ssl.verify=false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./certs/ca.crt:/usr/local/share/ca-certificates/ca.crt:ro
+      - ../badminton_court:/badminton_court:rw
+      - ../humrine_site:/humrine_site:rw
+      - ./secrets:/secret:ro
+      - ./certs:/certs:ro
+    depends_on:
+      - gocd-server
+
+  gocd-agent-5:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: gocd-agent-5
+    restart: unless-stopped
+    dns: 8.8.8.8
+    env_file:
+      - .env.docker
+    environment:
+      - GO_SERVER_URL=http://gocd-server:8153/go
+      - AGENT_AUTO_REGISTER_KEY=default
+      - AGENT_AUTO_REGISTER_RESOURCES=docker,linux,badminton_court,humrine_site
+      - AGENT_AUTO_REGISTER_HOSTNAME=agent-5
+      - AGENT_BOOTSTRAP_ARGS=-Dgo.agent.ssl.verify=false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./certs/ca.crt:/usr/local/share/ca-certificates/ca.crt:ro
+      - ../badminton_court:/badminton_court:rw
+      - ../humrine_site:/humrine_site:rw
+      - ./secrets:/secret:ro
+      - ./certs:/certs:ro
+    depends_on:
+      - gocd-server
+
+  gocd-agent-6:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: gocd-agent-6
+    restart: unless-stopped
+    dns: 8.8.8.8
+    env_file:
+      - .env.docker
+    environment:
+      - GO_SERVER_URL=http://gocd-server:8153/go
+      - AGENT_AUTO_REGISTER_KEY=default
+      - AGENT_AUTO_REGISTER_RESOURCES=docker,linux,badminton_court,humrine_site
+      - AGENT_AUTO_REGISTER_HOSTNAME=agent-6
+      - AGENT_BOOTSTRAP_ARGS=-Dgo.agent.ssl.verify=false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./certs/ca.crt:/usr/local/share/ca-certificates/ca.crt:ro
+      - ../badminton_court:/badminton_court:rw
+      - ../humrine_site:/humrine_site:rw
+      - ./secrets:/secret:ro
+      - ./certs:/certs:ro
+    depends_on:
+      - gocd-server
+
+  gocd-agent-7:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: gocd-agent-7
+    restart: unless-stopped
+    dns: 8.8.8.8
+    env_file:
+      - .env.docker
+    environment:
+      - GO_SERVER_URL=http://gocd-server:8153/go
+      - AGENT_AUTO_REGISTER_KEY=default
+      - AGENT_AUTO_REGISTER_RESOURCES=docker,linux,badminton_court,humrine_site
+      - AGENT_AUTO_REGISTER_HOSTNAME=agent-7
+      - AGENT_BOOTSTRAP_ARGS=-Dgo.agent.ssl.verify=false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./certs/ca.crt:/usr/local/share/ca-certificates/ca.crt:ro
+      - ../badminton_court:/badminton_court:rw
+      - ../humrine_site:/humrine_site:rw
+      - ./secrets:/secret:ro
+      - ./certs:/certs:ro
+    depends_on:
+      - gocd-server
+
+  gocd-agent-8:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: gocd-agent-8
+    restart: unless-stopped
+    dns: 8.8.8.8
+    env_file:
+      - .env.docker
+    environment:
+      - GO_SERVER_URL=http://gocd-server:8153/go
+      - AGENT_AUTO_REGISTER_KEY=default
+      - AGENT_AUTO_REGISTER_RESOURCES=docker,linux,badminton_court,humrine_site
+      - AGENT_AUTO_REGISTER_HOSTNAME=agent-8
+      - AGENT_BOOTSTRAP_ARGS=-Dgo.agent.ssl.verify=false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./certs/ca.crt:/usr/local/share/ca-certificates/ca.crt:ro
+      - ../badminton_court:/badminton_court:rw
+      - ../humrine_site:/humrine_site:rw
+      - ./secrets:/secret:ro
+      - ./certs:/certs:ro
+    depends_on:
+      - gocd-server
+
+  gocd-agent-9:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: gocd-agent-9
+    restart: unless-stopped
+    dns: 8.8.8.8
+    env_file:
+      - .env.docker
+    environment:
+      - GO_SERVER_URL=http://gocd-server:8153/go
+      - AGENT_AUTO_REGISTER_KEY=default
+      - AGENT_AUTO_REGISTER_RESOURCES=docker,linux,badminton_court,humrine_site
+      - AGENT_AUTO_REGISTER_HOSTNAME=agent-9
+      - AGENT_BOOTSTRAP_ARGS=-Dgo.agent.ssl.verify=false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./certs/ca.crt:/usr/local/share/ca-certificates/ca.crt:ro
+      - ../badminton_court:/badminton_court:rw
+      - ../humrine_site:/humrine_site:rw
+      - ./secrets:/secret:ro
+      - ./certs:/certs:ro
+    depends_on:
+      - gocd-server
+
+  gocd-agent-10:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: gocd-agent-10
+    restart: unless-stopped
+    dns: 8.8.8.8
+    env_file:
+      - .env.docker
+    environment:
+      - GO_SERVER_URL=http://gocd-server:8153/go
+      - AGENT_AUTO_REGISTER_KEY=default
+      - AGENT_AUTO_REGISTER_RESOURCES=docker,linux,badminton_court,humrine_site
+      - AGENT_AUTO_REGISTER_HOSTNAME=agent-10
+      - AGENT_BOOTSTRAP_ARGS=-Dgo.agent.ssl.verify=false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./certs/ca.crt:/usr/local/share/ca-certificates/ca.crt:ro
+      - ../badminton_court:/badminton_court:rw
+      - ../humrine_site:/humrine_site:rw
+      - ./secrets:/secret:ro
+      - ./certs:/certs:ro
+    depends_on:
+      - gocd-server
+      
 networks:
   default:
     driver: bridge

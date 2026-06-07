@@ -142,7 +142,7 @@ module.exports = {
                 type: 'list',
                 name: 'envName',
                 message: 'Select environment:',
-                choices: ['staging', 'production']
+                choices: ['staging', 'production', 'development', 'docker']
             }
         ]);
         ctx.rl.resume();

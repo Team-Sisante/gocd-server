@@ -134,14 +134,21 @@ const SECRETS_TO_FETCH = [
   'SECRET_KEY', 'GOOGLE_CLIENT_SECRET', 'FACEBOOK_CLIENT_SECRET',
   'TWITTER_CLIENT_SECRET', 'ADMIN_PASSWORD', 'POSTEIO_DB_PASSWORD',
   'REGULARUSER_PASSWORD', 'SUPERADMIN_PASSWORD', 'STAFF_ADMIN_PASSWORD',
-  'INACTIVE_ADMIN_PASSWORD', 'NGR_AUTHTOKEN', 'GOOGLE_CLIENT_ID',
-  'FACEBOOK_CLIENT_ID', 'TWITTER_CLIENT_ID'   // client IDs may also be secret
+  'INACTIVE_ADMIN_PASSWORD', 'NGR_AUTHTOKEN'
 ];
+// --- Ensure gcloud can find the CA bundle (same logic as generate-env.js) ---
+const certFile = process.env.CLOUDSDK_CA_CERTS_FILE;
+const childEnv = { ...process.env };
+if (certFile) {
+  childEnv.CLOUDSDK_CA_CERTS_FILE = certFile;
+  childEnv.REQUESTS_CA_BUNDLE = certFile;
+}
+
 for (const secret of SECRETS_TO_FETCH) {
   try {
     const value = execSync(
       `gcloud secrets versions access latest --secret="${secret}" --project ${GCP_PROJECT_ID} 2>/dev/null`,
-      { encoding: 'utf8', stdio: 'pipe' }
+      { encoding: 'utf8', stdio: 'pipe', env: childEnv }   // <-- env added
     ).trim();
     if (value) {
       process.env[secret] = value;

@@ -299,22 +299,37 @@ if (fs.existsSync(mailSetupScript)) {
   execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "chmod +x ${deployDir}/Scripts/mail-setup.sh"`, { stdio: 'inherit' });
 }
 
-// 9. Deploy – inject all environment variables (from process.env) into the remote shell
+// 9. Deploy – write a temporary .env file on the VM, use it, then delete it
 console.log('Logging into ghcr.io and deploying...');
 const tokenFile = '/tmp/gh_token';
 fs.writeFileSync(tokenFile, token, { mode: 0o600 });
 
-// Build export commands for all relevant environment variables
-const envExports = Object.entries(process.env)
-  .filter(([k]) => !k.startsWith('npm_') && !['PATH', 'HOME', 'PWD', 'SHELL'].includes(k))
-  .map(([k, v]) => `export ${k}="${v.replace(/"/g, '\\"')}"`)
-  .join(' && ');
+// Build the content of a single temporary .env file containing all variables
+const envLines = [];
+for (const [key, value] of Object.entries(process.env)) {
+  // Exclude internal Node.js / system variables to keep the file clean
+  if (key.startsWith('npm_') || ['PATH', 'HOME', 'PWD', 'SHELL', 'HOSTNAME'].includes(key)) continue;
+  const safeValue = value.replace(/"/g, '\\"');
+  envLines.push(`${key}="${safeValue}"`);
+}
+const envContent = envLines.join('\n');
 
+// Write the temp file locally, then copy it to the VM
+const localTempEnvFile = `/tmp/deploy-env-${projectName}.env`;
+fs.writeFileSync(localTempEnvFile, envContent);
+const remoteTempEnvFile = `${deployDir}/.env.tmp`;
+execSync(`${scpBase} ${localTempEnvFile} ${SSH_USER}@${vmIP}:${remoteTempEnvFile}`, { stdio: 'inherit' });
+console.log('Temporary env file uploaded to VM');
+
+// Clean up the local temp file
+fs.unlinkSync(localTempEnvFile);
+
+// The remote commands: docker compose with the temp file, then delete the file
 const deployCmd = [
   `cd ${deployDir}`,
-  `${envExports}`,
-  `sudo docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans`,
-  `sudo docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --remove-orphans`
+  `sudo docker compose -p ${projectName} -f ${composeFile} --env-file ${remoteTempEnvFile} --profile ${cfg.profile} down --remove-orphans`,
+  `sudo docker compose -p ${projectName} -f ${composeFile} --env-file ${remoteTempEnvFile} --profile ${cfg.profile} up -d --pull always --remove-orphans`,
+  `sudo rm -f ${remoteTempEnvFile}`
 ].join(' && ');
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;

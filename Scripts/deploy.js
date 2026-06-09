@@ -427,6 +427,21 @@ const remoteTempEnvFile = `${deployDir}/.env.tmp`;
 execSync(`${scpBase} ${localTempEnvFile} ${SSH_USER}@${vmIP}:${remoteTempEnvFile}`, { stdio: 'inherit' });
 console.log('Temporary env file uploaded to VM');
 
+// Verify the uploaded file contains POSTE_PROTOCOL (to catch any write/SCP issues)
+const verifyEnvFileCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -q '^POSTE_PROTOCOL=' ${remoteTempEnvFile} && echo 'POSTE_PROTOCOL present' || echo 'POSTE_PROTOCOL MISSING'"`;
+try {
+  const verifyResult = execSync(verifyEnvFileCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
+  if (!verifyResult.includes('present')) {
+    console.error(`\x1b[31mERROR: POSTE_PROTOCOL is missing from ${remoteTempEnvFile} on the VM.\x1b[0m`);
+    console.error(`\x1b[33mThe file may not have been written correctly. Aborting.\x1b[0m`);
+    waitAndExit('Deployment aborted – temporary env file is incomplete.');
+  }
+  console.log(`\x1b[32mVerified POSTE_PROTOCOL in temp env file.\x1b[0m`);
+} catch (e) {
+  console.error(`\x1b[31mERROR: Could not verify temp env file on VM.\x1b[0m`);
+  waitAndExit('Deployment aborted – cannot read temp env file.');
+}
+
 // Clean up the local temp file
 fs.unlinkSync(localTempEnvFile);
 

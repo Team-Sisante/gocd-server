@@ -115,7 +115,7 @@ if (!process.env.GIT_REPO_USERNAME) missing.push('GIT_REPO_USERNAME');
 if (!process.env.VM_SSH_USER) missing.push('VM_SSH_USER');
 
 if (missing.length > 0) {
-  let errorMsg = 'ERROR: The following required environment variables are missing:\n';
+  let errorMsg = 'ERROR: The following required infrastructure variables are missing:\n';
   missing.forEach(v => errorMsg += `  - ${v}\n`);
   errorMsg += '\nPlease ensure they are defined in .env.docker.';
   waitAndExit(errorMsg);
@@ -180,6 +180,55 @@ try {
   console.log(`Fetched ${variables.length} variables from GitHub.`);
 } catch (e) {
   console.log(`\x1b[33mWarning: Could not fetch GitHub variables: ${e.message}\x1b[0m`);
+}
+
+// ---------------------------------------------------------------
+// Diagnostic dump of required variables (masked for safety)
+// ---------------------------------------------------------------
+console.log('\x1b[36m--- Required variables after fetch (masked) ---\x1b[0m');
+const REQUIRED_VARS = [
+  'SECRET_KEY', 'POSTGRES_PASSWORD', 'EMAIL_HOST_PASSWORD',
+  'POSTE_API_PASSWORD', 'ADMIN_PASSWORD', 'POSTEIO_DB_PASSWORD',
+  'POSTE_PROTOCOL', 'POSTE_HOSTNAME', 'POSTE_PORT', 'POSTE_API_USER',
+  'POSTE_DOMAIN', 'POSTEIO_DB_HOST', 'POSTEIO_DB_PORT', 'POSTEIO_DB_NAME',
+  'POSTEIO_DB_USER', 'WEB_HOST_PORT', 'WEB_HTTPS_PORT',
+  'NGINX_STAGING_HOST_PORT', 'NGINX_PRODUCTION_HOST_PORT', 'POSTGRES_HOST_PORT',
+  'REDIS_HOST_PORT', 'MAIL_SMTP_HOST_PORT', 'MAIL_SUBMISSION_HOST_PORT',
+  'MAIL_SMTPS_HOST_PORT', 'MAIL_HTTPS_HOST_PORT', 'DEBUG', 'ALLOWED_HOSTS',
+  'CSRF_TRUSTED_ORIGINS', 'ENVIRONMENT', 'APP_PROTOCOL', 'APP_DOMAIN',
+  'APP_PORT', 'DOMAIN_PREFIX', 'POSTGRES_USER', 'POSTGRES_DB',
+  'POSTGRES_HOST', 'POSTGRES_PORT', 'REDIS_URL', 'EMAIL_HOST',
+  'EMAIL_PORT', 'EMAIL_HOST_USER', 'DEFAULT_FROM_EMAIL', 'PROFILE_EDIT_URL',
+  'SITE_HEADER', 'SITE_TITLE', 'SITE_INDEX_TITLE', 'GCP_PROJECT_ID',
+  'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'ADMIN_EMAIL', 'SUPPORT_EMAIL',
+  'REGULARUSER_EMAIL'
+];
+
+REQUIRED_VARS.forEach(v => {
+  const val = process.env[v];
+  const status = val === undefined ? '\x1b[31mMISSING\x1b[0m' :
+                 val === ''        ? '\x1b[33mEMPTY\x1b[0m' :
+                 `\x1b[32m${val.substring(0,4)}...\x1b[0m`;
+  console.log(`  ${v}: ${status}`);
+});
+
+// ---------------------------------------------------------------
+// Pre‑deployment validation – ensure every required variable is set AND non‑empty
+// ---------------------------------------------------------------
+const missingVars = REQUIRED_VARS.filter(v => process.env[v] === undefined);
+const emptyVars   = REQUIRED_VARS.filter(v => process.env[v] === '');
+
+if (missingVars.length > 0 || emptyVars.length > 0) {
+  if (missingVars.length > 0) {
+    console.error(`\x1b[31mABORTING: The following required variables are missing:\x1b[0m`);
+    missingVars.forEach(v => console.error(`  - ${v}`));
+  }
+  if (emptyVars.length > 0) {
+    console.error(`\x1b[31mABORTING: The following required variables have empty values:\x1b[0m`);
+    emptyVars.forEach(v => console.error(`  - ${v}`));
+  }
+  console.error(`\x1b[33mCheck the GitHub Environment and GCP Secret Manager for these keys and ensure they have real values.\x1b[0m`);
+  waitAndExit('Deployment aborted due to missing or empty configuration.');
 }
 
 // ------------------------------------------------------------------
@@ -271,15 +320,72 @@ execSync(`sed -i 's/\\r$//' ${composeFile}`, { stdio: 'inherit' });
 const vmIP = process.env.GCP_VM_IP;
 if (!vmIP) waitAndExit('ERROR: GCP_VM_IP is not set in environment.');
 
-// 6. Pre‑deploy checks (Docker daemon, system load, ghcr.io connectivity) – same as before, omitted for brevity.
-//    (Keep the existing health‑check blocks from your original deploy.js – they are still valid.)
+// ------------------------------------------------------------------
+// 6. Ensure Docker daemon DNS & MTU are correctly configured (idempotent)
+//    Also perform a pre‑deploy health check to avoid TLS timeouts
+// ------------------------------------------------------------------
+const DOCKER_CONF = '{"dns":["8.8.8.8"],"mtu":1460}';
+try {
+  const currentConf = execSync(
+    `ssh -i /secret/agent-key ${SSH_OPTS} -o LogLevel=ERROR ${SSH_USER}@${vmIP} "cat /etc/docker/daemon.json 2>/dev/null || echo ''"`,
+    { encoding: 'utf8', stdio: 'pipe' }
+  ).trim();
 
-// 7. Prepare VM directory
+  if (currentConf !== DOCKER_CONF) {
+    console.log('Configuring Docker daemon DNS and MTU on VM...');
+    execSync(
+      `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} ` +
+      `"sudo bash -c 'echo \\'${DOCKER_CONF}\\' > /etc/docker/daemon.json && systemctl restart docker'"`,
+      { stdio: 'inherit' }
+    );
+  }
+} catch (e) {
+  console.log(`\x1b[33mWarning: Failed to verify/configure Docker daemon: ${e.message}\x1b[0m`);
+}
+
+// ------------------------------------------------------------------
+// Pre‑deploy health check: verify system load
+// ------------------------------------------------------------------
+console.log('Running pre‑deploy health checks...');
+const healthCheckResult = execSync(
+  `ssh -i /secret/agent-key ${SSH_OPTS} -o LogLevel=ERROR ${SSH_USER}@${vmIP} ` +
+  `"sudo bash -c '` +
+    `load=$(awk \"{print \\\\$1}\" /proc/loadavg); ` +
+    `echo \"LOAD=\\$load\"'` +
+  `"`,
+  { encoding: 'utf8', stdio: 'pipe' }
+).trim();
+console.log(`  VM health: ${healthCheckResult}`);
+
+const loadMatch = healthCheckResult.match(/LOAD=([0-9.]+)/);
+const systemLoad = loadMatch ? parseFloat(loadMatch[1]) : 0;
+
+if (systemLoad > 2.0) {
+  console.log(`\x1b[33mWarning: System load is ${systemLoad}, which may cause timeouts. Consider stopping heavy processes before deploying.\x1b[0m`);
+}
+console.log('\x1b[32mPre‑deploy health checks passed.\x1b[0m');
+
+// ------------------------------------------------------------------
+// Check ghcr.io connectivity before deployment
+// ------------------------------------------------------------------
+console.log('Checking ghcr.io connectivity...');
+try {
+  execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "curl -v --connect-timeout 10 https://ghcr.io/v2/ 2>&1 | head -20"`, { stdio: 'inherit' });
+  console.log('\x1b[32mghcr.io is reachable.\x1b[0m');
+} catch (e) {
+  console.error('\x1b[31mghcr.io is unreachable. Deployment aborted to prevent using stale cached images.\x1b[0m');
+  console.error('\x1b[33mRetry the deployment when network connectivity is restored.\x1b[0m');
+  process.exit(1);
+}
+
+// ------------------------------------------------------------------
+// Prepare VM directory (fix ownership so SCP can create subdirs)
+// ------------------------------------------------------------------
 const deployDir = appConf.deployDir;
 console.log('Preparing deployment directory on VM...');
 execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo rm -rf ${deployDir}/certs && sudo mkdir -p ${deployDir}/certs ${deployDir}/Scripts && sudo chown -R ${SSH_USER}:${SSH_USER} ${deployDir}"`, { stdio: 'inherit' });
 
-// 8. Copy compose file and nginx/certs to VM (NO .env files!)
+// 7. Copy files to VM
 console.log('Copying deployment files to VM...');
 const scpBase = `scp -i /secret/agent-key ${SSH_OPTS}`;
 const vmDest = `${SSH_USER}@${vmIP}:${deployDir}/`;
@@ -299,7 +405,7 @@ if (fs.existsSync(mailSetupScript)) {
   execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "chmod +x ${deployDir}/Scripts/mail-setup.sh"`, { stdio: 'inherit' });
 }
 
-// 9. Deploy – write a temporary .env file on the VM, use it, then delete it
+// 8. Deploy – write a temporary .env file on the VM, use it, then delete it
 console.log('Logging into ghcr.io and deploying...');
 const tokenFile = '/tmp/gh_token';
 fs.writeFileSync(tokenFile, token, { mode: 0o600 });
@@ -323,6 +429,25 @@ console.log('Temporary env file uploaded to VM');
 
 // Clean up the local temp file
 fs.unlinkSync(localTempEnvFile);
+
+// ---------------------------------------------------------------
+// Pre‑deploy cleanup: stop & remove any container using required host ports
+// ---------------------------------------------------------------
+console.log('Checking for containers holding required host ports...');
+const HOST_PORTS = [
+  process.env.POSTGRES_HOST_PORT,
+  process.env.REDIS_HOST_PORT,
+  process.env.MAIL_SMTP_HOST_PORT,
+  process.env.MAIL_SUBMISSION_HOST_PORT,
+  process.env.MAIL_SMTPS_HOST_PORT,
+  process.env.MAIL_HTTPS_HOST_PORT,
+  process.env.WEB_HOST_PORT
+].filter(Boolean).join(' ');
+
+if (HOST_PORTS) {
+  const checkPortsCmd = `for port in ${HOST_PORTS}; do sudo docker ps -q --filter "publish=\\$port" | xargs -r sudo docker stop; done`;
+  execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "${checkPortsCmd}"`, { stdio: 'inherit' });
+}
 
 // The remote commands: docker compose with the temp file, then delete the file
 const deployCmd = [

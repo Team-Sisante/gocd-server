@@ -180,8 +180,8 @@ async function showMenu() {
             console.log('   6.23. List all VMs (project-wide)');
             console.log('   6.24. Clean up Docker disk space on staging VM');       
             console.log('   6.25. Open production app in browser');              
-            console.log('   6.26. Staging container diagnostics');               
-            console.log('   6.27. Production container diagnostics');
+            console.log('   6.26. Container diagnostics');
+            console.log('   6.28. Enable/Verify Swap Space on VM');
             console.log('   6.29. SSH tunnel: access GoCD from VM');
             console.log('   6.30. Setup Load Balancer (Generic)');
             console.log('   6.31. Validate Social Media Configs');
@@ -277,7 +277,7 @@ async function showMenu() {
                 case '6.13': case '6.14': case '6.15': case '6.16':
                 case '6.17': case '6.18': case '6.19': case '6.20':
                 case '6.21': case '6.22': case '6.23': case '6.24': 
-                case '6.25': case '6.26': case '6.27':
+                case '6.25': case '6.26': case '6.28': 
                 case '6.29': case '6.30': case '6.31': case '6.37':
                     await vmSetup[choice](ctx); break;
                 case '6.32': case '6.33':

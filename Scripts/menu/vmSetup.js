@@ -107,7 +107,6 @@ module.exports = {
     // '6.27': async (ctx) => { await containerDiagnostics(ctx, 'production'); },
     // With:
     '6.26': async (ctx) => { await siteDiagnostics(ctx); },
-    '6.27': async (ctx) => { await siteDiagnostics(ctx); },
     // 6.28 – Enable/Verify Swap Space on VM
     '6.28': async (ctx) => { ctx.sh('node Scripts/enable-swap-on-vm.js'); await ctx.pause(); },
     // 6.29 – SSH tunnel: expose local GoCD via VM

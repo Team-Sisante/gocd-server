@@ -174,7 +174,9 @@ try {
   variables.forEach(v => {
     if (v.name) {
       delete process.env[v.name];
-      if (v.value) process.env[v.name] = v.value;
+      if (v.value !== undefined && v.value !== null) {
+        process.env[v.name] = v.value;
+      }
     }
   });
   console.log(`Fetched ${variables.length} variables from GitHub.`);
@@ -381,33 +383,45 @@ console.log('Logging into ghcr.io and deploying...');
 const tokenFile = '/tmp/gh_token';
 fs.writeFileSync(tokenFile, token, { mode: 0o600 });
 
-// Build .env content – aggressively clean every key and value
+// Build .env content – sanitize both keys and values thoroughly
 const envLines = [];
 for (const [key, value] of Object.entries(process.env)) {
   // Exclude internal Node.js / system variables
   if (key.startsWith('npm_') || ['PATH', 'HOME', 'PWD', 'SHELL', 'HOSTNAME'].includes(key)) continue;
 
   // Remove ALL control characters (0x00‑0x1F) and DEL (0x7F) from the KEY.
-  // Only allow printable ASCII (0x20‑0x7E) and standard UTF‑8 sequences.
   const cleanKey = key.replace(/[\x00-\x1F\x7F]/g, '');
-  if (cleanKey === '') continue;   // skip entirely broken keys
+  if (cleanKey === '') continue;
 
-  // For the VALUE, also remove control characters, but keep standard newline/tab if needed.
-  // We remove them entirely because .env files cannot contain multi‑line values safely.
-  const cleanValue = value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  // Strip newlines and control characters from the VALUE.
+  const cleanValue = value.replace(/[\x00-\x1F\x7F]/g, '');
   const safeValue  = cleanValue.replace(/"/g, '\\"');
 
   envLines.push(`${cleanKey}="${safeValue}"`);
 }
 const envContent = envLines.join('\n');
 
+// Use project-specific temp file to avoid collisions between staging and production
+const remoteTempEnvFile = `${deployDir}/.env-${projectName}.tmp`;
+
 // Write temp file locally, SCP to VM
 const localTempEnvFile = `/tmp/deploy-env-${projectName}.env`;
 fs.writeFileSync(localTempEnvFile, envContent);
-const remoteTempEnvFile = `${deployDir}/.env-${projectName}.tmp`;
 execSync(`${scpBase} ${localTempEnvFile} ${SSH_USER}@${vmIP}:${remoteTempEnvFile}`, { stdio: 'inherit' });
 console.log('Temporary env file uploaded to VM');
 fs.unlinkSync(localTempEnvFile);
+
+// --- DEBUG: Show the file content on the VM before using it ---
+console.log('\x1b[36mFirst 20 lines of temp env file:\x1b[0m');
+try {
+  const headOut = execSync(
+    `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "head -20 ${remoteTempEnvFile}"`,
+    { encoding: 'utf8', stdio: 'pipe' }
+  ).trim();
+  console.log(headOut);
+} catch (e) {
+  console.error('Could not read temp file on VM.');
+}
 
 // Verify the file contains a critical variable
 const verifyEnvFileCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -q '^POSTE_PROTOCOL=' ${remoteTempEnvFile} && echo 'POSTE_PROTOCOL present' || echo 'POSTE_PROTOCOL MISSING'"`;

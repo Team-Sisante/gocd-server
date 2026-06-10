@@ -84,7 +84,8 @@ module.exports = async function siteDiagnostics(ctx) {
 
   // 1. Container status (without --env-file)
   log('Container status (all services):', '\x1b[36m');
-  const psCmd = `cd ${p.dir} && sudo docker compose -p ${p.project} -f ${p.composeFile} ps -a`;
+  // Use plain docker ps to avoid compose variable warnings
+  const psCmd = `sudo docker ps -a --filter "name=${p.project}" --format "table {{.Names}}\t{{.Image}}\t{{.Command}}\t{{.Status}}\t{{.Ports}}"`;
   const psOut = remoteExec(psCmd);
   console.log(psOut ? psOut.trim() : 'No containers found or compose command failed.');
 

@@ -82,11 +82,13 @@ const APP_CONFIG = {
     },
   },
 };
+
 const appConf = APP_CONFIG[appName];
 if (!appConf) {
   console.error(`Unknown app: ${appName}. Expected badminton_court or humrine_site.`);
   process.exit(1);
 }
+process.env.GIT_REPO_REPONAME = appName;   
 
 process.chdir(appConf.workDir);
 
@@ -397,7 +399,7 @@ if (fs.existsSync(mailSetupScript)) {
 }
 
 // ---------------------------------------------------------------
-// 8. Deploy – write temporary .env file, use it, delete it
+// 8. Deploy
 // ---------------------------------------------------------------
 console.log('Logging into ghcr.io and deploying...');
 const tokenFile = '/tmp/gh_token';
@@ -409,9 +411,9 @@ console.log('\x1b[36m--- Checking critical vars in process.env before .env gener
 criticalVars.forEach(v => {
   const val = process.env[v];
   if (val === undefined) {
-    console.log(`  \x1b[31m${v}: MISSING\x1b[0m - Will be absent from .env file!`);
+    console.log(`  \x1b[31m${v}: MISSING\x1b[0m`);
   } else if (val === '') {
-    console.log(`  \x1b[33m${v}: EMPTY\x1b[0m - This will cause the app to crash.`);
+    console.log(`  \x1b[33m${v}: EMPTY\x1b[0m`);
   } else {
     console.log(`  \x1b[32m${v}: PRESENT\x1b[0m (length: ${val.length})`);
   }
@@ -485,12 +487,10 @@ const deployCmd =
   `flock ${remoteLockFile} bash -c '` +
     `trap "rm -f ${deployDir}/.env ${remoteEnvFile}" EXIT; ` +
     `cp ${remoteEnvFile} .env && ` +
-    // unset shell variables that would override the env file
-    `unset $(grep -oE '"'"'^[A-Z_][A-Z0-9_]*='"'"' .env | sed '"'"'s/=//'"'"' | xargs -r) 2>/dev/null; ` +
-    `sudo docker compose -p ${projectName} -f ${composeFile} --env-file .env --profile ${cfg.profile} down --remove-orphans && ` +
-    // remove the nginx container explicitly (frees port even if compose missed it)
+    `set -a && source .env && set +a && ` +
+    `sudo docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans && ` +
     `sudo docker rm -f ${nginxContainerName} || true; ` +
-    `sudo docker compose -p ${projectName} -f ${composeFile} --env-file .env --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
+    `sudo docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
   `'`;
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;

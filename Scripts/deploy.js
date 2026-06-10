@@ -133,7 +133,7 @@ templateFiles.forEach(file => {
 const REQUIRED_VARS = [...new Set(requiredVars)];
 
 // ---------------------------------------------------------------
-// 1. Fetch secrets from GCP (now with app‑specific prefix)
+// 1. Fetch secrets from GCP (with app‑specific prefix)
 // ---------------------------------------------------------------
 console.log('\x1b[33mFetching secrets from GCP Secret Manager...\x1b[0m');
 const certFile = process.env.CLOUDSDK_CA_CERTS_FILE;
@@ -396,13 +396,13 @@ console.log('Logging into ghcr.io and deploying...');
 const tokenFile = '/tmp/gh_token';
 fs.writeFileSync(tokenFile, token, { mode: 0o600 });
 
-// Pre-flight check for variables that Docker Compose specifically complains about
+// Pre-flight check for critical variables
 const criticalVars = ['DEBUG', 'SECRET_KEY', 'SITE_HEADER', 'POSTE_PROTOCOL'];
 console.log('\x1b[36m--- Checking critical vars in process.env before .env generation ---\x1b[0m');
 criticalVars.forEach(v => {
   const val = process.env[v];
   if (val === undefined) {
-    console.log(`  \x1b[31m${v}: MISSING\x1b[0m - Will be absent from .env file! Check if this is a GitHub Repository Variable instead of an Environment Variable.`);
+    console.log(`  \x1b[31m${v}: MISSING\x1b[0m - Will be absent from .env file!`);
   } else if (val === '') {
     console.log(`  \x1b[33m${v}: EMPTY\x1b[0m - This will cause the app to crash.`);
   } else {
@@ -410,7 +410,7 @@ criticalVars.forEach(v => {
   }
 });
 
-// Build .env content – aggressively clean every key and value
+// Build .env content
 const envLines = [];
 for (const [key, value] of Object.entries(process.env)) {
   // Exclude internal Node.js / system variables
@@ -444,7 +444,7 @@ execSync(`${scpBase} ${localTempEnvFile} ${SSH_USER}@${vmIP}:${remoteEnvFile}`, 
 console.log(`Temporary env file uploaded to VM: ${remoteEnvFile}`);
 fs.unlinkSync(localTempEnvFile);
 
-// Verify POSTE_PROTOCOL is present and NON‑EMPTY in the uploaded file
+// Verify POSTE_PROTOCOL is non‑empty
 const verifyPosteProtocolCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -E '^POSTE_PROTOCOL=\".+\"' ${remoteEnvFile} >/dev/null 2>&1 && echo 'OK' || echo 'FAIL'"`;
 try {
   const verifyResult = execSync(verifyPosteProtocolCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
@@ -468,14 +468,17 @@ try {
   }
 } catch (e) {}
 
-// Remote command: docker compose with temp file, then delete it.
+// ------------------------------------------------------------------
+// Remote deploy command – SOURCES the .env file to override shell vars
+// ------------------------------------------------------------------
 const deployCmd =
   `cd ${deployDir} && ` +
   `flock ${remoteLockFile} bash -c '` +
     `trap "rm -f ${deployDir}/.env ${remoteEnvFile}" EXIT; ` +
     `cp ${remoteEnvFile} .env && ` +
-    `sudo docker compose -p ${projectName} -f ${composeFile} --env-file .env --profile ${cfg.profile} down --remove-orphans && ` +
-    `sudo docker compose -p ${projectName} -f ${composeFile} --env-file .env --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
+    `set -a && source .env && set +a && ` +
+    `sudo docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans && ` +
+    `sudo docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
   `'`;
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;
@@ -505,7 +508,7 @@ if (success) {
     const checkCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker exec ${webContainer} printenv POSTE_PROTOCOL"`;
     const output = execSync(checkCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
     if (!output) {
-      console.error(`\x1b[31mWARNING: POSTE_PROTOCOL is empty inside the web container – the deployment may not have taken effect.\x1b[0m`);
+      console.error(`\x1b[31mWARNING: POSTE_PROTOCOL is empty inside the web container.\x1b[0m`);
     } else {
       console.log(`\x1b[32mPost‑deploy check: POSTE_PROTOCOL = ${output}\x1b[0m`);
     }

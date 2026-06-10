@@ -67,14 +67,21 @@ const APP_CONFIG = {
     projectPrefix: 'badminton',
     workDir:       '/badminton_court',
     deployDir:     '/opt/badminton_court',
+    nginxContainer: {
+      staging:    'badminton_court-nginx-staging',
+      production: 'badminton_court-nginx-production',
+    },
   },
   humrine_site: {
     projectPrefix: 'humrine',
     workDir:       '/humrine_site',
     deployDir:     '/opt/humrine_site',
+    nginxContainer: {
+      staging:    'humrine-nginx-staging',
+      production: 'humrine-nginx-production',
+    },
   },
 };
-
 const appConf = APP_CONFIG[appName];
 if (!appConf) {
   console.error(`Unknown app: ${appName}. Expected badminton_court or humrine_site.`);
@@ -471,14 +478,19 @@ try {
 // ------------------------------------------------------------------
 // Remote deploy command – SOURCES the .env file to override shell vars
 // ------------------------------------------------------------------
+const nginxContainerName = appConf.nginxContainer[target];
+
 const deployCmd =
   `cd ${deployDir} && ` +
   `flock ${remoteLockFile} bash -c '` +
     `trap "rm -f ${deployDir}/.env ${remoteEnvFile}" EXIT; ` +
     `cp ${remoteEnvFile} .env && ` +
-    `set -a && source .env && set +a && ` +
-    `sudo docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans && ` +
-    `sudo docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
+    // unset shell variables that would override the env file
+    `unset $(grep -oE '"'"'^[A-Z_][A-Z0-9_]*='"'"' .env | sed '"'"'s/=//'"'"' | xargs -r) 2>/dev/null; ` +
+    `sudo docker compose -p ${projectName} -f ${composeFile} --env-file .env --profile ${cfg.profile} down --remove-orphans && ` +
+    // remove the nginx container explicitly (frees port even if compose missed it)
+    `sudo docker rm -f ${nginxContainerName} || true; ` +
+    `sudo docker compose -p ${projectName} -f ${composeFile} --env-file .env --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
   `'`;
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;

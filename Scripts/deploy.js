@@ -292,14 +292,69 @@ execSync(`sed -i 's/\\r$//' ${composeFile}`, { stdio: 'inherit' });
 const vmIP = process.env.GCP_VM_IP;
 if (!vmIP) waitAndExit('ERROR: GCP_VM_IP is not set in environment.');
 
-// 5. Pre‑deploy health checks (Docker daemon, load, connectivity – keep as original)
-//    … (omitted for brevity, but they must be present in the file)
+// ------------------------------------------------------------------
+// 5. Pre‑deploy health checks
+// ------------------------------------------------------------------
+
+// ---- Docker daemon DNS & MTU configuration ----
+const DOCKER_CONF = '{"dns":["8.8.8.8"],"mtu":1460}';
+try {
+  const currentConf = execSync(
+    `ssh -i /secret/agent-key ${SSH_OPTS} -o LogLevel=ERROR ${SSH_USER}@${vmIP} "cat /etc/docker/daemon.json 2>/dev/null || echo ''"`,
+    { encoding: 'utf8', stdio: 'pipe' }
+  ).trim();
+
+  if (currentConf !== DOCKER_CONF) {
+    console.log('Configuring Docker daemon DNS and MTU on VM...');
+    execSync(
+      `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} ` +
+      `"sudo bash -c 'echo \\'${DOCKER_CONF}\\' > /etc/docker/daemon.json && systemctl restart docker'"`,
+      { stdio: 'inherit' }
+    );
+  }
+} catch (e) {
+  console.log(`\x1b[33mWarning: Failed to verify/configure Docker daemon: ${e.message}\x1b[0m`);
+}
+
+// ---- System load check ----
+console.log('Running pre‑deploy health checks...');
+const healthCheckResult = execSync(
+  `ssh -i /secret/agent-key ${SSH_OPTS} -o LogLevel=ERROR ${SSH_USER}@${vmIP} ` +
+  `"sudo bash -c '` +
+    `load=$(awk \"{print \\\\$1}\" /proc/loadavg); ` +
+    `echo \"LOAD=\\$load\"'` +
+  `"`,
+  { encoding: 'utf8', stdio: 'pipe' }
+).trim();
+console.log(`  VM health: ${healthCheckResult}`);
+
+const loadMatch = healthCheckResult.match(/LOAD=([0-9.]+)/);
+const systemLoad = loadMatch ? parseFloat(loadMatch[1]) : 0;
+
+if (systemLoad > 2.0) {
+  console.log(`\x1b[33mWarning: System load is ${systemLoad}, which may cause timeouts. Consider stopping heavy processes before deploying.\x1b[0m`);
+}
+console.log('\x1b[32mPre‑deploy health checks passed.\x1b[0m');
+
+// ---- ghcr.io connectivity check ----
+console.log('Checking ghcr.io connectivity...');
+try {
+  execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "curl -v --connect-timeout 10 https://ghcr.io/v2/ 2>&1 | head -20"`, { stdio: 'inherit' });
+  console.log('\x1b[32mghcr.io is reachable.\x1b[0m');
+} catch (e) {
+  console.error('\x1b[31mghcr.io is unreachable. Deployment aborted to prevent using stale cached images.\x1b[0m');
+  console.error('\x1b[33mRetry the deployment when network connectivity is restored.\x1b[0m');
+  process.exit(1);
+}
+
+// ------------------------------------------------------------------
 // 6. Prepare VM directory
+// ------------------------------------------------------------------
 const deployDir = appConf.deployDir;
 console.log('Preparing deployment directory on VM...');
 execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo rm -rf ${deployDir}/certs && sudo mkdir -p ${deployDir}/certs ${deployDir}/Scripts && sudo chown -R ${SSH_USER}:${SSH_USER} ${deployDir}"`, { stdio: 'inherit' });
 
-// 7. Copy compose file and certs
+// 7. Copy files to VM
 console.log('Copying deployment files to VM...');
 const scpBase = `scp -i /secret/agent-key ${SSH_OPTS}`;
 const vmDest = `${SSH_USER}@${vmIP}:${deployDir}/`;
@@ -326,19 +381,30 @@ console.log('Logging into ghcr.io and deploying...');
 const tokenFile = '/tmp/gh_token';
 fs.writeFileSync(tokenFile, token, { mode: 0o600 });
 
-// Build .env content from all required variables (clean, no system junk)
+// Build .env content – aggressively clean every key and value
 const envLines = [];
 for (const [key, value] of Object.entries(process.env)) {
+  // Exclude internal Node.js / system variables
   if (key.startsWith('npm_') || ['PATH', 'HOME', 'PWD', 'SHELL', 'HOSTNAME'].includes(key)) continue;
-  const safeValue = value.replace(/"/g, '\\"');
-  envLines.push(`${key}="${safeValue}"`);
+
+  // Remove ALL control characters (0x00‑0x1F) and DEL (0x7F) from the KEY.
+  // Only allow printable ASCII (0x20‑0x7E) and standard UTF‑8 sequences.
+  const cleanKey = key.replace(/[\x00-\x1F\x7F]/g, '');
+  if (cleanKey === '') continue;   // skip entirely broken keys
+
+  // For the VALUE, also remove control characters, but keep standard newline/tab if needed.
+  // We remove them entirely because .env files cannot contain multi‑line values safely.
+  const cleanValue = value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  const safeValue  = cleanValue.replace(/"/g, '\\"');
+
+  envLines.push(`${cleanKey}="${safeValue}"`);
 }
 const envContent = envLines.join('\n');
 
 // Write temp file locally, SCP to VM
 const localTempEnvFile = `/tmp/deploy-env-${projectName}.env`;
 fs.writeFileSync(localTempEnvFile, envContent);
-const remoteTempEnvFile = `${deployDir}/.env.tmp`;
+const remoteTempEnvFile = `${deployDir}/.env-${projectName}.tmp`;
 execSync(`${scpBase} ${localTempEnvFile} ${SSH_USER}@${vmIP}:${remoteTempEnvFile}`, { stdio: 'inherit' });
 console.log('Temporary env file uploaded to VM');
 fs.unlinkSync(localTempEnvFile);
@@ -428,7 +494,7 @@ try { fs.unlinkSync(tokenFile); } catch (_) {}
 
 if (success) {
   // Post‑deploy verification: check that the web container actually received POSTE_PROTOCOL
-  const webContainer = `badminton-${cfg.env}-web-${cfg.env}-1`;  // adjust if naming differs
+  const webContainer = `${appConf.projectPrefix}-${cfg.env}-web-${cfg.env}-1`;  // adjust if naming differs
   try {
     const checkCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker exec ${webContainer} printenv POSTE_PROTOCOL"`;
     const output = execSync(checkCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();

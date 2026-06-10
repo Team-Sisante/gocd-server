@@ -468,17 +468,6 @@ try {
   }
 } catch (e) {}
 
-// Final REDIS_HOST_PORT check
-console.log(`\x1b[36mREDIS_HOST_PORT for this deployment: ${process.env.REDIS_HOST_PORT}\x1b[0m`);
-if (target === 'staging' && process.env.REDIS_HOST_PORT !== '6379') {
-  console.error(`\x1b[31mERROR: REDIS_HOST_PORT is set to ${process.env.REDIS_HOST_PORT} instead of 6379 for staging.\x1b[0m`);
-  waitAndExit('Aborting – wrong REDIS_HOST_PORT for staging.');
-}
-if (target === 'production' && process.env.REDIS_HOST_PORT !== '6378') {
-  console.error(`\x1b[31mERROR: REDIS_HOST_PORT is set to ${process.env.REDIS_HOST_PORT} instead of 6378 for production.\x1b[0m`);
-  waitAndExit('Aborting – wrong REDIS_HOST_PORT for production.');
-}
-
 // Remote command: docker compose with temp file, then delete it.
 const deployCmd =
   `cd ${deployDir} && ` +

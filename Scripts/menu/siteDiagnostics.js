@@ -82,17 +82,16 @@ module.exports = async function siteDiagnostics(ctx) {
 
   console.log(`\n\x1b[33m=== Diagnostics for ${p.label} ===\x1b[0m\n`);
 
-  // 1. Container status (without --env-file)
+  // 1. Container status – use docker compose ps (always accurate)
   log('Container status (all services):', '\x1b[36m');
-  // Use plain docker ps to avoid compose variable warnings
-  const psCmd = `sudo docker ps -a --filter "name=${p.project}" --format "table {{.Names}}\t{{.Image}}\t{{.Command}}\t{{.Status}}\t{{.Ports}}"`;
+  const psCmd = `sudo docker compose -p ${p.project} ps --all --format "table {{.Name}}\t{{.Image}}\t{{.Command}}\t{{.Status}}\t{{.Ports}}"`;
   const psOut = remoteExec(psCmd);
-  console.log(psOut ? psOut.trim() : 'No containers found or compose command failed.');
+  console.log(psOut ? psOut.trim() : 'No containers found for this project.');
 
-  // 2. Live environment from the running web container (NO env file)
+  // 2. Live environment from the running web container
   log('\n⚠️  Live environment from container (secrets may be visible):', '\x1b[33m');
   const envOut = remoteExec(`sudo docker exec ${p.webContainer} env 2>/dev/null || echo "Container not running"`);
-  if (envOut) {
+  if (envOut && !envOut.startsWith('Container not running')) {
     console.log(envOut.trim());
   } else {
     log(`Could not read environment from ${p.webContainer}.`, '\x1b[31m');
@@ -117,7 +116,6 @@ module.exports = async function siteDiagnostics(ctx) {
   // 5. Direct app response from inside the web container
   log(`\nDirect app response from within ${p.webContainer} (localhost:8000):`, '\x1b[36m');
 
-  // Try curl, then wget, then Python (guaranteed to be present in Django images)
   const appTest = remoteExec(
     `sudo docker exec ${p.webContainer} bash -c '
       if command -v curl >/dev/null 2>&1; then
@@ -131,10 +129,10 @@ module.exports = async function siteDiagnostics(ctx) {
   );
   console.log(`App response: ${appTest ? appTest.trim() : 'no response'}`);
 
-  // 6. Resource usage
+  // 6. Resource usage – use compose project to get container IDs
   log(`\nResource usage (CPU / MEM) for project containers:`, '\x1b[36m');
   const statsOut = remoteExec(
-    `sudo docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" $(sudo docker ps -q --filter "name=${p.project}")`
+    `sudo docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" $(sudo docker compose -p ${p.project} ps -q)`
   );
   if (statsOut) {
     console.log(statsOut.trim());

@@ -133,7 +133,7 @@ templateFiles.forEach(file => {
 const REQUIRED_VARS = [...new Set(requiredVars)];
 
 // ---------------------------------------------------------------
-// 1. Fetch secrets from GCP
+// 1. Fetch secrets from GCP (now with app‑specific prefix)
 // ---------------------------------------------------------------
 console.log('\x1b[33mFetching secrets from GCP Secret Manager...\x1b[0m');
 const certFile = process.env.CLOUDSDK_CA_CERTS_FILE;
@@ -143,20 +143,25 @@ if (certFile) {
   childEnv.REQUESTS_CA_BUNDLE = certFile;
 }
 
+// Prefix all GCP secret names with the app name to avoid collisions
+const secretPrefix = `${appName}_`;
+
 for (const secret of SECRETS_TO_FETCH) {
   try {
+    const fullSecretName = secretPrefix + secret;
     const value = execSync(
-      `gcloud secrets versions access latest --secret="${secret}" --project ${GCP_PROJECT_ID} 2>/dev/null`,
+      `gcloud secrets versions access latest --secret="${fullSecretName}" --project ${GCP_PROJECT_ID} 2>/dev/null`,
       { encoding: 'utf8', stdio: 'pipe', env: childEnv }
     ).trim();
     if (value) {
+      // Store under the original variable name (without prefix)
       process.env[secret] = value;
-      console.log(`  🔐 ${secret}`);
+      console.log(`  🔐 ${secret} (from ${fullSecretName})`);
     } else {
-      console.log(`  ⚠️  ${secret} not found or empty`);
+      console.log(`  ⚠️  ${fullSecretName} not found or empty`);
     }
   } catch (err) {
-    console.log(`  ⚠️  ${secret} not found or empty`);
+    console.log(`  ⚠️  ${fullSecretName} not found or empty`);
   }
 }
 
@@ -173,10 +178,18 @@ try {
   const variables = JSON.parse(stdout);
   variables.forEach(v => {
     if (v.name) {
-      delete process.env[v.name];
-      if (v.value !== undefined && v.value !== null) {
-        process.env[v.name] = v.value;
+      // Never allow a fetched variable to overwrite a non‑empty existing value with an empty one
+      if (v.value === '' || v.value === undefined || v.value === null) {
+        // If the fetched value is empty and we already have a non‑empty value, keep the existing one
+        if (process.env[v.name] && process.env[v.name] !== '') {
+          return;   // keep existing value
+        }
+        // Otherwise, delete and set nothing (or empty) – required later for validation
+        delete process.env[v.name];
+        return;
       }
+      // Valid non‑empty value – always overwrite
+      process.env[v.name] = v.value;
     }
   });
   console.log(`Fetched ${variables.length} variables from GitHub.`);
@@ -384,13 +397,16 @@ const tokenFile = '/tmp/gh_token';
 fs.writeFileSync(tokenFile, token, { mode: 0o600 });
 
 // Pre-flight check for variables that Docker Compose specifically complains about
-const criticalVars = ['DEBUG', 'SECRET_KEY', 'SITE_HEADER'];
+const criticalVars = ['DEBUG', 'SECRET_KEY', 'SITE_HEADER', 'POSTE_PROTOCOL'];
 console.log('\x1b[36m--- Checking critical vars in process.env before .env generation ---\x1b[0m');
 criticalVars.forEach(v => {
-  if (process.env[v] === undefined) {
+  const val = process.env[v];
+  if (val === undefined) {
     console.log(`  \x1b[31m${v}: MISSING\x1b[0m - Will be absent from .env file! Check if this is a GitHub Repository Variable instead of an Environment Variable.`);
+  } else if (val === '') {
+    console.log(`  \x1b[33m${v}: EMPTY\x1b[0m - This will cause the app to crash.`);
   } else {
-    console.log(`  \x1b[32m${v}: PRESENT\x1b[0m (length: ${process.env[v].length})`);
+    console.log(`  \x1b[32m${v}: PRESENT\x1b[0m (length: ${val.length})`);
   }
 });
 
@@ -407,7 +423,7 @@ for (const [key, value] of Object.entries(process.env)) {
   // Strip control characters from the VALUE.
   const cleanValue = (value || '').replace(/[\x00-\x1F\x7F]/g, '');
   
-  // FIX: Properly escape backslashes, quotes, and dollar signs for Docker Compose .env files
+  // Properly escape backslashes, quotes, and dollar signs for Docker Compose .env files
   const safeValue  = cleanValue
     .replace(/\\/g, '\\\\')   // Escape backslashes first (prevents escaping the closing quote)
     .replace(/"/g, '\\"')     // Escape double quotes
@@ -417,8 +433,7 @@ for (const [key, value] of Object.entries(process.env)) {
 }
 const envContent = envLines.join('\n');
 
-// FIX: Use a uniquely named .env file for each app-environment to prevent race conditions
-// if staging and production pipelines run at the exact same time on the same VM.
+// Use a uniquely named .env file for each app-environment to prevent race conditions
 const remoteEnvFile = `${deployDir}/.env-${projectName}`;
 const remoteLockFile = `${deployDir}/.deploy.lock`;
 
@@ -429,22 +444,22 @@ execSync(`${scpBase} ${localTempEnvFile} ${SSH_USER}@${vmIP}:${remoteEnvFile}`, 
 console.log(`Temporary env file uploaded to VM: ${remoteEnvFile}`);
 fs.unlinkSync(localTempEnvFile);
 
-// Verify the file contains a critical variable
-const verifyEnvFileCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -q '^POSTE_PROTOCOL=' ${remoteEnvFile} && echo 'POSTE_PROTOCOL present' || echo 'POSTE_PROTOCOL MISSING'"`;
+// Verify POSTE_PROTOCOL is present and NON‑EMPTY in the uploaded file
+const verifyPosteProtocolCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -E '^POSTE_PROTOCOL=\".+\"' ${remoteEnvFile} >/dev/null 2>&1 && echo 'OK' || echo 'FAIL'"`;
 try {
-  const verifyResult = execSync(verifyEnvFileCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
-  if (!verifyResult.includes('present')) {
-    console.error(`\x1b[31mERROR: POSTE_PROTOCOL is missing from ${remoteEnvFile} on the VM.\x1b[0m`);
-    waitAndExit('Deployment aborted – temporary env file is incomplete.');
+  const verifyResult = execSync(verifyPosteProtocolCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
+  if (verifyResult !== 'OK') {
+    console.error(`\x1b[31mERROR: POSTE_PROTOCOL is missing or empty in ${remoteEnvFile} on the VM.\x1b[0m`);
+    waitAndExit('Deployment aborted – POSTE_PROTOCOL is missing or empty.');
   }
-  console.log(`\x1b[32mVerified POSTE_PROTOCOL in temp env file.\x1b[0m`);
+  console.log(`\x1b[32mVerified POSTE_PROTOCOL is set and non‑empty.\x1b[0m`);
 } catch (e) {
-  console.error(`\x1b[31mERROR: Could not verify temp env file on VM.\x1b[0m`);
-  waitAndExit('Deployment aborted – cannot read temp env file.');
+  console.error(`\x1b[31mERROR: Could not verify POSTE_PROTOCOL on VM.\x1b[0m`);
+  waitAndExit('Deployment aborted – cannot verify POSTE_PROTOCOL.');
 }
 
 // Dump host ports for debugging
-const dumpPortsCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -E '^(POSTGRES_HOST_PORT|REDIS_HOST_PORT|MAIL_SMTP_HOST_PORT|MAIL_SUBMISSION_HOST_PORT|MAIL_SMTPS_HOST_PORT|MAIL_HTTPS_HOST_PORT|WEB_HOST_PORT)=' ${remoteEnvFile}"`;
+const dumpPortsCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -E '^(POSTGRES_HOST_PORT|REDIS_HOST_PORT|MAIL_SMTP_HOST_PORT|MAIL_SUBMISSION_HOST_PORT|MAIL_SMTPS_HOST_PORT|MAIL_HTTPS_HOST_PORT|WEB_HOST_PORT|NGINX_STAGING_HOST_PORT|NGINX_PRODUCTION_HOST_PORT)=' ${remoteEnvFile}"`;
 try {
   const portsDump = execSync(dumpPortsCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
   if (portsDump) {
@@ -452,28 +467,6 @@ try {
     console.log(portsDump);
   }
 } catch (e) {}
-
-// ---------------------------------------------------------------
-// Pre‑deploy cleanup: remove containers using the required host ports
-// ---------------------------------------------------------------
-console.log('Force‑stopping and removing any containers using required host ports...');
-const HOST_PORTS = [
-  process.env.POSTGRES_HOST_PORT,
-  process.env.REDIS_HOST_PORT,
-  process.env.MAIL_SMTP_HOST_PORT,
-  process.env.MAIL_SUBMISSION_HOST_PORT,
-  process.env.MAIL_SMTPS_HOST_PORT,
-  process.env.MAIL_HTTPS_HOST_PORT,
-  process.env.WEB_HOST_PORT,
-  process.env.NGINX_STAGING_HOST_PORT,      
-  process.env.NGINX_PRODUCTION_HOST_PORT   
-].filter(Boolean).join(' ');
-
-if (HOST_PORTS) {
-  const removeCmd = `for port in ${HOST_PORTS}; do sudo docker ps -q --filter "publish=\\$port" | xargs -r sudo docker rm -f || true; done`;
-  execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "${removeCmd}"`, { stdio: 'inherit' });
-  console.log('Port cleanup completed.');
-}
 
 // Final REDIS_HOST_PORT check
 console.log(`\x1b[36mREDIS_HOST_PORT for this deployment: ${process.env.REDIS_HOST_PORT}\x1b[0m`);
@@ -487,12 +480,10 @@ if (target === 'production' && process.env.REDIS_HOST_PORT !== '6378') {
 }
 
 // Remote command: docker compose with temp file, then delete it.
-// FIX: Use Linux `flock` with proper command chaining.
-// The entire sequence is sent as a single shell command, with each step separated by `&&`.
 const deployCmd =
   `cd ${deployDir} && ` +
   `flock ${remoteLockFile} bash -c '` +
-    `trap "rm -f ${deployDir}/.env ${remoteEnvFile}" EXIT; ` +   // Always cleanup, even on failure
+    `trap "rm -f ${deployDir}/.env ${remoteEnvFile}" EXIT; ` +
     `cp ${remoteEnvFile} .env && ` +
     `sudo docker compose -p ${projectName} -f ${composeFile} --env-file .env --profile ${cfg.profile} down --remove-orphans && ` +
     `sudo docker compose -p ${projectName} -f ${composeFile} --env-file .env --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
@@ -520,7 +511,7 @@ try { fs.unlinkSync(tokenFile); } catch (_) {}
 
 if (success) {
   // Post‑deploy verification: check that the web container actually received POSTE_PROTOCOL
-  const webContainer = `${appConf.projectPrefix}-${cfg.env}-web-${cfg.env}-1`;  // adjust if naming differs
+  const webContainer = `${appConf.projectPrefix}-${cfg.env}-web-${cfg.env}-1`;
   try {
     const checkCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker exec ${webContainer} printenv POSTE_PROTOCOL"`;
     const output = execSync(checkCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();

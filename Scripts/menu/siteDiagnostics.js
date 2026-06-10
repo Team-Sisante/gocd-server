@@ -115,8 +115,18 @@ module.exports = async function siteDiagnostics(ctx) {
 
   // 5. Direct app response from inside the web container
   log(`\nDirect app response from within ${p.webContainer} (localhost:8000):`, '\x1b[36m');
+
+  // Try curl, then wget, then Python (guaranteed to be present in Django images)
   const appTest = remoteExec(
-    `sudo docker exec ${p.webContainer} curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/ --connect-timeout 5 || echo "curl failed"`
+    `sudo docker exec ${p.webContainer} bash -c '
+      if command -v curl >/dev/null 2>&1; then
+        curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/ --connect-timeout 5
+      elif command -v wget >/dev/null 2>&1; then
+        wget -q -O /dev/null --timeout=5 http://localhost:8000/ && echo 200 || echo 000
+      else
+        python -c "import urllib.request; print(urllib.request.urlopen(\\"http://localhost:8000/\\", timeout=5).getcode())" 2>/dev/null || echo "all methods failed"
+      fi
+    '`
   );
   console.log(`App response: ${appTest ? appTest.trim() : 'no response'}`);
 

@@ -470,7 +470,7 @@ const HOST_PORTS = [
 ].filter(Boolean).join(' ');
 
 if (HOST_PORTS) {
-  const removeCmd = `for port in ${HOST_PORTS}; do sudo docker ps -q --filter "publish=\\$port" | xargs -r sudo docker rm -f; done`;
+  const removeCmd = `for port in ${HOST_PORTS}; do sudo docker ps -q --filter "publish=\\$port" | xargs -r sudo docker rm -f || true; done`;
   execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "${removeCmd}"`, { stdio: 'inherit' });
   console.log('Port cleanup completed.');
 }

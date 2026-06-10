@@ -464,7 +464,9 @@ const HOST_PORTS = [
   process.env.MAIL_SUBMISSION_HOST_PORT,
   process.env.MAIL_SMTPS_HOST_PORT,
   process.env.MAIL_HTTPS_HOST_PORT,
-  process.env.WEB_HOST_PORT
+  process.env.WEB_HOST_PORT,
+  process.env.NGINX_STAGING_HOST_PORT,      
+  process.env.NGINX_PRODUCTION_HOST_PORT   
 ].filter(Boolean).join(' ');
 
 if (HOST_PORTS) {

@@ -164,7 +164,7 @@ async function showMenu() {
             console.log('   6.7. Apply pipeline configuration to GoCD');
             console.log('   6.8. Deploy application');
             console.log('   6.9. Monitor VM status');
-            console.log('   6.10. Grant agent VM read access (one‑time setup)');
+            console.log('   6.10. Configure agent VM IAM roles (one‑time setup)');
             console.log('   6.11. Export VM settings to YAML');
             console.log('   6.12. Delete VM');
             console.log('   6.13. Create VM from saved YAML');

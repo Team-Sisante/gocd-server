@@ -33,12 +33,82 @@ module.exports = {
         await ctx.pause();
     },
     '6.10': async (ctx) => {
+        const { execSync } = require('child_process');
         const sa = `gocd-agent-secrets@${ctx.GCP_PROJECT_ID}.iam.gserviceaccount.com`;
-        ctx.sh(`gcloud projects add-iam-policy-binding ${ctx.GCP_PROJECT_ID} --member="serviceAccount:${sa}" --role="roles/compute.viewer"`);
-        ctx.sh(`gcloud projects add-iam-policy-binding ${ctx.GCP_PROJECT_ID} --member="serviceAccount:${sa}" --role="roles/compute.instanceAdmin.v1"`);
-        ctx.sh(`gcloud projects add-iam-policy-binding ${ctx.GCP_PROJECT_ID} --member="serviceAccount:${sa}" --role="roles/compute.securityAdmin"`);
-        ctx.sh(`gcloud iam service-accounts add-iam-policy-binding 575810712323-compute@developer.gserviceaccount.com --member="serviceAccount:${sa}" --role="roles/iam.serviceAccountUser"`);
-        ctx.log('Agent granted all required permissions (including project‑level SSH metadata).', '\x1b[32m');
+
+        // 1. Get available accounts (silently)
+        let accounts = [];
+        let activeAccount = '';
+        try {
+            activeAccount = execSync('gcloud config get-value account', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+            const accountsRaw = execSync('gcloud auth list --format="value(account)"', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+            accounts = accountsRaw.split('\n').map(a => a.trim()).filter(Boolean);
+        } catch (e) {
+            ctx.log('Could not list authenticated accounts. Please authenticate first.', '\x1b[31m');
+            await ctx.pause();
+            return;
+        }
+
+        if (accounts.length === 0) {
+            ctx.log('No authenticated accounts found. Please authenticate first.', '\x1b[31m');
+            await ctx.pause();
+            return;
+        }
+
+        // 2. Ask user to choose an account with Owner/Admin rights
+        const { default: inquirer } = await import('inquirer');
+        let chosenAccount = null;
+
+        ctx.rl.pause();
+        try {
+            const answers = await inquirer.prompt([
+                {
+                    type: 'list',
+                    name: 'account',
+                    message: 'Select an account with Project Owner/Admin privileges:',
+                    choices: accounts,
+                    default: activeAccount,
+                }
+            ]);
+            chosenAccount = answers.account;
+        } catch (err) {
+            ctx.log('Selection cancelled or failed. No permissions were changed.', '\x1b[31m');
+            ctx.rl.resume();
+            await ctx.pause();
+            return;
+        }
+        ctx.rl.resume();
+
+        if (!chosenAccount) {
+            ctx.log('No account selected. Aborting.', '\x1b[31m');
+            await ctx.pause();
+            return;
+        }
+
+        // 3. Temporarily switch to the chosen account, grant roles, then switch back
+        ctx.log(`Switching to ${chosenAccount} to grant permissions...`);
+        try {
+            execSync(`gcloud config set account ${chosenAccount}`, { stdio: 'inherit' });
+
+            // Grant the required roles
+            execSync(`gcloud projects add-iam-policy-binding ${ctx.GCP_PROJECT_ID} --member="serviceAccount:${sa}" --role="roles/compute.viewer"`, { stdio: 'inherit' });
+            execSync(`gcloud projects add-iam-policy-binding ${ctx.GCP_PROJECT_ID} --member="serviceAccount:${sa}" --role="roles/compute.instanceAdmin.v1"`, { stdio: 'inherit' });
+            execSync(`gcloud projects add-iam-policy-binding ${ctx.GCP_PROJECT_ID} --member="serviceAccount:${sa}" --role="roles/compute.securityAdmin"`, { stdio: 'inherit' });
+            execSync(`gcloud projects add-iam-policy-binding ${ctx.GCP_PROJECT_ID} --member="serviceAccount:${sa}" --role="roles/compute.networkAdmin"`, { stdio: 'inherit' });
+            execSync(`gcloud iam service-accounts add-iam-policy-binding 575810712323-compute@developer.gserviceaccount.com --member="serviceAccount:${sa}" --role="roles/iam.serviceAccountUser"`, { stdio: 'inherit' });
+
+            ctx.log('✅ Agent granted all required permissions.', '\x1b[32m');
+        } catch (err) {
+            ctx.log(`❌ Failed to grant permissions: ${err.message}`, '\x1b[31m');
+            ctx.log('Make sure the selected account has Project Owner/Admin rights.', '\x1b[33m');
+        } finally {
+            // Always switch back to the original agent account
+            if (activeAccount) {
+                ctx.log(`Switching back to ${activeAccount}...`);
+                execSync(`gcloud config set account ${activeAccount}`, { stdio: 'inherit' });
+            }
+        }
+
         await ctx.pause();
     },
     '6.11': async (ctx) => {
@@ -157,5 +227,5 @@ module.exports = {
     // 6.37 – Show load balancer host rules
     '6.37': async (ctx) => {
         await showHostRules(ctx);
-    },    
+    },
 };

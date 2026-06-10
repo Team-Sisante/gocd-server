@@ -570,6 +570,7 @@ function ensureURLMap() {
 
   // Rest of existing host/path update logic
   let existingHosts = [];
+  let hostToMatcher = {};
   try {
     const json = execSync(
       `gcloud compute url-maps describe ${conf.lbName} --project=${PROJECT_ID} --global --format="json"`,
@@ -578,7 +579,10 @@ function ensureURLMap() {
     const urlMap = JSON.parse(json);
     if (urlMap.hostRules) {
       urlMap.hostRules.forEach(rule => {
-        if (rule.hosts) existingHosts.push(...rule.hosts);
+        if (rule.hosts) {
+          existingHosts.push(...rule.hosts);
+          rule.hosts.forEach(h => hostToMatcher[h] = rule.pathMatcher);
+        }
       });
     }
   } catch (e) {
@@ -595,10 +599,15 @@ function ensureURLMap() {
       run(`gcloud compute url-maps add-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${b.pathMatcher} --default-service=${b.name} --new-hosts=${b.host} --global`);
     } else {
       log(`Host rule for ${b.host} already exists.`, '\x1b[32m');
+      // Ensure the existing path matcher points to the correct default service
+      const existingMatcher = hostToMatcher[b.host];
+      if (existingMatcher === b.pathMatcher) {
+        run(`gcloud compute url-maps add-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${b.pathMatcher} --default-service=${b.name} --global`, { silent: true, ignoreError: true });
+      }
     }
   }
 
-  // Path‑based backends – for existing hosts, remove and recreate the host rule
+  // Path‑based backends – for existing hosts, update the path matcher in-place if possible
   const pathBackends = conf.backends.filter(b => b.host && b.pathPrefix);
   const bareHosts = [...new Set(pathBackends.map(b => b.host))];
   for (const bareHost of bareHosts) {
@@ -614,10 +623,37 @@ function ensureURLMap() {
       log(`Creating host rule for ${bareHost} with default → ${DEFAULT_BACKEND} and paths ${pathsForThisHost}...`);
       run(`gcloud compute url-maps add-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${matcherName} --default-service=${DEFAULT_BACKEND} --new-hosts=${bareHost} --path-rules=${pathsForThisHost} --delete-orphaned-path-matcher --global`);
     } else {
-      // Host exists – remove the existing matcher (which deletes the host rule) and recreate with new rules
-      log(`Refreshing path rules for ${bareHost}...`);
-      run(`gcloud compute url-maps remove-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${matcherName} --global --quiet`, { silent: true, ignoreError: true });
-      run(`gcloud compute url-maps add-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${matcherName} --default-service=${DEFAULT_BACKEND} --new-hosts=${bareHost} --path-rules=${pathsForThisHost} --delete-orphaned-path-matcher --global`);
+      const existingMatcher = hostToMatcher[bareHost];
+      if (existingMatcher === matcherName) {
+        // Path matcher name matches – we can update it in-place without removing the host rule
+        log(`Refreshing path rules for ${bareHost} (updating path matcher ${matcherName} in-place)...`);
+        const addResult = run(
+          `gcloud compute url-maps add-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${matcherName} --default-service=${DEFAULT_BACKEND} --path-rules=${pathsForThisHost} --global`
+        );
+        if (addResult === null) {
+          throw new Error(`Failed to update path matcher for ${bareHost} – aborting.`);
+        }
+      } else {
+        // Path matcher name differs – must remove old matcher and host rule, then recreate
+        log(`Refreshing path rules for ${bareHost} (replacing path matcher ${existingMatcher} with ${matcherName})...`);
+        run(
+          `gcloud compute url-maps remove-path-matcher ${conf.lbName} --path-matcher-name=${existingMatcher} --project=${PROJECT_ID} --global --quiet`,
+          { silent: true, ignoreError: true }
+        );
+        const removeResult = run(
+          `gcloud compute url-maps remove-host-rule ${conf.lbName} --host=${bareHost} --project=${PROJECT_ID} --global --quiet`,
+          { silent: true, ignoreError: true }
+        );
+        if (removeResult === null) {
+          throw new Error(`Failed to remove host rule for ${bareHost} – aborting.`);
+        }
+        const addResult = run(
+          `gcloud compute url-maps add-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${matcherName} --default-service=${DEFAULT_BACKEND} --new-hosts=${bareHost} --path-rules=${pathsForThisHost} --delete-orphaned-path-matcher --global`
+        );
+        if (addResult === null) {
+          throw new Error(`Failed to create host rule and path matcher for ${bareHost} – aborting.`);
+        }
+      }
     }
   }
 

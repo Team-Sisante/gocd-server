@@ -383,7 +383,18 @@ console.log('Logging into ghcr.io and deploying...');
 const tokenFile = '/tmp/gh_token';
 fs.writeFileSync(tokenFile, token, { mode: 0o600 });
 
-// Build .env content – sanitize both keys and values thoroughly
+// Pre-flight check for variables that Docker Compose specifically complains about
+const criticalVars = ['DEBUG', 'SECRET_KEY', 'SITE_HEADER'];
+console.log('\x1b[36m--- Checking critical vars in process.env before .env generation ---\x1b[0m');
+criticalVars.forEach(v => {
+  if (process.env[v] === undefined) {
+    console.log(`  \x1b[31m${v}: MISSING\x1b[0m - Will be absent from .env file! Check if this is a GitHub Repository Variable instead of an Environment Variable.`);
+  } else {
+    console.log(`  \x1b[32m${v}: PRESENT\x1b[0m (length: ${process.env[v].length})`);
+  }
+});
+
+// Build .env content – aggressively clean every key and value
 const envLines = [];
 for (const [key, value] of Object.entries(process.env)) {
   // Exclude internal Node.js / system variables
@@ -391,44 +402,39 @@ for (const [key, value] of Object.entries(process.env)) {
 
   // Remove ALL control characters (0x00‑0x1F) and DEL (0x7F) from the KEY.
   const cleanKey = key.replace(/[\x00-\x1F\x7F]/g, '');
-  if (cleanKey === '') continue;
+  if (cleanKey === '') continue;   // skip entirely broken keys
 
-  // Strip newlines and control characters from the VALUE.
-  const cleanValue = value.replace(/[\x00-\x1F\x7F]/g, '');
-  const safeValue  = cleanValue.replace(/"/g, '\\"');
+  // Strip control characters from the VALUE.
+  const cleanValue = (value || '').replace(/[\x00-\x1F\x7F]/g, '');
+  
+  // FIX: Properly escape backslashes, quotes, and dollar signs for Docker Compose .env files
+  const safeValue  = cleanValue
+    .replace(/\\/g, '\\\\')   // Escape backslashes first (prevents escaping the closing quote)
+    .replace(/"/g, '\\"')     // Escape double quotes
+    .replace(/\$/g, '$$');    // Escape dollar signs to prevent Compose variable interpolation
 
   envLines.push(`${cleanKey}="${safeValue}"`);
 }
 const envContent = envLines.join('\n');
 
-// Use project-specific temp file to avoid collisions between staging and production
-const remoteTempEnvFile = `${deployDir}/.env-${projectName}.tmp`;
+// FIX: Use a uniquely named .env file for each app-environment to prevent race conditions
+// if staging and production pipelines run at the exact same time on the same VM.
+const remoteEnvFile = `${deployDir}/.env-${projectName}`;
+const remoteLockFile = `${deployDir}/.deploy.lock`;
 
 // Write temp file locally, SCP to VM
 const localTempEnvFile = `/tmp/deploy-env-${projectName}.env`;
 fs.writeFileSync(localTempEnvFile, envContent);
-execSync(`${scpBase} ${localTempEnvFile} ${SSH_USER}@${vmIP}:${remoteTempEnvFile}`, { stdio: 'inherit' });
-console.log('Temporary env file uploaded to VM');
+execSync(`${scpBase} ${localTempEnvFile} ${SSH_USER}@${vmIP}:${remoteEnvFile}`, { stdio: 'inherit' });
+console.log(`Temporary env file uploaded to VM: ${remoteEnvFile}`);
 fs.unlinkSync(localTempEnvFile);
 
-// --- DEBUG: Show the file content on the VM before using it ---
-console.log('\x1b[36mFirst 20 lines of temp env file:\x1b[0m');
-try {
-  const headOut = execSync(
-    `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "head -20 ${remoteTempEnvFile}"`,
-    { encoding: 'utf8', stdio: 'pipe' }
-  ).trim();
-  console.log(headOut);
-} catch (e) {
-  console.error('Could not read temp file on VM.');
-}
-
 // Verify the file contains a critical variable
-const verifyEnvFileCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -q '^POSTE_PROTOCOL=' ${remoteTempEnvFile} && echo 'POSTE_PROTOCOL present' || echo 'POSTE_PROTOCOL MISSING'"`;
+const verifyEnvFileCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -q '^POSTE_PROTOCOL=' ${remoteEnvFile} && echo 'POSTE_PROTOCOL present' || echo 'POSTE_PROTOCOL MISSING'"`;
 try {
   const verifyResult = execSync(verifyEnvFileCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
   if (!verifyResult.includes('present')) {
-    console.error(`\x1b[31mERROR: POSTE_PROTOCOL is missing from ${remoteTempEnvFile} on the VM.\x1b[0m`);
+    console.error(`\x1b[31mERROR: POSTE_PROTOCOL is missing from ${remoteEnvFile} on the VM.\x1b[0m`);
     waitAndExit('Deployment aborted – temporary env file is incomplete.');
   }
   console.log(`\x1b[32mVerified POSTE_PROTOCOL in temp env file.\x1b[0m`);
@@ -438,7 +444,7 @@ try {
 }
 
 // Dump host ports for debugging
-const dumpPortsCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -E '^(POSTGRES_HOST_PORT|REDIS_HOST_PORT|MAIL_SMTP_HOST_PORT|MAIL_SUBMISSION_HOST_PORT|MAIL_SMTPS_HOST_PORT|MAIL_HTTPS_HOST_PORT|WEB_HOST_PORT)=' ${remoteTempEnvFile}"`;
+const dumpPortsCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -E '^(POSTGRES_HOST_PORT|REDIS_HOST_PORT|MAIL_SMTP_HOST_PORT|MAIL_SUBMISSION_HOST_PORT|MAIL_SMTPS_HOST_PORT|MAIL_HTTPS_HOST_PORT|WEB_HOST_PORT)=' ${remoteEnvFile}"`;
 try {
   const portsDump = execSync(dumpPortsCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
   if (portsDump) {
@@ -478,13 +484,17 @@ if (target === 'production' && process.env.REDIS_HOST_PORT !== '6378') {
   waitAndExit('Aborting – wrong REDIS_HOST_PORT for production.');
 }
 
-// Remote command: docker compose with temp file, then delete it
-const deployCmd = [
-  `cd ${deployDir}`,
-  `sudo docker compose -p ${projectName} -f ${composeFile} --env-file ${remoteTempEnvFile} --profile ${cfg.profile} down --remove-orphans`,
-  `sudo docker compose -p ${projectName} -f ${composeFile} --env-file ${remoteTempEnvFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans`,
-  `sudo rm -f ${remoteTempEnvFile}`
-].join(' && ');
+// Remote command: docker compose with temp file, then delete it.
+// FIX: Use Linux `flock` with proper command chaining.
+// The entire sequence is sent as a single shell command, with each step separated by `&&`.
+const deployCmd =
+  `cd ${deployDir} && ` +
+  `flock ${remoteLockFile} bash -c '` +
+    `trap "rm -f ${deployDir}/.env ${remoteEnvFile}" EXIT; ` +   // Always cleanup, even on failure
+    `cp ${remoteEnvFile} .env && ` +
+    `sudo docker compose -p ${projectName} -f ${composeFile} --env-file .env --profile ${cfg.profile} down --remove-orphans && ` +
+    `sudo docker compose -p ${projectName} -f ${composeFile} --env-file .env --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
+  `'`;
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;
 

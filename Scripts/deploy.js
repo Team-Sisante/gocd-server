@@ -485,12 +485,14 @@ const nginxContainerName = appConf.nginxContainer[target];
 const deployCmd =
   `cd ${deployDir} && ` +
   `flock ${remoteLockFile} bash -c '` +
+    // Clean up env files to leave no secrets on disk
     `trap "rm -f ${deployDir}/.env ${remoteEnvFile}" EXIT; ` +
+    // Copy to .env and source it so shell vars are available for compose substitution
     `cp ${remoteEnvFile} .env && ` +
     `set -a && source .env && set +a && ` +
-    `sudo docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans && ` +
+    `sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans && ` +
     `sudo docker rm -f ${nginxContainerName} || true; ` +
-    `sudo docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
+    `sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
   `'`;
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;

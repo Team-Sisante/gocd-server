@@ -390,20 +390,33 @@ function getHealthCheckRequestPath(healthCheckName) {
   return path ? path.trim() : null;
 }
 
-// ----- Step 2: Health Checks (HTTP) -----
+// ----- Step 2: Health Checks (HTTP) – now corrects port AND request path in-place -----
 function ensureHealthChecks() {
-  log('Step 2: Ensuring health checks exist with correct request paths...', '\x1b[33m');
+  log('Step 2: Ensuring health checks exist with correct port and request path...', '\x1b[33m');
 
   for (const b of conf.backends) {
     const healthPath = b.pathPrefix ? (b.pathPrefix + '/') : '/';
 
     if (resourceExists('health-checks', b.healthCheck, '--global')) {
       const currentPath = getHealthCheckRequestPath(b.healthCheck);
-      if (currentPath !== healthPath) {
-        log(`Updating health check ${b.healthCheck} request path from ${currentPath} to ${healthPath}...`);
-        run(`gcloud compute health-checks update http ${b.healthCheck} --global --project=${PROJECT_ID} --request-path=${healthPath}`, { stdio: 'inherit' });
+      const currentPort = run(
+        `gcloud compute health-checks describe ${b.healthCheck} --global --project=${PROJECT_ID} --format="value(httpHealthCheck.port)"`,
+        { silent: true, ignoreError: true }
+      );
+
+      const pathMismatch = (currentPath !== healthPath);
+      const portMismatch = (currentPort !== b.port);
+
+      if (pathMismatch || portMismatch) {
+        const updateArgs = [];
+        if (portMismatch) updateArgs.push(`--port=${b.port}`);
+        if (pathMismatch) updateArgs.push(`--request-path=${healthPath}`);
+
+        log(`Updating health check ${b.healthCheck} (port ${currentPort}→${b.port}, path ${currentPath}→${healthPath})...`);
+        run(`gcloud compute health-checks update http ${b.healthCheck} --global --project=${PROJECT_ID} ${updateArgs.join(' ')}`);
+        log(`Health check ${b.healthCheck} updated.`, '\x1b[32m');
       } else {
-        log(`Health check ${b.healthCheck} already exists with correct path.`, '\x1b[32m');
+        log(`Health check ${b.healthCheck} already correct.`, '\x1b[32m');
       }
     } else {
       log(`Creating health check ${b.healthCheck} (HTTP port ${b.port}, path ${healthPath})...`);
@@ -624,35 +637,24 @@ function ensureURLMap() {
       run(`gcloud compute url-maps add-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${matcherName} --default-service=${DEFAULT_BACKEND} --new-hosts=${bareHost} --path-rules=${pathsForThisHost} --delete-orphaned-path-matcher --global`);
     } else {
       const existingMatcher = hostToMatcher[bareHost];
-      if (existingMatcher === matcherName) {
-        // Path matcher name matches – we can update it in-place without removing the host rule
-        log(`Refreshing path rules for ${bareHost} (updating path matcher ${matcherName} in-place)...`);
-        const addResult = run(
-          `gcloud compute url-maps add-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${matcherName} --default-service=${DEFAULT_BACKEND} --path-rules=${pathsForThisHost} --global`
-        );
-        if (addResult === null) {
-          throw new Error(`Failed to update path matcher for ${bareHost} – aborting.`);
-        }
-      } else {
-        // Path matcher name differs – must remove old matcher and host rule, then recreate
-        log(`Refreshing path rules for ${bareHost} (replacing path matcher ${existingMatcher} with ${matcherName})...`);
-        run(
-          `gcloud compute url-maps remove-path-matcher ${conf.lbName} --path-matcher-name=${existingMatcher} --project=${PROJECT_ID} --global --quiet`,
-          { silent: true, ignoreError: true }
-        );
-        const removeResult = run(
-          `gcloud compute url-maps remove-host-rule ${conf.lbName} --host=${bareHost} --project=${PROJECT_ID} --global --quiet`,
-          { silent: true, ignoreError: true }
-        );
-        if (removeResult === null) {
-          throw new Error(`Failed to remove host rule for ${bareHost} – aborting.`);
-        }
-        const addResult = run(
-          `gcloud compute url-maps add-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${matcherName} --default-service=${DEFAULT_BACKEND} --new-hosts=${bareHost} --path-rules=${pathsForThisHost} --delete-orphaned-path-matcher --global`
-        );
-        if (addResult === null) {
-          throw new Error(`Failed to create host rule and path matcher for ${bareHost} – aborting.`);
-        }
+      log(`Refreshing path rules for ${bareHost} (recreating path matcher ${matcherName})...`);
+      // Always remove old path matcher and host rule, then recreate – the only safe way
+      run(
+        `gcloud compute url-maps remove-path-matcher ${conf.lbName} --path-matcher-name=${existingMatcher} --project=${PROJECT_ID} --global --quiet`,
+        { silent: true, ignoreError: true }
+      );
+      const removeResult = run(
+        `gcloud compute url-maps remove-host-rule ${conf.lbName} --host=${bareHost} --project=${PROJECT_ID} --global --quiet`,
+        { silent: true, ignoreError: true }
+      );
+      if (removeResult === null) {
+        throw new Error(`Failed to remove host rule for ${bareHost} – aborting.`);
+      }
+      const addResult = run(
+        `gcloud compute url-maps add-path-matcher ${conf.lbName} --project=${PROJECT_ID} --path-matcher-name=${matcherName} --default-service=${DEFAULT_BACKEND} --new-hosts=${bareHost} --path-rules=${pathsForThisHost} --delete-orphaned-path-matcher --global`
+      );
+      if (addResult === null) {
+        throw new Error(`Failed to create host rule and path matcher for ${bareHost} – aborting.`);
       }
     }
   }

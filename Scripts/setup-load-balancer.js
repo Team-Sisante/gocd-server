@@ -774,7 +774,6 @@ function ensureHTTPRedirect() {
 }
 
 // ----- Step 10: Firewall Rules -----
-// ----- Step 10: Firewall Rules -----
 function ensureFirewallRules() {
   log('Step 10: Ensuring firewall rules for LB health checks and traffic...', '\x1b[33m');
   
@@ -816,22 +815,29 @@ function ensureFirewallRules() {
     const desiredPortsNormalized = ports.map(p => `tcp:${p}`).sort().join(',');
     
     if (currentPortsNormalized !== desiredPortsNormalized) {
-      log(`Firewall rule ${hcRule} ports are outdated. Recreating to ensure correctness...`, '\x1b[33m');
-      // Delete and recreate – this is bulletproof
-      run(`gcloud compute firewall-rules delete ${hcRule} --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
-      run([
-        'gcloud compute firewall-rules create ' + hcRule,
-        '--project=' + PROJECT_ID,
-        '--direction=INGRESS',
-        '--priority=1000',
-        '--network=default',
-        '--action=ALLOW',
-        '--rules=' + hcPorts,
-        '--source-ranges=35.191.0.0/16,130.211.0.0/22',
-        '--target-tags=gocd-deploy-target',
-        '--description="Allow GCP LB health check probes"',
-      ].join(' '));
-      log(`Firewall rule ${hcRule} recreated with correct ports.`, '\x1b[32m');
+      log(`Firewall rule ${hcRule} ports are outdated. Updating from [${currentPortsNormalized}] to [${desiredPortsNormalized}]...`, '\x1b[33m');
+      // Try to update in‑place first (fast and safe)
+      const updateResult = run(
+        `gcloud compute firewall-rules update ${hcRule} --project=${PROJECT_ID} --rules=${hcPorts}`
+      );
+      if (updateResult === null) {
+        // Update failed – fall back to delete and recreate
+        log(`Update failed. Recreating firewall rule ${hcRule}...`, '\x1b[31m');
+        run(`gcloud compute firewall-rules delete ${hcRule} --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
+        run([
+          'gcloud compute firewall-rules create ' + hcRule,
+          '--project=' + PROJECT_ID,
+          '--direction=INGRESS',
+          '--priority=1000',
+          '--network=default',
+          '--action=ALLOW',
+          '--rules=' + hcPorts,
+          '--source-ranges=35.191.0.0/16,130.211.0.0/22',
+          '--target-tags=gocd-deploy-target',
+          '--description="Allow GCP LB health check probes"',
+        ].join(' '));
+      }
+      log(`Firewall rule ${hcRule} is now correct.`, '\x1b[32m');
     } else {
       log(`Firewall rule ${hcRule} already has correct ports.`, '\x1b[32m');
     }
@@ -852,9 +858,8 @@ function ensureFirewallRules() {
     log(`Firewall rule ${hcRule} created.`, '\x1b[32m');
   }
 
-  // Traffic rule (all sources) – same logic, delete and recreate if ports mismatch
+  // Traffic rule (all sources) – same logic
   const trafficRuleName = `${conf.fwRuleName}-traffic`;
-  const trafficPorts = ports.map(p => `tcp:${p}`).join(',');
   
   if (existing.has(trafficRuleName)) {
     const currentTrafficRaw = run(
@@ -872,23 +877,29 @@ function ensureFirewallRules() {
     }
     const desiredTrafficNormalized = ports.map(p => `tcp:${p}`).sort().join(',');
     if (currentTrafficNormalized !== desiredTrafficNormalized) {
-      log(`Recreating traffic rule ${trafficRuleName}...`, '\x1b[33m');
-      run(`gcloud compute firewall-rules delete ${trafficRuleName} --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
-      run([
-        'gcloud compute firewall-rules create ' + trafficRuleName,
-        '--project=' + PROJECT_ID,
-        '--direction=INGRESS',
-        '--priority=1000',
-        '--network=default',
-        '--action=ALLOW',
-        '--rules=' + trafficPorts,
-        '--source-ranges=0.0.0.0/0',
-        '--target-tags=gocd-deploy-target',
-        '--description="Allow load balancer forwarding traffic"',
-      ].join(' '));
-      log(`Traffic rule ${trafficRuleName} recreated.`, '\x1b[32m');
+      log(`Updating traffic rule ${trafficRuleName}...`, '\x1b[33m');
+      const trafficUpdateResult = run(
+        `gcloud compute firewall-rules update ${trafficRuleName} --project=${PROJECT_ID} --rules=${hcPorts}`
+      );
+      if (trafficUpdateResult === null) {
+        log(`Update failed. Recreating traffic rule ${trafficRuleName}...`, '\x1b[31m');
+        run(`gcloud compute firewall-rules delete ${trafficRuleName} --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
+        run([
+          'gcloud compute firewall-rules create ' + trafficRuleName,
+          '--project=' + PROJECT_ID,
+          '--direction=INGRESS',
+          '--priority=1000',
+          '--network=default',
+          '--action=ALLOW',
+          '--rules=' + hcPorts,
+          '--source-ranges=0.0.0.0/0',
+          '--target-tags=gocd-deploy-target',
+          '--description="Allow load balancer forwarding traffic"',
+        ].join(' '));
+      }
+      log(`Traffic rule ${trafficRuleName} is now correct.`, '\x1b[32m');
     } else {
-      log(`Traffic rule ${trafficRuleName} already correct.`, '\x1b[32m');
+      log(`Traffic rule ${trafficRuleName} already has correct ports.`, '\x1b[32m');
     }
   } else {
     log(`Creating traffic rule ${trafficRuleName}...`);
@@ -899,7 +910,7 @@ function ensureFirewallRules() {
       '--priority=1000',
       '--network=default',
       '--action=ALLOW',
-      '--rules=' + trafficPorts,
+      '--rules=' + hcPorts,
       '--source-ranges=0.0.0.0/0',
       '--target-tags=gocd-deploy-target',
       '--description="Allow load balancer forwarding traffic"',

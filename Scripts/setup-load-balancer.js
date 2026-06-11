@@ -772,11 +772,16 @@ function ensureHTTPRedirect() {
 }
 
 // ----- Step 10: Firewall Rules -----
+// ----- Step 10: Firewall Rules -----
 function ensureFirewallRules() {
   log('Step 10: Ensuring firewall rules for LB health checks and traffic...', '\x1b[33m');
   
-  // Collect ALL unique ports from backends
-  const ports = [...new Set(conf.backends.map(b => b.port))];
+  // Collect ALL unique ports from backends (excluding any empty/invalid ones)
+  const ports = [...new Set(conf.backends.map(b => b.port).filter(p => p))];
+  if (ports.length === 0) {
+    log('No backend ports defined – skipping firewall rules.', '\x1b[33m');
+    return;
+  }
   const hcPorts = ports.map(p => `tcp:${p}`).join(',');
   
   const rawRules = run(
@@ -790,22 +795,41 @@ function ensureFirewallRules() {
   
   if (existing.has(hcRule)) {
     // Get current allowed ports
-    const currentPorts = run(
+    const currentPortsRaw = run(
       `gcloud compute firewall-rules describe ${hcRule} --project=${PROJECT_ID} --format="value(allowed[0].ports)"`,
       { silent: true, ignoreError: true }
     ) || '';
     
-    if (currentPorts !== hcPorts) {
-      log(`Updating firewall rule ${hcRule} from [${currentPorts}] to [${hcPorts}]...`, '\x1b[33m');
-      // NOT silent – errors must be visible
-      const result = run(
-        `gcloud compute firewall-rules update ${hcRule} --project=${PROJECT_ID} --rules=${hcPorts}`
-      );
-      if (result === null) {
-        log(`Failed to update firewall rule ${hcRule} – this will prevent health checks from passing.`, '\x1b[31m');
-      } else {
-        log(`Firewall rule ${hcRule} updated.`, '\x1b[32m');
-      }
+    // Normalize to a sorted, comma-separated list of "tcp:port" strings
+    let currentPortsNormalized = '';
+    if (currentPortsRaw) {
+      // The output may already be a comma-separated list of numbers like "8007,8008"
+      const parts = currentPortsRaw.split(',')
+        .map(p => p.trim())
+        .filter(p => /^\d+$/.test(p))
+        .map(p => `tcp:${p}`)
+        .sort();
+      currentPortsNormalized = parts.join(',');
+    }
+    const desiredPortsNormalized = ports.map(p => `tcp:${p}`).sort().join(',');
+    
+    if (currentPortsNormalized !== desiredPortsNormalized) {
+      log(`Firewall rule ${hcRule} ports are outdated. Recreating to ensure correctness...`, '\x1b[33m');
+      // Delete and recreate – this is bulletproof
+      run(`gcloud compute firewall-rules delete ${hcRule} --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
+      run([
+        'gcloud compute firewall-rules create ' + hcRule,
+        '--project=' + PROJECT_ID,
+        '--direction=INGRESS',
+        '--priority=1000',
+        '--network=default',
+        '--action=ALLOW',
+        '--rules=' + hcPorts,
+        '--source-ranges=35.191.0.0/16,130.211.0.0/22',
+        '--target-tags=gocd-deploy-target',
+        '--description="Allow GCP LB health check probes"',
+      ].join(' '));
+      log(`Firewall rule ${hcRule} recreated with correct ports.`, '\x1b[32m');
     } else {
       log(`Firewall rule ${hcRule} already has correct ports.`, '\x1b[32m');
     }
@@ -826,31 +850,46 @@ function ensureFirewallRules() {
     log(`Firewall rule ${hcRule} created.`, '\x1b[32m');
   }
 
-  // Traffic rule for actual load‑balancer forwarding (all sources)
+  // Traffic rule (all sources) – same logic, delete and recreate if ports mismatch
   const trafficRuleName = `${conf.fwRuleName}-traffic`;
   const trafficPorts = ports.map(p => `tcp:${p}`).join(',');
   
   if (existing.has(trafficRuleName)) {
-    const currentTrafficPorts = run(
+    const currentTrafficRaw = run(
       `gcloud compute firewall-rules describe ${trafficRuleName} --project=${PROJECT_ID} --format="value(allowed[0].ports)"`,
       { silent: true, ignoreError: true }
     ) || '';
-    
-    if (currentTrafficPorts !== trafficPorts) {
-      log(`Updating firewall rule ${trafficRuleName} from [${currentTrafficPorts}] to [${trafficPorts}]...`, '\x1b[33m');
-      const result = run(
-        `gcloud compute firewall-rules update ${trafficRuleName} --project=${PROJECT_ID} --rules=${trafficPorts}`
-      );
-      if (result === null) {
-        log(`Failed to update firewall rule ${trafficRuleName}.`, '\x1b[31m');
-      } else {
-        log(`Firewall rule ${trafficRuleName} updated.`, '\x1b[32m');
-      }
+    let currentTrafficNormalized = '';
+    if (currentTrafficRaw) {
+      const parts = currentTrafficRaw.split(',')
+        .map(p => p.trim())
+        .filter(p => /^\d+$/.test(p))
+        .map(p => `tcp:${p}`)
+        .sort();
+      currentTrafficNormalized = parts.join(',');
+    }
+    const desiredTrafficNormalized = ports.map(p => `tcp:${p}`).sort().join(',');
+    if (currentTrafficNormalized !== desiredTrafficNormalized) {
+      log(`Recreating traffic rule ${trafficRuleName}...`, '\x1b[33m');
+      run(`gcloud compute firewall-rules delete ${trafficRuleName} --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
+      run([
+        'gcloud compute firewall-rules create ' + trafficRuleName,
+        '--project=' + PROJECT_ID,
+        '--direction=INGRESS',
+        '--priority=1000',
+        '--network=default',
+        '--action=ALLOW',
+        '--rules=' + trafficPorts,
+        '--source-ranges=0.0.0.0/0',
+        '--target-tags=gocd-deploy-target',
+        '--description="Allow load balancer forwarding traffic"',
+      ].join(' '));
+      log(`Traffic rule ${trafficRuleName} recreated.`, '\x1b[32m');
     } else {
-      log(`Firewall rule ${trafficRuleName} already has correct ports.`, '\x1b[32m');
+      log(`Traffic rule ${trafficRuleName} already correct.`, '\x1b[32m');
     }
   } else {
-    log(`Creating firewall rule ${trafficRuleName} (allow all sources)...`);
+    log(`Creating traffic rule ${trafficRuleName}...`);
     run([
       'gcloud compute firewall-rules create ' + trafficRuleName,
       '--project=' + PROJECT_ID,
@@ -863,7 +902,7 @@ function ensureFirewallRules() {
       '--target-tags=gocd-deploy-target',
       '--description="Allow load balancer forwarding traffic"',
     ].join(' '));
-    log(`Firewall rule ${trafficRuleName} created.`, '\x1b[32m');
+    log(`Traffic rule ${trafficRuleName} created.`, '\x1b[32m');
   }
 }
 

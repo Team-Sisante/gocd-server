@@ -510,7 +510,7 @@ const deployCmd =
     `sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans && ` +
     `sudo docker rm -f ${nginxContainerName} || true; ` +
     `sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans && ` +
-    `( sudo docker exec ${mailContainerName} /bin/bash -c "cd /opt/mailserver && ./setup.sh -a \${POSTE_ADMIN_PASSWORD}" || true )` +
+    `( sudo -E docker exec ${webContainer} python manage.py setup_posteio_server || true )` +
   `'`;
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;

@@ -71,6 +71,10 @@ const APP_CONFIG = {
       staging:    'badminton_court-nginx-staging',
       production: 'badminton_court-nginx-production',
     },
+    mailContainer: {
+      staging:    'badminton-staging-mail-staging-1',
+      production: 'badminton-production-mail-production-1',
+    },
   },
   humrine_site: {
     projectPrefix: 'humrine',
@@ -80,6 +84,7 @@ const APP_CONFIG = {
       staging:    'humrine-nginx-staging',
       production: 'humrine-nginx-production',
     },
+    // humrine does not use a mail container
   },
 };
 
@@ -88,7 +93,9 @@ if (!appConf) {
   console.error(`Unknown app: ${appName}. Expected badminton_court or humrine_site.`);
   process.exit(1);
 }
-process.env.GIT_REPO_REPONAME = appName;   
+
+// Force the correct repository name for GitHub variable fetches
+process.env.GIT_REPO_REPONAME = appName;
 
 process.chdir(appConf.workDir);
 
@@ -478,7 +485,17 @@ try {
 } catch (e) {}
 
 // ------------------------------------------------------------------
-// Remote deploy command – SOURCES the .env file to override shell vars
+// Validate mail container name (if the app uses one)
+// ------------------------------------------------------------------
+const mailContainerName = appConf.mailContainer && appConf.mailContainer[target];
+if (!mailContainerName) {
+  console.error(`\x1b[31mERROR: No mail container defined for ${appName} ${target}.\x1b[0m`);
+  console.error('Define mailContainer in APP_CONFIG inside deploy.js.');
+  process.exit(1);
+}
+
+// ------------------------------------------------------------------
+// Remote deploy command – sources the .env file and syncs mail password
 // ------------------------------------------------------------------
 const nginxContainerName = appConf.nginxContainer[target];
 
@@ -492,7 +509,8 @@ const deployCmd =
     `set -a && source .env && set +a && ` +
     `sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans && ` +
     `sudo docker rm -f ${nginxContainerName} || true; ` +
-    `sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
+    `sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans && ` +
+    `( sudo docker exec ${mailContainerName} /bin/bash -c "./setup.sh -a \${POSTE_ADMIN_PASSWORD}" || true )` +
   `'`;
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;

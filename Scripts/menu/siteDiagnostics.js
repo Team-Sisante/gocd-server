@@ -552,9 +552,12 @@ except Exception as e:
         const varName = line.substring(0, eqIndex).trim();
         const value = line.substring(eqIndex + 1).trim();
         if (secretPattern.test(varName)) {
-          // FULL masking — never expose any part of a secret.
-          // Safe to copy/paste and share.
-          secrets.push(`${varName}=***`);
+          // // FULL masking — never expose any part of a secret.
+          // // Safe to copy/paste and share.
+          // secrets.push(`${varName}=***`);
+          // Mask the secret: show first 4 chars + '***'
+          const masked = value.length > 4 ? value.substring(0, 4) + '***' : '***';
+          secrets.push(`${varName}=${masked}`);          
         } else {
           regular.push(line);
         }

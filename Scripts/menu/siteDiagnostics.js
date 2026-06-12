@@ -153,7 +153,7 @@ module.exports = async function siteDiagnostics(ctx) {
       elif command -v wget >/dev/null 2>&1; then
         wget -q -O /dev/null --timeout=5 http://localhost:8000/ && echo 200 || echo 000
       else
-        python3 -c "import urllib.request; print(urllib.request.urlopen(\\"http://localhost:8000/\\", timeout=5).getcode())" 2>/dev/null || echo "all methods failed"
+        echo "NO_HTTP_CLIENT"
       fi
     '`
   );
@@ -178,131 +178,183 @@ module.exports = async function siteDiagnostics(ctx) {
   // ---- Inter-Container Connectivity ----
   console.log(`\n${yellow('--- Inter-Container Connectivity ---')}`);
 
+  // Detect the Python binary path inside the web container.
+  // Django is running so Python exists, but the shell PATH may not include it
+  // (e.g. venv only activated by the entrypoint script).
+  // We must verify each candidate actually outputs "Python" with --version
+  // to avoid false positives like PyInstaller binaries.
+  log('\nDetecting Python binary in web container:', cyan(''));
+  const pythonBin = remoteExec(
+    `sudo docker exec ${p.webContainer} bash -c '
+      # 1. Check the actual executable of the running Django process
+      if [ -f /proc/1/exe ]; then
+        exe=$(readlink /proc/1/exe 2>/dev/null)
+        if [ -n "$exe" ] && "$exe" --version 2>&1 | grep -qi "Python"; then echo "$exe"; exit 0; fi
+      fi
+      # 2. Check the cmdline of the running process for the python path
+      if [ -f /proc/1/cmdline ]; then
+        ppath=$(cat /proc/1/cmdline | tr "\\0" "\\n" | head -1)
+        if [ -n "$ppath" ] && [ -f "$ppath" ] && "$ppath" --version 2>&1 | grep -qi "Python"; then echo "$ppath"; exit 0; fi
+      fi
+      # 3. Check common venv locations
+      for v in /app/.venv/bin/python3 /opt/venv/bin/python3 /venv/bin/python3 /app/venv/bin/python3 /srv/venv/bin/python3; do
+        if [ -f "$v" ] && "$v" --version 2>&1 | grep -qi "Python"; then echo "$v"; exit 0; fi
+      done
+      # 4. Search common install locations
+      for p in python3 /usr/local/bin/python3 /usr/bin/python3; do
+        if command -v $p >/dev/null 2>&1 && $p --version 2>&1 | grep -qi "Python"; then echo "$p"; exit 0; fi
+      done
+      # 5. Last resort: find any python3 binary
+      found=$(find /usr/local /usr /opt /app -name python3 -type f 2>/dev/null | head -1)
+      if [ -n "$found" ] && "$found" --version 2>&1 | grep -qi "Python"; then echo "$found"; exit 0; fi
+      echo "NOT_FOUND"
+    '`
+  )?.trim() || 'NOT_FOUND';
+
+  if (pythonBin === 'NOT_FOUND') {
+    console.log(yellow('⚠️  Python binary not found in PATH — DB and Redis tests will use basic TCP checks'));
+  } else {
+    console.log(green(`✅ Python found: ${pythonBin}`));
+  }
+
   // 6a. Database connectivity
   if (p.dbContainer) {
     log('\nDatabase connectivity:', cyan(''));
-    const dbTest = remoteExec(
-      `sudo docker exec ${p.webContainer} bash -c '
-        DB_HOST=$(printenv POSTGRES_HOST || printenv DB_HOST || echo "")
-        DB_PORT=$(printenv POSTGRES_PORT || echo "5432")
-        DB_NAME=$(printenv POSTGRES_DB || printenv POSTGRES_NAME || echo "")
-        if [ -z "$DB_HOST" ]; then
-          echo "SKIP: No POSTGRES_HOST/DB_HOST env var found"
-        else
-          python3 -c "
+
+    if (pythonBin !== 'NOT_FOUND') {
+      const dbTest = remoteExec(
+        `sudo docker exec ${p.webContainer} ${pythonBin} -c "
 import psycopg2, os
 try:
     conn = psycopg2.connect(
-        host=os.environ.get(\\"POSTGRES_HOST\\", os.environ.get(\\"DB_HOST\\", \\"\\")),
-        port=os.environ.get(\\"POSTGRES_PORT\\", \\"5432\\"),
-        dbname=os.environ.get(\\"POSTGRES_DB\\", \\"\\"),
-        user=os.environ.get(\\"POSTGRES_USER\\", \\"\\"),
-        password=os.environ.get(\\"POSTGRES_PASSWORD\\", \\"\\"),
+        host=os.environ.get('POSTGRES_HOST', os.environ.get('DB_HOST', '')),
+        port=os.environ.get('POSTGRES_PORT', '5432'),
+        dbname=os.environ.get('POSTGRES_DB', ''),
+        user=os.environ.get('POSTGRES_USER', ''),
+        password=os.environ.get('POSTGRES_PASSWORD', ''),
         connect_timeout=5,
     )
     cur = conn.cursor()
-    cur.execute(\\"SELECT 1\\")
-    print(f\\"✅ Database reachable at {os.environ.get(\\"POSTGRES_HOST\\", os.environ.get(\\"DB_HOST\\", \\"?\\"))}:{os.environ.get(\\"POSTGRES_PORT\\", \\"5432\\")}\\")
+    cur.execute('SELECT 1')
+    print(f'✅ Database reachable at {os.environ.get(\"POSTGRES_HOST\", os.environ.get(\"DB_HOST\", \"?\"))}:{os.environ.get(\"POSTGRES_PORT\", \"5432\")}')
     conn.close()
 except Exception as e:
-    print(f\\"❌ Database connection failed: {e}\\")
-"
-        fi
-      '`
-    );
-    console.log(dbTest ? dbTest.trim() : 'Could not test database connectivity.');
+    print(f'❌ Database connection failed: {e}')
+"`
+      );
+      console.log(dbTest ? dbTest.trim() : 'Could not test database connectivity.');
+    } else {
+      // Fallback: basic TCP check
+      const dbHost = remoteExec(`sudo docker exec ${p.webContainer} printenv POSTGRES_HOST 2>/dev/null || sudo docker exec ${p.webContainer} printenv DB_HOST 2>/dev/null`)?.trim();
+      const dbPort = remoteExec(`sudo docker exec ${p.webContainer} printenv POSTGRES_PORT 2>/dev/null`)?.trim() || '5432';
+      if (dbHost) {
+        const tcpTest = remoteExec(
+          `sudo docker exec ${p.webContainer} bash -c 'echo > /dev/tcp/${dbHost}/${dbPort} 2>&1 && echo "TCP_OK" || echo "TCP_FAILED"'`
+        );
+        if (tcpTest && tcpTest.includes('TCP_OK')) {
+          console.log(green(`✅ Database TCP reachable at ${dbHost}:${dbPort} (Python not available — cannot test authentication)`));
+        } else {
+          console.log(red(`❌ Database NOT reachable at ${dbHost}:${dbPort}`));
+        }
+      } else {
+        console.log(yellow('SKIP: No POSTGRES_HOST/DB_HOST env var found'));
+      }
+    }
   }
 
   // 6b. Redis connectivity
   if (p.redisContainer) {
     log('\nRedis connectivity:', cyan(''));
-    const redisTest = remoteExec(
-      `sudo docker exec ${p.webContainer} bash -c '
-        REDIS_URL=$(printenv REDIS_URL || echo "")
-        if [ -z "$REDIS_URL" ]; then
-          echo "SKIP: No REDIS_URL env var found"
-        else
-          python3 -c "
+
+    if (pythonBin !== 'NOT_FOUND') {
+      const redisTest = remoteExec(
+        `sudo docker exec ${p.webContainer} ${pythonBin} -c "
 import redis, os
 try:
-    r = redis.from_url(os.environ[\\"REDIS_URL\\"], socket_connect_timeout=5)
+    r = redis.from_url(os.environ['REDIS_URL'], socket_connect_timeout=5)
     r.ping()
-    print(f\\"✅ Redis reachable at {os.environ[\\"REDIS_URL\\"]}\\")
+    print(f'✅ Redis reachable at {os.environ[\"REDIS_URL\"]}')
 except Exception as e:
-    print(f\\"❌ Redis connection failed: {e}\\")
-"
-        fi
-      '`
-    );
-    console.log(redisTest ? redisTest.trim() : 'Could not test Redis connectivity.');
+    print(f'❌ Redis connection failed: {e}')
+"`
+      );
+      console.log(redisTest ? redisTest.trim() : 'Could not test Redis connectivity.');
+    } else {
+      // Fallback: basic TCP check
+      const redisUrl = remoteExec(`sudo docker exec ${p.webContainer} printenv REDIS_URL 2>/dev/null`)?.trim();
+      if (redisUrl) {
+        // Parse host:port from redis://host:port/db
+        const redisMatch = redisUrl.match(/redis:\/\/([^:]+):(\d+)/);
+        if (redisMatch) {
+          const tcpTest = remoteExec(
+            `sudo docker exec ${p.webContainer} bash -c 'echo > /dev/tcp/${redisMatch[1]}/${redisMatch[2]} 2>&1 && echo "TCP_OK" || echo "TCP_FAILED"'`
+          );
+          if (tcpTest && tcpTest.includes('TCP_OK')) {
+            console.log(green(`✅ Redis TCP reachable at ${redisMatch[1]}:${redisMatch[2]} (Python not available — cannot test PING)`));
+          } else {
+            console.log(red(`❌ Redis NOT reachable at ${redisMatch[1]}:${redisMatch[2]}`));
+          }
+        } else {
+          console.log(yellow(`SKIP: Could not parse REDIS_URL: ${redisUrl}`));
+        }
+      } else {
+        console.log(yellow('SKIP: No REDIS_URL env var found'));
+      }
+    }
   }
 
   // 6c. SMTP connectivity + authentication
+  // Uses the Django API endpoint /api/test/check-smtp-auth/ which runs the
+  // full SMTP test (TCP + handshake + auth) using Django's own settings.
+  // No need for Python in the shell — curl/wget hits the already-running Django.
+  // NOTE: Do NOT use curl -f here — it discards the response body on 503,
+  // which prevents us from reading the JSON error details.
   if (p.mailContainer) {
     log('\nSMTP connectivity and authentication:', cyan(''));
     const smtpTest = remoteExec(
       `sudo docker exec ${p.webContainer} bash -c '
-        EMAIL_HOST=$(printenv EMAIL_HOST || echo "")
-        EMAIL_PORT=$(printenv EMAIL_PORT || echo "")
-        EMAIL_USE_SSL=$(printenv EMAIL_USE_SSL || echo "False")
-        EMAIL_USE_TLS=$(printenv EMAIL_USE_TLS || echo "False")
-        EMAIL_HOST_USER=$(printenv EMAIL_HOST_USER || echo "")
-        EMAIL_HOST_PASSWORD=$(printenv EMAIL_HOST_PASSWORD || echo "")
-
-        if [ -z "$EMAIL_HOST" ] || [ -z "$EMAIL_PORT" ]; then
-          echo "SKIP: EMAIL_HOST or EMAIL_PORT env var missing"
+        if command -v curl >/dev/null 2>&1; then
+          curl -s http://localhost:8000/api/test/check-smtp-auth/ --connect-timeout 10 2>&1
+        elif command -v wget >/dev/null 2>&1; then
+          wget -qO- http://localhost:8000/api/test/check-smtp-auth/ --timeout=10 2>&1
         else
-          python3 -c "
-import smtplib, ssl, os, socket
-
-host = os.environ.get(\\"EMAIL_HOST\\", \\"\\")
-port = int(os.environ.get(\\"EMAIL_PORT\\", \\"0\\"))
-use_ssl = os.environ.get(\\"EMAIL_USE_SSL\\", \\"False\\").lower() == \\"true\\"
-use_tls = os.environ.get(\\"EMAIL_USE_TLS\\", \\"False\\").lower() == \\"true\\"
-user = os.environ.get(\\"EMAIL_HOST_USER\\", \\"\\")
-pw = os.environ.get(\\"EMAIL_HOST_PASSWORD\\", \\"\\")
-proto = \\"SSL\\" if use_ssl else (\\"STARTTLS\\" if use_tls else \\"PLAIN\\")
-
-# Step 1: TCP connectivity
-try:
-    sock = socket.create_connection((host, port), timeout=5)
-    sock.close()
-    print(f\\"✅ TCP connection to {host}:{port} succeeded\\")
-except (socket.timeout, socket.error) as e:
-    print(f\\"❌ TCP connection to {host}:{port} failed: {e}\\")
-    print(f\\"   → Check that {host} resolves and port {port} is open on the Docker network\\")
-    exit(0)
-
-# Step 2: SMTP handshake + auth
-try:
-    if use_ssl:
-        ctx = ssl.create_default_context()
-        with smtplib.SMTP_SSL(host, port, context=ctx, timeout=10) as s:
-            s.login(user, pw)
-            print(f\\"✅ SMTP {proto}:{port} authentication succeeded for {user}\\")
-    elif use_tls:
-        with smtplib.SMTP(host, port, timeout=10) as s:
-            s.starttls(context=ssl.create_default_context())
-            s.login(user, pw)
-            print(f\\"✅ SMTP {proto}:{port} authentication succeeded for {user}\\")
-    else:
-        with smtplib.SMTP(host, port, timeout=10) as s:
-            s.login(user, pw)
-            print(f\\"✅ SMTP {proto}:{port} authentication succeeded for {user}\\")
-except smtplib.SMTPAuthenticationError as e:
-    print(f\\"❌ SMTP {proto}:{port} authentication FAILED for {user}: {e}\\")
-    print(f\\"   → The mail container is running but the password is wrong\\")
-    print(f\\"   → Run the Poste.io setup command to reset the admin mailbox password\\")
-except smtplib.SMTPConnectError as e:
-    print(f\\"❌ SMTP {proto}:{port} connection error: {e}\\")
-    print(f\\"   → Poste.io SMTP service may not be ready yet\\")
-except Exception as e:
-    print(f\\"❌ SMTP {proto}:{port} error: {type(e).__name__}: {e}\\")
-"
+          echo "NO_HTTP_CLIENT"
         fi
       '`
     );
-    console.log(smtpTest ? smtpTest.trim() : 'Could not test SMTP connectivity.');
+
+    if (smtpTest && smtpTest.includes('NO_HTTP_CLIENT')) {
+      console.log(yellow('⚠️  No curl/wget available to call SMTP test endpoint'));
+    } else if (smtpTest && smtpTest.trim()) {
+      try {
+        const body = JSON.parse(smtpTest.trim());
+        if (body.status === 'ok') {
+          console.log(green(`✅ SMTP ${body.protocol} authentication succeeded for ${body.host}`));
+        } else {
+          console.log(red(`❌ SMTP test failed: ${body.error}`));
+          if (body.protocol) console.log(`   Protocol: ${body.protocol}`);
+          if (body.host) console.log(`   Host: ${body.host}`);
+          // Provide actionable advice based on the error
+          if (body.error && body.error.includes('Authentication failed')) {
+            console.log('   → The mail container is running but the password is wrong');
+            console.log('   → Run the Poste.io setup command to reset the admin mailbox password');
+          } else if (body.error && body.error.includes('Connection refused')) {
+            console.log('   → Poste.io SMTP service is not listening on that port');
+            console.log('   → EMAIL_PORT may be wrong — check it matches the internal container port (465, not 464)');
+          } else if (body.error && body.error.includes('Missing required')) {
+            console.log('   → Django settings are incomplete — check EMAIL_HOST, EMAIL_PORT, etc.');
+          } else if (body.error && body.error.includes('timed out')) {
+            console.log('   → TCP connection timed out — the mail container may not be reachable');
+            console.log('   → Check Docker network connectivity between web and mail containers');
+          }
+        }
+      } catch (_) {
+        // Not JSON — just print the raw output
+        console.log(smtpTest.trim());
+      }
+    } else {
+      console.log(red('❌ No response from SMTP test endpoint'));
+    }
   }
 
   // ---- Nginx diagnostics ----
@@ -348,11 +400,11 @@ except Exception as e:
       );
       if (dnsTest && dnsTest.includes('RESOLVE_FAILED')) {
         console.log(red(`❌ "${backendHost}" does NOT resolve from nginx container`));
-        console.log(`   → Nginx cannot reach the backend because DNS fails`);
-        console.log(`   → Both containers must be on the same Docker network`);
+        console.log('   → Nginx cannot reach the backend because DNS fails');
+        console.log('   → Both containers must be on the same Docker network');
 
         // Show which networks each container is on
-        log(`\n   Container networks:`, cyan(''));
+        log('\n   Container networks:', cyan(''));
         const nginxNets = remoteExec(
           `sudo docker inspect --format='{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' ${p.nginxContainer}`
         );
@@ -367,11 +419,11 @@ except Exception as e:
           const webNetList = webNets.trim().split(/\s+/);
           const shared = nginxNetList.filter(n => webNetList.includes(n));
           if (shared.length === 0) {
-            console.log(red(`   ❌ No shared Docker network! They cannot communicate.`));
-            console.log(`   → Fix: Add both containers to the same network in docker-compose.vm.yml`);
+            console.log(red('   ❌ No shared Docker network! They cannot communicate.'));
+            console.log('   → Fix: Add both containers to the same network in docker-compose.vm.yml');
           } else {
             console.log(green(`   ✅ Shared network(s): ${shared.join(', ')}`));
-            console.log(`   → DNS should work but the service name may differ. Check docker-compose service names.`);
+            console.log('   → DNS should work but the service name may differ. Check docker-compose service names.');
           }
         }
       } else if (dnsTest && dnsTest.trim()) {
@@ -397,9 +449,9 @@ except Exception as e:
         console.log(green(`✅ ${backendHost}:${backendPort} is reachable from nginx container`));
       } else {
         console.log(red(`❌ ${backendHost}:${backendPort} is NOT reachable from nginx container`));
-        console.log(`   → DNS may resolve but the backend is not listening or a firewall blocks it`);
+        console.log('   → DNS may resolve but the backend is not listening or a firewall blocks it');
         console.log(`   → Verify the web container is running: sudo docker ps --filter name=${p.webContainer}`);
-        console.log(`   → Verify both are on the same Docker network (see above)`);
+        console.log('   → Verify both are on the same Docker network (see above)');
       }
 
       // 7f. Full HTTP proxy test (sends the correct Host header)
@@ -417,7 +469,7 @@ except Exception as e:
       );
 
       if (proxyTestOut && proxyTestOut.includes('NO_HTTP_CLIENT')) {
-        console.log(yellow(`⚠️  No curl/wget available in nginx container to test HTTP`));
+        console.log(yellow('⚠️  No curl/wget available in nginx container to test HTTP'));
       } else if (proxyTestOut) {
         // Parse HTTP status code from wget output (e.g. "HTTP/1.1 200 OK") or curl output (e.g. "HTTP 200")
         const wgetMatch = proxyTestOut.match(/HTTP\/[\d.]+\s+(\d+)/);
@@ -428,7 +480,7 @@ except Exception as e:
           console.log(green(`✅ Nginx can reach the web backend at http://${backendHost}:${backendPort}/ (HTTP ${code})`));
         } else if (code === 400) {
           console.log(green(`✅ Nginx CAN reach the web backend at http://${backendHost}:${backendPort}/`));
-          console.log(`   HTTP 400 is expected — Django rejects requests without a valid Host header.`);
+          console.log('   HTTP 400 is expected — Django rejects requests without a valid Host header.');
           console.log(`   Through the real proxy, Nginx sends "Host: ${p.domain}" which is in ALLOWED_HOSTS.`);
         } else if (code && code >= 500) {
           console.log(red(`❌ Backend returned HTTP ${code} — server error`));
@@ -437,12 +489,12 @@ except Exception as e:
           console.log(yellow(`⚠️  Backend returned HTTP ${code}`));
           console.log(`   Response: ${proxyTestOut.trim()}`);
         } else {
-          console.log(red(`❌ Could not parse HTTP response from backend`));
+          console.log(red('❌ Could not parse HTTP response from backend'));
           console.log(`   Response: ${proxyTestOut.trim()}`);
         }
       } else {
         console.log(red(`❌ No response from web backend at http://${backendHost}:${backendPort}/`));
-        console.log(`   → Check the Docker network configuration`);
+        console.log('   → Check the Docker network configuration');
       }
     } else {
       log('\nCould not extract proxy_pass target from nginx config.', yellow(''));
@@ -475,7 +527,7 @@ except Exception as e:
       }
     }
 
-    log(`\nFirewall rule (allow-lb-health-checks) allowed ports:`, cyan(''));
+    log('\nFirewall rule (allow-lb-health-checks) allowed ports:', cyan(''));
     const fwPorts = gcloudExec(
       `gcloud compute firewall-rules describe allow-lb-health-checks --project=${GCP_PROJECT_ID} --format="value(allowed[0].ports)"`
     );

@@ -498,6 +498,7 @@ if (!mailContainerName) {
 // Remote deploy command – sources the .env file and syncs mail password
 // ------------------------------------------------------------------
 const nginxContainerName = appConf.nginxContainer[target];
+const webContainer = `${appConf.projectPrefix}-${cfg.env}-web-${cfg.env}-1`;
 
 const deployCmd =
   `cd ${deployDir} && ` +

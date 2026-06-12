@@ -511,7 +511,8 @@ const deployCmd =
     `sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans && ` +
     `sudo docker rm -f ${nginxContainerName} || true; ` +
     `sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans && ` +
-    `( sudo -E docker exec ${webContainer} python manage.py setup_posteio_server || true )` +
+    `echo "Syncing Poste.io admin password..." && ` +
+    `( sudo -E docker exec ${webContainer} badminton_court_linux setup_posteio_server || true )` +
   `'`;
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;

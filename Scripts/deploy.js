@@ -21,6 +21,11 @@ const target   = process.argv[3];
 const token    = process.argv[4];
 
 console.log(`app: ${appName}, target: ${target}`);
+console.log('--- Environment Variables Check ---');
+['GCP_PROJECT_ID', 'GCP_ZONE', 'GIT_REPO_USERNAME', 'VM_SSH_USER', 'GCP_VM_IP', 'GCP_VM_NAME'].forEach(v => {
+  console.log(`${v}: ${process.env[v] ? 'PRESENT' : 'MISSING'}`);
+});
+console.log('-----------------------------------');
 
 /**
  * Helper to warn, pause for user input, and exit.
@@ -464,6 +469,8 @@ const localTempEnvFile = `/tmp/deploy-env-${projectName}.env`;
 fs.writeFileSync(localTempEnvFile, envContent);
 execSync(`${scpBase} ${localTempEnvFile} ${SSH_USER}@${vmIP}:${remoteEnvFile}`, { stdio: 'inherit' });
 console.log(`Temporary env file uploaded to VM: ${remoteEnvFile}`);
+// Verify file exists
+execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "ls -l ${remoteEnvFile} && cat ${remoteEnvFile} | head -n 5"`, { stdio: 'inherit' });
 fs.unlinkSync(localTempEnvFile);
 
 // Verify POSTE_PROTOCOL is non‑empty
@@ -506,7 +513,6 @@ const mailSetupCmd = mailContainerName ?
   `echo "Configuring SMTP relay..." && ` +
   `node Scripts/configure-poste-relay.js && ` : '';
 const nginxContainerName = appConf.nginxContainer[target];
-const webContainer = `${appConf.projectPrefix}-${cfg.env}-web-${cfg.env}-1`;
 
 const deployCmd =
   `cd ${deployDir} && ` +

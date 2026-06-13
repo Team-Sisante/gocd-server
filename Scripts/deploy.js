@@ -511,7 +511,7 @@ const mailSetupCmd = mailContainerName ?
   `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:create ${process.env.EMAIL_HOST_USER} "${process.env.POSTE_ADMIN_PASSWORD}" Admin || true ) && ` +
   `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:admin ${process.env.EMAIL_HOST_USER} || true ) && ` +
   `echo "Configuring SMTP relay..." && ` +
-  `node Scripts/configure-poste-relay.js && ` : '';
+  `node Scripts/configure-poste-relay.js ${mailContainerName} && ` : '';
 const nginxContainerName = appConf.nginxContainer[target];
 
 const deployCmd =

@@ -55,9 +55,13 @@ if (token) {
 // ------------------------------------------------------------------
 process.env.GITHUB_TOKEN = token;
 
+// Derive SSH key path from DEPLOY_SSH_KEY_PATH if available, otherwise default to secrets/agent-key relative to this script
+const sshKeyPath = process.env.DEPLOY_SSH_KEY_PATH || path.resolve(__dirname, '..', 'secrets', 'agent-key');
+
 // Common SSH options
 const SSH_OPTS = '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o KexAlgorithms=+diffie-hellman-group14-sha256';
-const SCP_OPTS = SSH_OPTS;
+const SSH_CMD = `ssh -i "${sshKeyPath}" ${SSH_OPTS}`;
+const SCP_CMD = `scp -i "${sshKeyPath}" ${SSH_OPTS}`;
 
 if (!appName || !target || !token) {
   console.error('Usage: deploy.js <app_name> staging|production <github_token>');
@@ -265,7 +269,7 @@ const projectName = `${appConf.projectPrefix}-${cfg.env}`;
 const composeFile = 'docker-compose.vm.yml';
 
 // 1. Fix SSH key permissions
-try { execSync('chmod 600 /secret/agent-key', { stdio: 'pipe' }); } catch (_) {}
+try { execSync(`chmod 600 ${sshKeyPath}`, { stdio: 'pipe' }); } catch (_) {}
 
 // 2. Setup nginx if the template and certificates exist
 let useNginx = false;
@@ -337,14 +341,14 @@ if (!vmIP) waitAndExit('ERROR: GCP_VM_IP is not set in environment.');
 const DOCKER_CONF = '{"dns":["8.8.8.8"],"mtu":1460}';
 try {
   const currentConf = execSync(
-    `ssh -i /secret/agent-key ${SSH_OPTS} -o LogLevel=ERROR ${SSH_USER}@${vmIP} "cat /etc/docker/daemon.json 2>/dev/null || echo ''"`,
+    `ssh -i ${sshKeyPath} ${SSH_OPTS} -o LogLevel=ERROR ${SSH_USER}@${vmIP} "cat /etc/docker/daemon.json 2>/dev/null || echo ''"`,
     { encoding: 'utf8', stdio: 'pipe' }
   ).trim();
 
   if (currentConf !== DOCKER_CONF) {
     console.log('Configuring Docker daemon DNS and MTU on VM...');
     execSync(
-      `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} ` +
+      `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} ` +
       `"sudo bash -c 'echo \\'${DOCKER_CONF}\\' > /etc/docker/daemon.json && systemctl restart docker'"`,
       { stdio: 'inherit' }
     );
@@ -356,7 +360,7 @@ try {
 // ---- System load check ----
 console.log('Running pre‑deploy health checks...');
 const healthCheckResult = execSync(
-  `ssh -i /secret/agent-key ${SSH_OPTS} -o LogLevel=ERROR ${SSH_USER}@${vmIP} ` +
+  `ssh -i ${sshKeyPath} ${SSH_OPTS} -o LogLevel=ERROR ${SSH_USER}@${vmIP} ` +
   `"sudo bash -c '` +
     `load=$(awk \"{print \\\\$1}\" /proc/loadavg); ` +
     `echo \"LOAD=\\$load\"'` +
@@ -376,7 +380,7 @@ console.log('\x1b[32mPre‑deploy health checks passed.\x1b[0m');
 // ---- ghcr.io connectivity check ----
 console.log('Checking ghcr.io connectivity...');
 try {
-  execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "curl -v --connect-timeout 10 https://ghcr.io/v2/ 2>&1 | head -20"`, { stdio: 'inherit' });
+  execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "curl -v --connect-timeout 10 https://ghcr.io/v2/ 2>&1 | head -20"`, { stdio: 'inherit' });
   console.log('\x1b[32mghcr.io is reachable.\x1b[0m');
 } catch (e) {
   console.error('\x1b[31mghcr.io is unreachable. Deployment aborted to prevent using stale cached images.\x1b[0m');
@@ -389,11 +393,11 @@ try {
 // ------------------------------------------------------------------
 const deployDir = appConf.deployDir;
 console.log('Preparing deployment directory on VM...');
-execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo rm -rf ${deployDir}/certs && sudo mkdir -p ${deployDir}/certs ${deployDir}/Scripts && sudo chown -R ${SSH_USER}:${SSH_USER} ${deployDir}"`, { stdio: 'inherit' });
+execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo rm -rf ${deployDir}/certs && sudo mkdir -p ${deployDir}/certs ${deployDir}/Scripts && sudo chown -R ${SSH_USER}:${SSH_USER} ${deployDir}"`, { stdio: 'inherit' });
 
 // 7. Copy files to VM
 console.log('Copying deployment files to VM...');
-const scpBase = `scp -i /secret/agent-key ${SSH_OPTS}`;
+const scpBase = `scp -i ${sshKeyPath} ${SSH_OPTS}`;
 const vmDest = `${SSH_USER}@${vmIP}:${deployDir}/`;
 
 execSync(`${scpBase} ${composeFile} ${vmDest}`, { stdio: 'inherit' });
@@ -408,7 +412,7 @@ if (useNginx) {
 const mailSetupScript = 'Scripts/mail-setup.sh';
 if (fs.existsSync(mailSetupScript)) {
   execSync(`${scpBase} ${mailSetupScript} ${vmDest}Scripts/`, { stdio: 'inherit' });
-  execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "chmod +x ${deployDir}/Scripts/mail-setup.sh"`, { stdio: 'inherit' });
+  execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "chmod +x ${deployDir}/Scripts/mail-setup.sh"`, { stdio: 'inherit' });
 }
 
 const posteRelayScript = 'Scripts/configure-poste-relay.js';
@@ -470,11 +474,11 @@ fs.writeFileSync(localTempEnvFile, envContent);
 execSync(`${scpBase} ${localTempEnvFile} ${SSH_USER}@${vmIP}:${remoteEnvFile}`, { stdio: 'inherit' });
 console.log(`Temporary env file uploaded to VM: ${remoteEnvFile}`);
 // Verify file exists
-execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "ls -l ${remoteEnvFile} && cat ${remoteEnvFile} | head -n 5"`, { stdio: 'inherit' });
+execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "ls -l ${remoteEnvFile} && cat ${remoteEnvFile} | head -n 5"`, { stdio: 'inherit' });
 fs.unlinkSync(localTempEnvFile);
 
 // Verify POSTE_PROTOCOL is non‑empty
-const verifyPosteProtocolCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -E '^POSTE_PROTOCOL=\".+\"' ${remoteEnvFile} >/dev/null 2>&1 && echo 'OK' || echo 'FAIL'"`;
+const verifyPosteProtocolCmd = `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -E '^POSTE_PROTOCOL=\".+\"' ${remoteEnvFile} >/dev/null 2>&1 && echo 'OK' || echo 'FAIL'"`;
 try {
   const verifyResult = execSync(verifyPosteProtocolCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
   if (verifyResult !== 'OK') {
@@ -488,7 +492,7 @@ try {
 }
 
 // Dump host ports for debugging
-const dumpPortsCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -E '^(POSTGRES_HOST_PORT|REDIS_HOST_PORT|MAIL_SMTP_HOST_PORT|MAIL_SUBMISSION_HOST_PORT|MAIL_SMTPS_HOST_PORT|MAIL_HTTPS_HOST_PORT|WEB_HOST_PORT|NGINX_STAGING_HOST_PORT|NGINX_PRODUCTION_HOST_PORT)=' ${remoteEnvFile}"`;
+const dumpPortsCmd = `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -E '^(POSTGRES_HOST_PORT|REDIS_HOST_PORT|MAIL_SMTP_HOST_PORT|MAIL_SUBMISSION_HOST_PORT|MAIL_SMTPS_HOST_PORT|MAIL_HTTPS_HOST_PORT|WEB_HOST_PORT|NGINX_STAGING_HOST_PORT|NGINX_PRODUCTION_HOST_PORT)=' ${remoteEnvFile}"`;
 try {
   const portsDump = execSync(dumpPortsCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
   if (portsDump) {
@@ -505,13 +509,16 @@ const mailContainerName = appConf.mailContainer ? appConf.mailContainer[target] 
 // ------------------------------------------------------------------
 // Remote deploy command – sources the .env file and syncs mail password
 // ------------------------------------------------------------------
+// Derive SSH key path from DEPLOY_SSH_KEY_PATH if available, otherwise default to secrets/agent-key
+// Note: sshKeyPath is already defined at the top of this script.
+
 const mailSetupCmd = mailContainerName ? 
   `echo "Syncing Poste.io admin password..." && ` +
   `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console domain:create ${process.env.POSTE_DOMAIN || 'aeropace.com'} || true ) && ` +
   `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:create ${process.env.EMAIL_HOST_USER} "${process.env.POSTE_ADMIN_PASSWORD}" Admin || true ) && ` +
   `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:admin ${process.env.EMAIL_HOST_USER} || true ) && ` +
   `echo "Configuring SMTP relay..." && ` +
-  `node Scripts/configure-poste-relay.js ${mailContainerName} && ` : '';
+  `node ${deployDir}/Scripts/configure-poste-relay.js ${mailContainerName} "${sshKeyPath}" && ` : '';
 const nginxContainerName = appConf.nginxContainer[target];
 
 const deployCmd =
@@ -534,7 +541,7 @@ let success = false;
 for (let attempt = 1; attempt <= 3; attempt++) {
   try {
     if (attempt > 1) console.log(`\x1b[33mRetry attempt ${attempt}/3...\x1b[0m`);
-    execSync(`ssh -i /secret/agent-key ${SSH_OPTS} -o LogLevel=ERROR ${SSH_USER}@${vmIP} "${fullRemote.replace(/"/g, '\\"')}" < ${tokenFile}`, { stdio: 'inherit' });
+    execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} -o LogLevel=ERROR ${SSH_USER}@${vmIP} "${fullRemote.replace(/"/g, '\\"')}" < ${tokenFile}`, { stdio: 'inherit' });
     success = true;
     break;
   } catch (e) {
@@ -552,7 +559,7 @@ if (success) {
   // Post‑deploy verification: check that the web container actually received POSTE_PROTOCOL
   const webContainer = `${appConf.projectPrefix}-${cfg.env}-web-${cfg.env}-1`;
   try {
-    const checkCmd = `ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker exec ${webContainer} printenv POSTE_PROTOCOL"`;
+    const checkCmd = `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker exec ${webContainer} printenv POSTE_PROTOCOL"`;
     const output = execSync(checkCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
     if (!output) {
       console.error(`\x1b[31mWARNING: POSTE_PROTOCOL is empty inside the web container.\x1b[0m`);

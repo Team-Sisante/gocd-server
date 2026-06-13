@@ -493,16 +493,18 @@ try {
 // ------------------------------------------------------------------
 // Validate mail container name (if the app uses one)
 // ------------------------------------------------------------------
-const mailContainerName = appConf.mailContainer && appConf.mailContainer[target];
-if (!mailContainerName) {
-  console.error(`\x1b[31mERROR: No mail container defined for ${appName} ${target}.\x1b[0m`);
-  console.error('Define mailContainer in APP_CONFIG inside deploy.js.');
-  process.exit(1);
-}
+const mailContainerName = appConf.mailContainer ? appConf.mailContainer[target] : null;
 
 // ------------------------------------------------------------------
 // Remote deploy command – sources the .env file and syncs mail password
 // ------------------------------------------------------------------
+const mailSetupCmd = mailContainerName ? 
+  `echo "Syncing Poste.io admin password..." && ` +
+  `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console domain:create ${process.env.POSTE_DOMAIN || 'aeropace.com'} || true ) && ` +
+  `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:create ${process.env.EMAIL_HOST_USER} "${process.env.POSTE_ADMIN_PASSWORD}" Admin || true ) && ` +
+  `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:admin ${process.env.EMAIL_HOST_USER} || true ) && ` +
+  `echo "Configuring SMTP relay..." && ` +
+  `node Scripts/configure-poste-relay.js && ` : '';
 const nginxContainerName = appConf.nginxContainer[target];
 const webContainer = `${appConf.projectPrefix}-${cfg.env}-web-${cfg.env}-1`;
 
@@ -517,13 +519,8 @@ const deployCmd =
     `sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans && ` +
     `sudo docker rm -f ${nginxContainerName} || true; ` +
     `sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans && ` +
-    `echo "Syncing Poste.io admin password..." && ` +
-    `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console domain:create ${process.env.POSTE_DOMAIN || 'aeropace.com'} || true ) && ` +
-    `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:create ${process.env.EMAIL_HOST_USER} "${process.env.POSTE_ADMIN_PASSWORD}" Admin || true ) && ` +
-    `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:admin ${process.env.EMAIL_HOST_USER} || true ) && ` +
-    `echo "Configuring SMTP relay..." && ` +
-    `node Scripts/configure-poste-relay.js` +
-  `'`;
+    mailSetupCmd +
+    `true'`;
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;
 

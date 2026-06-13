@@ -163,8 +163,9 @@ if (certFile) {
 const secretPrefix = `${appName}_`;
 
 for (const secret of SECRETS_TO_FETCH) {
+  let fullSecretName;
   try {
-    const fullSecretName = secretPrefix + secret;
+    fullSecretName = secretPrefix + secret;
     const value = execSync(
       `gcloud secrets versions access latest --secret="${fullSecretName}" --project ${GCP_PROJECT_ID} 2>/dev/null`,
       { encoding: 'utf8', stdio: 'pipe', env: childEnv }
@@ -405,6 +406,11 @@ if (fs.existsSync(mailSetupScript)) {
   execSync(`ssh -i /secret/agent-key ${SSH_OPTS} ${SSH_USER}@${vmIP} "chmod +x ${deployDir}/Scripts/mail-setup.sh"`, { stdio: 'inherit' });
 }
 
+const posteRelayScript = 'Scripts/configure-poste-relay.js';
+if (fs.existsSync(posteRelayScript)) {
+  execSync(`${scpBase} ${posteRelayScript} ${vmDest}Scripts/`, { stdio: 'inherit' });
+}
+
 // ---------------------------------------------------------------
 // 8. Deploy
 // ---------------------------------------------------------------
@@ -516,7 +522,7 @@ const deployCmd =
     `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:create ${process.env.EMAIL_HOST_USER} "${process.env.POSTE_ADMIN_PASSWORD}" Admin || true ) && ` +
     `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:admin ${process.env.EMAIL_HOST_USER} || true ) && ` +
     `echo "Configuring SMTP relay..." && ` +
-    `node /badminton_court/Scripts/configure-poste-relay.js` +
+    `node Scripts/configure-poste-relay.js` +
   `'`;
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;

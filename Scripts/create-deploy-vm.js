@@ -157,10 +157,11 @@ async function main() {
       ['setup-firewall-rules.js',      'Configure firewall rules (6.2)'],
       ['setup-agent-ssh.js',           'Setup agent SSH keys (6.3)'],
       // Polling for tool readiness can be slow; note added for user clarity
-      ['wait-for-vm-tools.js',       'Install / Verify tools on VM (6.4) - This takes ~5-10 min'],
+      ['wait-for-vm-tools.js',         'Install / Verify tools on VM (6.4) - This takes ~5-10 min'],
       ['setup-gcp-secrets-access.js',  'Setup GCP Secret Manager access (6.5)'],
       ['check-vm-reachability.js',     'Check VM running & reachable (6.6)'],
-      ['apply-pipeline-config.js',     'Apply pipeline configuration (6.7)']
+      ['apply-pipeline-config.js',     'Apply pipeline configuration (6.7)'],
+      ['configure-poste-relay.js',     'Configure Poste.io SMTP Relay (Automated)']
     ];
 
     for (const [script, label] of steps) {

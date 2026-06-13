@@ -514,7 +514,9 @@ const deployCmd =
     `echo "Syncing Poste.io admin password..." && ` +
     `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console domain:create ${process.env.POSTE_DOMAIN || 'aeropace.com'} || true ) && ` +
     `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:create ${process.env.EMAIL_HOST_USER} "${process.env.POSTE_ADMIN_PASSWORD}" Admin || true ) && ` +
-    `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:admin ${process.env.EMAIL_HOST_USER} || true )` +
+    `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:admin ${process.env.EMAIL_HOST_USER} || true ) && ` +
+    `echo "Configuring SMTP relay..." && ` +
+    `node /badminton_court/Scripts/configure-poste-relay.js` +
   `'`;
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;

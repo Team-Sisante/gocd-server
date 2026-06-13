@@ -161,7 +161,6 @@ async function main() {
       ['setup-gcp-secrets-access.js',  'Setup GCP Secret Manager access (6.5)'],
       ['check-vm-reachability.js',     'Check VM running & reachable (6.6)'],
       ['apply-pipeline-config.js',     'Apply pipeline configuration (6.7)'],
-      ['configure-poste-relay.js',     'Configure Poste.io SMTP Relay (Automated)']
     ];
 
     for (const [script, label] of steps) {

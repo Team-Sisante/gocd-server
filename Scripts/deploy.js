@@ -525,12 +525,11 @@ const deployCmd =
   `cd ${deployDir} && ` +
   `flock ${remoteLockFile} bash -c '` +
     // Clean up env files to leave no secrets on disk
-    `trap "rm -f ${remoteEnvFile}" EXIT; ` +
     `sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} --env-file ${remoteEnvFile} down --remove-orphans && ` +
     `sudo docker rm -f ${nginxContainerName} || true; ` +
     `sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} --env-file ${remoteEnvFile} up -d --pull always --force-recreate --remove-orphans && ` +
     mailSetupCmd +
-    `true'`;
+    `rm -f ${remoteEnvFile} && true'`;
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;
 

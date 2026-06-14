@@ -15,6 +15,9 @@ const dotenv = require('dotenv');
 // Load environment
 dotenv.config({ path: path.join(__dirname, '..', '.env.docker') });
 
+const isWindows = os.platform() === "win32";
+global.isWindows = isWindows;
+
 // Module-level error flag (prevents screen clear)
 let errorDisplayed = false;
 function setErrorDisplayed(val) { errorDisplayed = val; }
@@ -75,7 +78,6 @@ const VM_SSH_USER    = process.env.VM_SSH_USER;
 const SITE_URL       = process.env.SITE_URL || '';
 
 const PROJECT_ROOT = path.join(__dirname, '..');
-const isWindows = os.platform() === 'win32';
 
 // ----- Shared helpers -----
 function log(msg, color = '\x1b[36m') { console.log(`${color}%s\x1b[0m`, msg); }
@@ -148,6 +150,7 @@ async function showMenu() {
             console.log('   4.9. Reset GoCD admin password (from .env.docker)');
             console.log('   4.10. Update .env.docker password from GoCD container');
             console.log('   4.11. Display & test GoCD admin credentials');
+            console.log('   4.12. Create SSL certs');
             console.log('\n\x1b[36m5. TROUBLE-SHOOT CONTAINERS\x1b[0m');
             console.log('   5.1. Rebuild and Re-start gocd-server container');
             console.log('   5.2. Rebuild and Re-start gocd-agent-1 container');
@@ -269,6 +272,10 @@ async function showMenu() {
                 case '4.5': case '4.6': case '4.7': case '4.8':
                 case '4.9': case '4.10': case '4.11':
                     await systemUtilities[choice](ctx); break;
+                case '4.12':
+                    sh('node Scripts/generate-certs.js');
+                    await pause();
+                    break;
                 case '5.1': case '5.2': case '5.3': case '5.4': case '5.5':
                     await dockerTroubleshoot[choice](ctx); break;
                 case '6.1': case '6.2': case '6.3': case '6.4':

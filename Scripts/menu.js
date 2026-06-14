@@ -101,6 +101,7 @@ function sh(cmd, options = {}) {
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 function ask(question) {
+    if (rl.closed) return Promise.resolve('');
     return new Promise(resolve => rl.question(`\x1b[33m${question}\x1b[0m`, a => resolve(a.trim())));
 }
 async function pause() { await ask('Press Enter to continue...'); }
@@ -110,7 +111,7 @@ function openUrl(url) {
 }
 
 // ----- Main menu loop -----
-async function showMenu() {
+async function showMenu(ctx) {
     while (true) {
         try {
             if (!errorDisplayed) process.stdout.write('\x1Bc');
@@ -134,6 +135,7 @@ async function showMenu() {
             console.log('   2.1. Trigger badminton_court pipeline');
             console.log('   2.2. View pipeline history');
             console.log('   2.3. Unlock pipeline');
+            console.log('   2.4. Cancel pipeline stage');
             console.log('\n\x1b[36m3. AGENT MANAGEMENT\x1b[0m');
             console.log('   3.1. View agent status');
             console.log('   3.2. Enable agent');
@@ -197,6 +199,7 @@ async function showMenu() {
             console.log('\n\x1b[36m0. Exit\x1b[0m\n');
 
             const choice = await ask('Select an option: ');
+            if (choice === '0') return;
             await executeChoice(choice, ctx);
         } catch (err) {
             errorDisplayed = true;
@@ -266,6 +269,10 @@ async function executeChoice(choice, ctx) {
         case '4.12':
             sh('node Scripts/generate-certs.js');
             break;
+        case '2.4':
+            const cancelPipeline = require('./menu/cancelPipeline');
+            await cancelPipeline(ctx);
+            break;
         case '5.1': case '5.2': case '5.3': case '5.4': case '5.5':
             await dockerTroubleshoot[choice](ctx); break;
         case '6.1': case '6.2': case '6.3': case '6.4':
@@ -322,6 +329,7 @@ async function executeChoice(choice, ctx) {
     } else {
         console.log('\x1b[36mGoCD Management Menu is starting...\x1b[0m');
         await new Promise(r => setTimeout(r, 2000));
-        await showMenu();
+        await showMenu(ctx);
+        rl.close();
     }
 })().catch(async (err) => { /* ... */ });

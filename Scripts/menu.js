@@ -197,122 +197,7 @@ async function showMenu() {
             console.log('\n\x1b[36m0. Exit\x1b[0m\n');
 
             const choice = await ask('Select an option: ');
-
-            // Build context object – no defaults for environment variables
-            const ctx = {
-                sh, log, ask, pause, execSync, openUrl, sleep, isWindows, PROJECT_ROOT,
-                GOCD_BASE, GOCD_USER, GOCD_PASS, GOCD_PORT, GCP_PROJECT_ID, GCP_ZONE, GCP_VM_NAME,
-                GCP_VM_IP, VM_SSH_USER,
-                // Aliases used by vmSetup and other SSH‑based options
-                SSH_USER: VM_SSH_USER,
-                VM_IP:   GCP_VM_IP,
-                STAGING_APP_URL: GCP_VM_IP ? `https://${GCP_VM_IP}:8443` : (process.env.STAGING_APP_URL || ''),
-                PRODUCTION_APP_URL: GCP_VM_IP ? `https://${GCP_VM_IP}:9443` : (process.env.PRODUCTION_APP_URL || ''),  
-                rl, setErrorDisplayed, errorDisplayed,
-                SSH_KEY_PATH: path.join(__dirname, '..', 'secrets', 'agent-key')
-            };
-
-            // Define validation requirements
-            const requirements = {
-                // Container Management
-                '1.1': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
-                
-                // Pipeline Management
-                '2.1': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
-                '2.2': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
-                '2.3': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
-
-                // Agent Management
-                '3.1': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
-                '3.2': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
-                '3.3': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
-
-                // VM Setup
-                '6.1': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.2': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.3': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.4': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.5': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.6': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.7': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT', 'GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.8': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT', 'GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.9': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.10': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.11': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.12': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.13': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.14': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.15': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.21': ['GCP_VM_IP', 'VM_SSH_USER'],
-                '6.22': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.23': ['GCP_PROJECT_ID'],
-                '6.24': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
-                '6.29': ['GCP_VM_IP', 'VM_SSH_USER'],
-                '6.30': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME']
-            };
-
-            if (requirements[choice] && !validateEnv(requirements[choice])) {
-                await pause();
-                continue;
-            }
-
-            switch (choice) {
-                case '1.1': case '1.2': case '1.3': case '1.4':
-                case '1.5': case '1.6': case '1.7': case '1.8': case '1.9':
-                    await containerManagement[choice](ctx); break;
-                case '1.10':
-                    await containerLogs.selectContainerAndAct(ctx); break;
-                case '2.1':
-                    await triggerPipeline(ctx); break;
-                case '2.2': case '2.3':
-                    await pipelineManagement[choice](ctx); break;
-                case '3.1': case '3.2': case '3.3':
-                    await pipelineManagement[choice](ctx); break;
-                case '4.1': case '4.2': case '4.3': case '4.4':
-                case '4.5': case '4.6': case '4.7': case '4.8':
-                case '4.9': case '4.10': case '4.11':
-                    await systemUtilities[choice](ctx); break;
-                case '4.12':
-                    sh('node Scripts/generate-certs.js');
-                    await pause();
-                    break;
-                case '5.1': case '5.2': case '5.3': case '5.4': case '5.5':
-                    await dockerTroubleshoot[choice](ctx); break;
-                case '6.1': case '6.2': case '6.3': case '6.4':
-                case '6.5': case '6.6': case '6.7': case '6.8':
-                case '6.9': case '6.10': case '6.11': case '6.12':
-                case '6.13': case '6.14': case '6.15': case '6.16':
-                case '6.17': case '6.18': case '6.19': case '6.20':
-                case '6.21': case '6.22': case '6.23': case '6.24': 
-                case '6.25': case '6.26': case '6.28': 
-                case '6.29': case '6.30': case '6.31': case '6.37':
-                    await vmSetup[choice](ctx); break;
-                case '6.32': case '6.33':
-                    // Lazy-load the new SSL modules
-                    const listSSLCerts = require('./menu/listSSLCerts');
-                    const deleteSSLCert = require('./menu/deleteSSLCert');
-                    if (choice === '6.32') await listSSLCerts(ctx);
-                    else await deleteSSLCert(ctx);
-                    break;                    
-                case '6.34':
-                    const monitorCert = require('./menu/monitorCert');
-                    await monitorCert(ctx);
-                    break;          
-                case '6.35':
-                    const activeProxyCert = require('./menu/activeProxyCert');
-                    await activeProxyCert(ctx);
-                    break;                 
-                case '6.36':
-                    const certDomainStatus = require('./menu/certDomainStatus');
-                    await certDomainStatus(ctx);
-                    break;                                 
-                case '0':
-                    rl.close();
-                    process.exit(0);
-                default:
-                    log('Invalid option.', '\x1b[31m');
-                    await pause();
-            }
+            await executeChoice(choice, ctx);
         } catch (err) {
             errorDisplayed = true;
             process.stdout.write('\x1Bc');
@@ -324,13 +209,119 @@ async function showMenu() {
     }
 }
 
+async function executeChoice(choice, ctx) {
+    // Build context object – no defaults for environment variables
+    const requirements = {
+        // ... (existing requirements)
+        '1.1': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
+        '2.1': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
+        '2.2': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
+        '2.3': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
+        '3.1': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
+        '3.2': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
+        '3.3': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT'],
+        '6.1': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.2': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.3': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.4': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.5': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.6': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.7': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT', 'GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.8': ['GOCD_ADMIN_USERNAME', 'GOCD_ADMIN_PASSWORD', 'GOCD_SERVER_URL_PROTOCOL', 'GOCD_SERVER_URL_HOST', 'GOCD_SERVER_PORT', 'GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.9': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.10': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.11': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.12': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.13': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.14': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.15': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.21': ['GCP_VM_IP', 'VM_SSH_USER'],
+        '6.22': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.23': ['GCP_PROJECT_ID'],
+        '6.24': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME', 'GCP_VM_IP', 'VM_SSH_USER'],
+        '6.29': ['GCP_VM_IP', 'VM_SSH_USER'],
+        '6.30': ['GCP_PROJECT_ID', 'GCP_ZONE', 'GCP_VM_NAME']
+    };
+
+    if (requirements[choice] && !validateEnv(requirements[choice])) {
+        return;
+    }
+
+    switch (choice) {
+        case '1.1': case '1.2': case '1.3': case '1.4':
+        case '1.5': case '1.6': case '1.7': case '1.8': case '1.9':
+            await containerManagement[choice](ctx); break;
+        case '1.10':
+            await containerLogs.selectContainerAndAct(ctx); break;
+        case '2.1':
+            await triggerPipeline(ctx); break;
+        case '2.2': case '2.3':
+            await pipelineManagement[choice](ctx); break;
+        case '3.1': case '3.2': case '3.3':
+            await pipelineManagement[choice](ctx); break;
+        case '4.1': case '4.2': case '4.3': case '4.4':
+        case '4.5': case '4.6': case '4.7': case '4.8':
+        case '4.9': case '4.10': case '4.11':
+            await systemUtilities[choice](ctx); break;
+        case '4.12':
+            sh('node Scripts/generate-certs.js');
+            break;
+        case '5.1': case '5.2': case '5.3': case '5.4': case '5.5':
+            await dockerTroubleshoot[choice](ctx); break;
+        case '6.1': case '6.2': case '6.3': case '6.4':
+        case '6.5': case '6.6': case '6.7': case '6.8':
+        case '6.9': case '6.10': case '6.11': case '6.12':
+        case '6.13': case '6.14': case '6.15': case '6.16':
+        case '6.17': case '6.18': case '6.19': case '6.20':
+        case '6.21': case '6.22': case '6.23': case '6.24': 
+        case '6.25': case '6.26': case '6.28': 
+        case '6.29': case '6.30': case '6.31': case '6.37':
+            await vmSetup[choice](ctx); break;
+        case '6.32': case '6.33':
+            const listSSLCerts = require('./menu/listSSLCerts');
+            const deleteSSLCert = require('./menu/deleteSSLCert');
+            if (choice === '6.32') await listSSLCerts(ctx);
+            else await deleteSSLCert(ctx);
+            break;                    
+        case '6.34':
+            const monitorCert = require('./menu/monitorCert');
+            await monitorCert(ctx);
+            break;          
+        case '6.35':
+            const activeProxyCert = require('./menu/activeProxyCert');
+            await activeProxyCert(ctx);
+            break;                 
+        case '6.36':
+            const certDomainStatus = require('./menu/certDomainStatus');
+            await certDomainStatus(ctx);
+            break;                                 
+        default:
+            log('Invalid option.', '\x1b[31m');
+    }
+}
+
 (async () => {
-    console.log('\x1b[36mGoCD Management Menu is starting...\x1b[0m');
-    await new Promise(r => setTimeout(r, 2000));
-    await showMenu();
-})().catch(async (err) => {
-    console.error(err);
-    await ask('Press Enter to return to the menu...');
-    rl.close();
-    process.exit(1);
-});
+    const args = process.argv.slice(2);
+    // Shared context object
+    const ctx = {
+        sh, log, ask, pause, execSync, openUrl, sleep, isWindows, PROJECT_ROOT,
+        GOCD_BASE, GOCD_USER, GOCD_PASS, GOCD_PORT, GCP_PROJECT_ID, GCP_ZONE, GCP_VM_NAME,
+        GCP_VM_IP, VM_SSH_USER,
+        SSH_USER: VM_SSH_USER,
+        VM_IP:   GCP_VM_IP,
+        STAGING_APP_URL: GCP_VM_IP ? `https://${GCP_VM_IP}:8443` : (process.env.STAGING_APP_URL || ''),
+        PRODUCTION_APP_URL: GCP_VM_IP ? `https://${GCP_VM_IP}:9443` : (process.env.PRODUCTION_APP_URL || ''),  
+        rl, setErrorDisplayed, errorDisplayed,
+        SSH_KEY_PATH: path.join(__dirname, '..', 'secrets', 'agent-key')
+    };
+
+    if (args.length > 0) {
+        await executeChoice(args[0], ctx);
+        rl.close();
+        process.exit(0);
+    } else {
+        console.log('\x1b[36mGoCD Management Menu is starting...\x1b[0m');
+        await new Promise(r => setTimeout(r, 2000));
+        await showMenu();
+    }
+})().catch(async (err) => { /* ... */ });

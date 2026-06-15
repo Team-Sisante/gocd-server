@@ -458,6 +458,7 @@ for (const [key, value] of Object.entries(process.env)) {
   const safeValue  = cleanValue
     .replace(/\\/g, '\\\\')   // Escape backslashes
     .replace(/"/g, '\\"')     // Escape double quotes
+    .replace(/'/g, "'\\''")   // Escape single quotes by closing and reopening the quote
     .replace(/\$/g, '\\$');   // Escape dollar signs to prevent shell interpolation
 
   envLines.push(`${cleanKey}="${safeValue}"`);

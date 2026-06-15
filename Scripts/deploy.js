@@ -302,17 +302,11 @@ if (target === 'staging' || target === 'production') {
 
       console.log(`Ensuring firewall rule ${ruleName} for port ${webHttpsPort}...`);
       try {
-        const existingPort = execSync(
-          `gcloud compute firewall-rules describe ${ruleName} --project=${GCP_PROJECT_ID} --format="value(allowed[0].ports)"`,
-          { stdio: 'pipe', encoding: 'utf8' }
-        ).trim();
-        if (existingPort === webHttpsPort) {
-          console.log(`Firewall rule ${ruleName} already exists.`);
-        } else {
-          console.log(`Firewall rule port mismatch – recreating...`);
-          execSync(`gcloud compute firewall-rules delete ${ruleName} --project=${GCP_PROJECT_ID} --quiet`, { stdio: 'inherit' });
-          throw new Error('recreate');
-        }
+        execSync(
+          `gcloud compute firewall-rules describe ${ruleName} --project=${GCP_PROJECT_ID}`,
+          { stdio: 'ignore' }
+        );
+        console.log(`Firewall rule ${ruleName} already exists.`);
       } catch (e) {
         console.log(`Creating firewall rule ${ruleName}...`);
         execSync(

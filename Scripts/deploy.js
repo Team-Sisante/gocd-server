@@ -466,6 +466,7 @@ const envContent = envLines.join('\n');
 
 // Use a uniquely named .env file for each app-environment to prevent race conditions
 const remoteEnvFile = `${deployDir}/.env-${projectName}`;
+console.log(`DEBUG: Target .env file path on VM: ${remoteEnvFile}`);
 const remoteLockFile = `${deployDir}/.deploy.lock`;
 
 // Write temp file locally, SCP to VM
@@ -521,13 +522,14 @@ const mailSetupCmd = mailContainerName ?
   `node ${deployDir}/Scripts/configure-poste-relay.js ${mailContainerName} "${process.env.POSTE_RELAY_HOST}" "${process.env.POSTE_RELAY_USER}" "${process.env.POSTE_RELAY_PASS}" "${process.env.POSTE_API_USER}" "${process.env.POSTE_ADMIN_PASSWORD}" && ` : '';
 const nginxContainerName = appConf.nginxContainer[target];
 
+const imageTag = process.env.IMAGE_TAG || 'latest';
 const deployCmd =
   `cd ${deployDir} && ` +
   `flock ${remoteLockFile} bash -c '` +
     // Clean up env files to leave no secrets on disk
-    `IMAGE_TAG=${process.env.IMAGE_TAG || 'latest'} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} --env-file ${remoteEnvFile} down --remove-orphans && ` +
+    `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} --env-file ${remoteEnvFile} down --remove-orphans && ` +
     `sudo docker rm -f ${nginxContainerName} || true; ` +
-    `IMAGE_TAG=${process.env.IMAGE_TAG || 'latest'} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} --env-file ${remoteEnvFile} up -d --pull always --force-recreate --remove-orphans && ` +
+    `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} --env-file ${remoteEnvFile} up -d --pull always --force-recreate --remove-orphans && ` +
     `echo "Diagnostic: Network bindings in container:" && ` +
     `sudo docker exec -i ${mailContainerName} netstat -tulpn || echo "netstat not available, trying ss..." && sudo docker exec -i ${mailContainerName} ss -tulpn || true && ` +
     mailSetupCmd +

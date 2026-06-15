@@ -220,9 +220,21 @@ This is built once by `npm run setup-base-image` and pushed to `ghcr.io`.
 
 ### badminton_court
 
+- **Pipelines:**
+    - `badminton_court-artifacts`: Builds and pushes Docker images to GHCR with `:latest` and `:sha-<short-sha>` tags.
+    - `badminton_court-staging/production`: Fetches SHA-tagged images and deploys using `IMAGE_TAG`.
 - **Agent:** gocd-agent-2
 - **Branch:** master
-- **What it does:** Decrypts env files, cleans up old containers, builds and starts the app via docker-compose
+- **What it does:** Implements artifact promotion by building immutable images and deploying specific versions.
+
+### humrine_site
+
+- **Pipelines:**
+    - `humrine_site-artifacts`: Builds and pushes Docker images to GHCR with `:latest` and `:sha-<short-sha>` tags.
+    - `humrine_site-staging/production`: Fetches SHA-tagged images and deploys using `IMAGE_TAG`.
+- **Agent:** gocd-agent-2
+- **Branch:** master
+- **What it does:** Implements artifact promotion by building immutable images and deploying specific versions.
 
 ### solvpn-deployment
 

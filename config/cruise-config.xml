@@ -46,6 +46,7 @@
               <exec command="bash">
                 <arg>-c</arg>
                 <arg><![CDATA[
+                  git config --global --add safe.directory /humrine_site
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   cd /humrine_site
                   node Scripts/build-and-push.js
@@ -72,7 +73,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__</arg>
+                <arg>IMAGE_TAG=sha-${GO_REVISION_humrine_site_artifacts:0:7} node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -95,7 +96,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__</arg>
+                <arg>IMAGE_TAG=sha-${GO_REVISION_humrine_site_artifacts:0:7} node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -118,14 +119,13 @@
               <resource>badminton_court</resource>
             </resources>
             <tasks>
-              <exec command="node">
-                <arg>Scripts/diagnose-network.js</arg>
-              </exec>
               <exec command="bash">
                 <arg>-c</arg>
                 <arg><![CDATA[
+                  cd /badminton_court
+                  node Scripts/diagnose-network.js
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
-                  node /badminton_court/Scripts/build-and-push.js
+                  node Scripts/build-and-push.js
                 ]]></arg>
               </exec>
             </tasks>
@@ -149,7 +149,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /gocd-server/Scripts/deploy.js badminton_court staging __GITHUB_TOKEN__</arg>
+                <arg>IMAGE_TAG=sha-${GO_REVISION_badminton_court_artifacts:0:7} node /gocd-server/Scripts/deploy.js badminton_court staging __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -172,7 +172,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /gocd-server/Scripts/deploy.js badminton_court production __GITHUB_TOKEN__</arg>
+                <arg>IMAGE_TAG=sha-${GO_REVISION_badminton_court_artifacts:0:7} node /gocd-server/Scripts/deploy.js badminton_court production __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>

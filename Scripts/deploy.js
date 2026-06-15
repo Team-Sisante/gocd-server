@@ -525,9 +525,9 @@ const deployCmd =
   `cd ${deployDir} && ` +
   `flock ${remoteLockFile} bash -c '` +
     // Clean up env files to leave no secrets on disk
-    `sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} --env-file ${remoteEnvFile} down --remove-orphans && ` +
+    `IMAGE_TAG=${process.env.IMAGE_TAG || 'latest'} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} --env-file ${remoteEnvFile} down --remove-orphans && ` +
     `sudo docker rm -f ${nginxContainerName} || true; ` +
-    `sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} --env-file ${remoteEnvFile} up -d --pull always --force-recreate --remove-orphans && ` +
+    `IMAGE_TAG=${process.env.IMAGE_TAG || 'latest'} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} --env-file ${remoteEnvFile} up -d --pull always --force-recreate --remove-orphans && ` +
     `echo "Diagnostic: Network bindings in container:" && ` +
     `sudo docker exec -i ${mailContainerName} netstat -tulpn || echo "netstat not available, trying ss..." && sudo docker exec -i ${mailContainerName} ss -tulpn || true && ` +
     mailSetupCmd +

@@ -47,8 +47,9 @@
                 <arg>-c</arg>
                 <arg><![CDATA[
                   git config --global --add safe.directory /humrine_site
-                  export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   cd /humrine_site
+                  npm install axios
+                  export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   node Scripts/build-and-push.js
                 ]]></arg>
               </exec>

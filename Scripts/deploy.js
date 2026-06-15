@@ -488,8 +488,7 @@ const deployCmd =
     `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans && ` +
     `echo "Diagnostic: Network bindings in container:" && ` +
     `sudo docker exec -i ${mailContainerName} netstat -tulpn || echo "netstat not available, trying ss..." && sudo docker exec -i ${mailContainerName} ss -tulpn || true && ` +
-    mailSetupCmd +
-    `true'`;
+    mailSetupCmd.replace(/ && $/, '') + `'`;
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;
 

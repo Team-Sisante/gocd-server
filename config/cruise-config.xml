@@ -118,6 +118,9 @@
               <resource>badminton_court</resource>
             </resources>
             <tasks>
+              <exec command="node">
+                <arg>Scripts/diagnose-network.js</arg>
+              </exec>
               <exec command="bash">
                 <arg>-c</arg>
                 <arg><![CDATA[

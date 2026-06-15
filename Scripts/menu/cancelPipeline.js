@@ -1,91 +1,71 @@
 // menu/cancelPipeline.js
-// Handles pipeline stage cancellation (option 2.4) by fetching active stages via API.
+// Handles pipeline stage cancellation by discovering active stages via cctray.xml.
 
-const fs = require('fs');
-const path = require('path');
+const { XMLParser } = require('fast-xml-parser');
+const axios = require('axios');
 
 module.exports = async function cancelPipeline(ctx) {
     const { sh, log, GOCD_BASE, GOCD_USER, GOCD_PASS } = ctx;
     const inquirer = (await import('inquirer')).default;
-    const axios = (await import('axios')).default; // Assume axios is available
 
     ctx.rl.pause();
 
-    // 1. Fetch running pipelines
     const auth = { username: GOCD_USER, password: GOCD_PASS };
     
-    let pipelines = [];
+    // 1. Fetch active projects from CCTray
+    let activeProjects = [];
     try {
-        const res = await axios.get(`${GOCD_BASE}/go/api/pipelines/active`, {
-            auth, headers: { 'Accept': 'application/vnd.go.cd.v3+json' }
+        const res = await axios.get(`${GOCD_BASE}/go/cctray.xml`, {
+            auth, headers: { 'Accept': 'application/xml' }
         });
-        pipelines = res.data.map(p => p.name);
+        
+        const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" });
+        const jsonObj = parser.parse(res.data);
+        
+        const projects = Array.isArray(jsonObj.Projects.Project) 
+            ? jsonObj.Projects.Project 
+            : [jsonObj.Projects.Project];
+
+        activeProjects = projects.filter(p => p.activity === 'Building');
     } catch (e) {
         ctx.rl.resume();
-        log('❌ Could not fetch active pipelines: ' + e.message, '\x1b[31m');
+        log('❌ Could not fetch active pipelines from CCTray: ' + e.message, '\x1b[31m');
         await inquirer.prompt({ type: 'input', name: 'dummy', message: 'Press Enter to continue...' });
         return;
     }
 
-    if (pipelines.length === 0) {
+    if (activeProjects.length === 0) {
         ctx.rl.resume();
         log('No active pipelines found.', '\x1b[33m');
         await inquirer.prompt({ type: 'input', name: 'dummy', message: 'Press Enter to continue...' });
         return;
     }
 
-    // 2. Select pipeline
-    const { selectedPipeline } = await inquirer.prompt({
-        type: 'list', name: 'selectedPipeline',
-        message: 'Select running pipeline to cancel:', choices: pipelines
+    // 2. Select stage to cancel
+    const { selectedProject } = await inquirer.prompt({
+        type: 'list', name: 'selectedProject',
+        message: 'Select active stage to cancel:',
+        choices: activeProjects.map(p => ({
+            name: `${p.name} (${p.webUrl})`,
+            value: p
+        }))
     });
 
-    // 3. Fetch active stages for the selected pipeline
-    let stages = [];
-    try {
-        const res = await axios.get(`${GOCD_BASE}/go/api/pipelines/${selectedPipeline}/history`, {
-            auth, headers: { 'Accept': 'application/vnd.go.cd.v3+json' }
-        });
-        // Simplification: Get latest pipeline instance that is running
-        const latest = res.data.pipelines[0];
-        const counter = latest.counter;
-        
-        stages = latest.stages
-            .filter(s => s.state !== 'Passed' && s.state !== 'Failed' && s.state !== 'Cancelled')
-            .map(s => ({
-                name: s.name,
-                counter: s.counter,
-                pipelineCounter: counter
-            }));
-    } catch (e) {
-        ctx.rl.resume();
-        log('❌ Could not fetch active stages: ' + e.message, '\x1b[31m');
-        await inquirer.prompt({ type: 'input', name: 'dummy', message: 'Press Enter to continue...' });
-        return;
-    }
-
-    if (stages.length === 0) {
-        ctx.rl.resume();
-        log('No active stages for this pipeline.', '\x1b[33m');
-        await inquirer.prompt({ type: 'input', name: 'dummy', message: 'Press Enter to continue...' });
-        return;
-    }
-
-    // 4. Select stage
-    const { selectedStage } = await inquirer.prompt({
-        type: 'list', name: 'selectedStage',
-        message: 'Select stage to cancel:', 
-        choices: stages.map(s => ({ name: `${s.name} (Counter: ${s.counter})`, value: s }))
-    });
+    // 3. Extract details from webUrl
+    // Expected structure: .../pipelines/<pipelineName>/<pipelineCounter>/<stageName>/<stageCounter>/...
+    const urlParts = selectedProject.webUrl.split('/');
+    const pipelineName = urlParts[urlParts.indexOf('pipelines') + 1];
+    const pipelineCounter = urlParts[urlParts.indexOf('pipelines') + 2];
+    const stageName = urlParts[urlParts.indexOf('pipelines') + 3];
+    const stageCounter = urlParts[urlParts.indexOf('pipelines') + 4];
 
     ctx.rl.resume();
 
-    // 5. Build and execute cancel command
-    const url = `${GOCD_BASE}/go/api/stages/${selectedPipeline}/${selectedStage.pipelineCounter}/${selectedStage.name}/${selectedStage.counter}/cancel`;
+    // 4. Build and execute cancel command
+    const url = `${GOCD_BASE}/go/api/stages/${pipelineName}/${pipelineCounter}/${stageName}/${stageCounter}/cancel`;
     
     const cmd = `curl -v -X POST ` +
                 `-H "Accept: application/vnd.go.cd.v3+json" ` +
-                `-H "Content-Type: application/json" ` +
                 `-H "X-GoCD-Confirm: true" ` +
                 `-u "${GOCD_USER}:${GOCD_PASS}" ` +
                 `"${url}"`;

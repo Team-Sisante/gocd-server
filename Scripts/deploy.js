@@ -469,10 +469,6 @@ const envExportString = envLines.map(line => `export ${line}`).join(' && ');
 // ------------------------------------------------------------------
 // Remote deploy command – sources the environment variables in-memory
 // ------------------------------------------------------------------
-const remoteLockFile = `/tmp/deploy-${appName}.lock`;
-const nginxContainerName = appConf.nginxContainer[target];
-const mailContainerName = appConf.mailContainer ? appConf.mailContainer[target] : null;
-
 const mailSetupCmd = mailContainerName ? 
   `echo "Syncing Poste.io admin password..." && ` +
   `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console domain:create ${process.env.POSTE_DOMAIN || 'aeropace.com'} || true ) && ` +
@@ -480,28 +476,19 @@ const mailSetupCmd = mailContainerName ?
   `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:admin ${process.env.EMAIL_HOST_USER} || true ) && ` +
   `echo "Configuring SMTP relay..." && ` +
   `node ${deployDir}/Scripts/configure-poste-relay.js ${mailContainerName} "${process.env.POSTE_RELAY_HOST}" "${process.env.POSTE_RELAY_USER}" "${process.env.POSTE_RELAY_PASS}" "${process.env.POSTE_API_USER}" "${process.env.POSTE_ADMIN_PASSWORD}" && ` : '';
+const nginxContainerName = appConf.nginxContainer[target];
 
 const imageTag = process.env.IMAGE_TAG || 'latest';
-
-const commands = [
-    `${envExportString}`,
-    `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans`,
-    `sudo docker rm -f ${nginxContainerName} || true`,
-    `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans`
-];
-
-if (mailContainerName) {
-    commands.push(`echo "Diagnostic: Network bindings in container:"`);
-    commands.push(`sudo docker exec -i ${mailContainerName} netstat -tulpn || echo "netstat not available, trying ss..." && sudo docker exec -i ${mailContainerName} ss -tulpn || true`);
-    commands.push(`echo "Syncing Poste.io admin password..."`);
-    commands.push(`( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console domain:create ${process.env.POSTE_DOMAIN || 'aeropace.com'} || true )`);
-    commands.push(`( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:create ${process.env.EMAIL_HOST_USER} "${process.env.POSTE_ADMIN_PASSWORD}" Admin || true )`);
-    commands.push(`( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:admin ${process.env.EMAIL_HOST_USER} || true )`);
-    commands.push(`echo "Configuring SMTP relay..."`);
-    commands.push(`node ${deployDir}/Scripts/configure-poste-relay.js ${mailContainerName} "${process.env.POSTE_RELAY_HOST}" "${process.env.POSTE_RELAY_USER}" "${process.env.POSTE_RELAY_PASS}" "${process.env.POSTE_API_USER}" "${process.env.POSTE_ADMIN_PASSWORD}"`);
-}
-
-const deployCmd = `cd ${deployDir} && flock ${remoteLockFile} bash -c '${commands.join(' && ')}'`;
+const deployCmd =
+  `cd ${deployDir} && ` +
+  `flock ${remoteLockFile} bash -c '` +
+    `${envExportString} && ` + // Export env vars in this session
+    `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans && ` +
+    `sudo docker rm -f ${nginxContainerName} || true; ` +
+    `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans && ` +
+    `echo "Diagnostic: Network bindings in container:" && ` +
+    `sudo docker exec -i ${mailContainerName} netstat -tulpn || echo "netstat not available, trying ss..." && sudo docker exec -i ${mailContainerName} ss -tulpn || true && ` +
+    mailSetupCmd.replace(/ && $/, '') + `'`;
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;
 

@@ -72,7 +72,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__</arg>
+                <arg>IMAGE_TAG=sha-${GO_REVISION_humrine_site_artifacts:0:7} node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -95,7 +95,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__</arg>
+                <arg>IMAGE_TAG=sha-${GO_REVISION_humrine_site_artifacts:0:7} node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -149,7 +149,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /gocd-server/Scripts/deploy.js badminton_court staging __GITHUB_TOKEN__</arg>
+                <arg>IMAGE_TAG=sha-${GO_REVISION_badminton_court_artifacts:0:7} node /gocd-server/Scripts/deploy.js badminton_court staging __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -172,7 +172,7 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /gocd-server/Scripts/deploy.js badminton_court production __GITHUB_TOKEN__</arg>
+                <arg>IMAGE_TAG=sha-${GO_REVISION_badminton_court_artifacts:0:7} node /gocd-server/Scripts/deploy.js badminton_court production __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>

@@ -30,9 +30,9 @@
   </server>
 
   <pipelines group="humrine_site_group">
-    <pipeline name="humrine_site-artifacts">
+    <pipeline name="humrine_site-artifacts" labelTemplate="${repo}">
       <materials>
-        <git url="__HUMRINE_SITE_REPO_URL_WITH_CREDENTIALS__" branch="master" dest="humrine_site" />
+        <git url="__HUMRINE_SITE_REPO_URL_WITH_CREDENTIALS__" branch="master" dest="humrine_site" name="repo" />
       </materials>
       <stage name="build_and_push">
         <approval type="manual" />
@@ -61,7 +61,7 @@
 
     <pipeline name="humrine_site-staging">
       <materials>
-        <pipeline pipelineName="humrine_site-artifacts" stageName="build_and_push" />
+        <pipeline pipelineName="humrine_site-artifacts" stageName="build_and_push" name="ARTIFACTS" />
       </materials>
       <stage name="deploy_staging">
         <approval type="manual" />
@@ -78,7 +78,7 @@
                   cd /humrine_site
                   npm install
                   env | grep GO_REVISION >&2
-                  IMAGE_TAG=sha-${GO_REVISION_HUMRINE_SITE_ARTIFACTS} node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__
+                  IMAGE_TAG=sha-${GO_REVISION_ARTIFACTS} node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__
                 ]]></arg>
               </exec>
             </tasks>
@@ -89,7 +89,7 @@
 
     <pipeline name="humrine_site-production">
       <materials>
-        <pipeline pipelineName="humrine_site-artifacts" stageName="build_and_push" />
+        <pipeline pipelineName="humrine_site-artifacts" stageName="build_and_push" name="ARTIFACTS" />
       </materials>
       <stage name="deploy_production">
         <approval type="manual" />
@@ -106,7 +106,7 @@
                   cd /humrine_site
                   npm install
                   env | grep GO_REVISION >&2
-                  IMAGE_TAG=sha-${GO_REVISION_HUMRINE_SITE_ARTIFACTS} node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__
+                  IMAGE_TAG=sha-${GO_REVISION_ARTIFACTS} node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__
                 ]]></arg>
               </exec>
             </tasks>

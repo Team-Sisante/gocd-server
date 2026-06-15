@@ -441,7 +441,7 @@ criticalVars.forEach(v => {
   }
 });
 
-// Build .env content
+// Build .env content (as export commands for in-memory injection)
 const envLines = [];
 for (const [key, value] of Object.entries(process.env)) {
   // Exclude internal Node.js / system variables
@@ -454,64 +454,21 @@ for (const [key, value] of Object.entries(process.env)) {
   // Strip control characters from the VALUE.
   const cleanValue = (value || '').replace(/[\x00-\x1F\x7F]/g, '');
   
-  // Properly escape backslashes, quotes, and dollar signs for Docker Compose .env files
+  // Properly escape backslashes, quotes, and dollar signs for bash export
   const safeValue  = cleanValue
-    .replace(/\\/g, '\\\\')   // Escape backslashes first (prevents escaping the closing quote)
+    .replace(/\\/g, '\\\\')   // Escape backslashes
     .replace(/"/g, '\\"')     // Escape double quotes
-    .replace(/\$/g, '$$');    // Escape dollar signs to prevent Compose variable interpolation
+    .replace(/\$/g, '\\$');   // Escape dollar signs to prevent shell interpolation
 
   envLines.push(`${cleanKey}="${safeValue}"`);
 }
-const envContent = envLines.join('\n');
 
-// Use a uniquely named .env file for each app-environment to prevent race conditions
-const remoteEnvFile = `${deployDir}/.env-${projectName}`;
-const remoteLockFile = `${deployDir}/.deploy.lock`;
-
-// Write temp file locally, SCP to VM
-const localTempEnvFile = `/tmp/deploy-env-${projectName}.env`;
-fs.writeFileSync(localTempEnvFile, envContent);
-execSync(`${scpBase} ${localTempEnvFile} ${SSH_USER}@${vmIP}:${remoteEnvFile}`, { stdio: 'inherit' });
-console.log(`Temporary env file uploaded to VM: ${remoteEnvFile}`);
-// Verify file exists
-execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "ls -l ${remoteEnvFile} && cat ${remoteEnvFile} | head -n 5"`, { stdio: 'inherit' });
-fs.unlinkSync(localTempEnvFile);
-
-// Verify POSTE_PROTOCOL is non‑empty
-const verifyPosteProtocolCmd = `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -E '^POSTE_PROTOCOL=\".+\"' ${remoteEnvFile} >/dev/null 2>&1 && echo 'OK' || echo 'FAIL'"`;
-try {
-  const verifyResult = execSync(verifyPosteProtocolCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
-  if (verifyResult !== 'OK') {
-    console.error(`\x1b[31mERROR: POSTE_PROTOCOL is missing or empty in ${remoteEnvFile} on the VM.\x1b[0m`);
-    waitAndExit('Deployment aborted – POSTE_PROTOCOL is missing or empty.');
-  }
-  console.log(`\x1b[32mVerified POSTE_PROTOCOL is set and non‑empty.\x1b[0m`);
-} catch (e) {
-  console.error(`\x1b[31mERROR: Could not verify POSTE_PROTOCOL on VM.\x1b[0m`);
-  waitAndExit('Deployment aborted – cannot verify POSTE_PROTOCOL.');
-}
-
-// Dump host ports for debugging
-const dumpPortsCmd = `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "grep -E '^(POSTGRES_HOST_PORT|REDIS_HOST_PORT|MAIL_SMTP_HOST_PORT|MAIL_SUBMISSION_HOST_PORT|MAIL_SMTPS_HOST_PORT|MAIL_HTTPS_HOST_PORT|WEB_HOST_PORT|NGINX_STAGING_HOST_PORT|NGINX_PRODUCTION_HOST_PORT)=' ${remoteEnvFile}"`;
-try {
-  const portsDump = execSync(dumpPortsCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
-  if (portsDump) {
-    console.log('\x1b[36mHost ports in temp env file:\x1b[0m');
-    console.log(portsDump);
-  }
-} catch (e) {}
+// Create the bash export command string
+const envExportString = envLines.map(line => `export ${line}`).join(' && ');
 
 // ------------------------------------------------------------------
-// Validate mail container name (if the app uses one)
+// Remote deploy command – sources the environment variables in-memory
 // ------------------------------------------------------------------
-const mailContainerName = appConf.mailContainer ? appConf.mailContainer[target] : null;
-
-// ------------------------------------------------------------------
-// Remote deploy command – sources the .env file and syncs mail password
-// ------------------------------------------------------------------
-// Derive SSH key path from DEPLOY_SSH_KEY_PATH if available, otherwise default to secrets/agent-key
-// Note: sshKeyPath is already defined at the top of this script.
-
 const mailSetupCmd = mailContainerName ? 
   `echo "Syncing Poste.io admin password..." && ` +
   `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console domain:create ${process.env.POSTE_DOMAIN || 'aeropace.com'} || true ) && ` +
@@ -521,17 +478,18 @@ const mailSetupCmd = mailContainerName ?
   `node ${deployDir}/Scripts/configure-poste-relay.js ${mailContainerName} "${process.env.POSTE_RELAY_HOST}" "${process.env.POSTE_RELAY_USER}" "${process.env.POSTE_RELAY_PASS}" "${process.env.POSTE_API_USER}" "${process.env.POSTE_ADMIN_PASSWORD}" && ` : '';
 const nginxContainerName = appConf.nginxContainer[target];
 
+const imageTag = process.env.IMAGE_TAG || 'latest';
 const deployCmd =
   `cd ${deployDir} && ` +
   `flock ${remoteLockFile} bash -c '` +
-    // Clean up env files to leave no secrets on disk
-    `IMAGE_TAG=${process.env.IMAGE_TAG || 'latest'} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} --env-file ${remoteEnvFile} down --remove-orphans && ` +
+    `${envExportString} && ` + // Export env vars in this session
+    `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans && ` +
     `sudo docker rm -f ${nginxContainerName} || true; ` +
-    `IMAGE_TAG=${process.env.IMAGE_TAG || 'latest'} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} --env-file ${remoteEnvFile} up -d --pull always --force-recreate --remove-orphans && ` +
+    `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans && ` +
     `echo "Diagnostic: Network bindings in container:" && ` +
     `sudo docker exec -i ${mailContainerName} netstat -tulpn || echo "netstat not available, trying ss..." && sudo docker exec -i ${mailContainerName} ss -tulpn || true && ` +
     mailSetupCmd +
-    `rm -f ${remoteEnvFile} && true'`;
+    `true'`;
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;
 

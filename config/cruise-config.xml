@@ -25,7 +25,7 @@
       <siteUrl>__SITE_URL__</siteUrl>
     </siteUrls>
     <artifacts>
-      <artifactsDir>artifacts</artifactsDir>
+      <artifactsDir>/godata/artifacts</artifactsDir>
     </artifacts>
   </server>
 
@@ -54,6 +54,9 @@
                 ]]></arg>
               </exec>
             </tasks>
+            <artifacts>
+              <artifact src="image-tag.txt" />
+            </artifacts>            
           </job>
         </jobs>
       </stage>
@@ -72,9 +75,11 @@
               <resource>humrine_site</resource>
             </resources>
             <tasks>
+              <fetchartifact pipeline="humrine_site-artifacts" stage="build_and_push" job="artifact_generation" srcfile="image-tag.txt" />
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__</arg>
+                <arg>export IMAGE_TAG=sha-$(cat image-tag.txt)
+                      node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -95,11 +100,13 @@
               <resource>humrine_site</resource>
             </resources>
             <tasks>
+              <fetchartifact pipeline="humrine_site-artifacts" stage="build_and_push" job="artifact_generation" srcfile="image-tag.txt" />
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__</arg>
+                <arg>export IMAGE_TAG=sha-$(cat image-tag.txt)
+                      node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__</arg>
               </exec>
-            </tasks>
+            </tasks>            
           </job>
         </jobs>
       </stage>
@@ -131,6 +138,9 @@
                 ]]></arg>
               </exec>
             </tasks>
+            <artifacts>
+              <artifact src="image-tag.txt" />
+            </artifacts>            
           </job>
         </jobs>
       </stage>
@@ -149,9 +159,11 @@
               <resource>badminton_court</resource>
             </resources>
             <tasks>
+              <fetchartifact pipeline="badminton_court-artifacts" stage="build_and_push" job="artifact_generation" srcfile="image-tag.txt" />
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /gocd-server/Scripts/deploy.js badminton_court staging __GITHUB_TOKEN__</arg>
+                <arg>export IMAGE_TAG=sha-$(cat image-tag.txt)
+                      node /gocd-server/Scripts/deploy.js badminton_court staging __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -172,9 +184,11 @@
               <resource>badminton_court</resource>
             </resources>
             <tasks>
+              <fetchartifact pipeline="badminton_court-artifacts" stage="build_and_push" job="artifact_generation" srcfile="image-tag.txt" />
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /gocd-server/Scripts/deploy.js badminton_court production __GITHUB_TOKEN__</arg>
+                <arg>export IMAGE_TAG=sha-$(cat image-tag.txt)
+                      node /gocd-server/Scripts/deploy.js badminton_court production __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>

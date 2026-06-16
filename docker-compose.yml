@@ -74,6 +74,8 @@ services:
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
       - .:/gocd-server:ro
+      # Shared volume for artifact promotion tags
+      - ./shared-tags:/shared-tags
     depends_on:
       - gocd-server
 
@@ -124,6 +126,7 @@ services:
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
       - .:/gocd-server:ro
+      - ./shared-tags:/shared-tags
     depends_on:
       - gocd-server
 
@@ -150,6 +153,7 @@ services:
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
       - .:/gocd-server:ro
+      - ./shared-tags:/shared-tags
     depends_on:
       - gocd-server
 
@@ -176,6 +180,7 @@ services:
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
       - .:/gocd-server:ro
+      - ./shared-tags:/shared-tags
     depends_on:
       - gocd-server
 
@@ -202,6 +207,7 @@ services:
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
       - .:/gocd-server:ro
+      - ./shared-tags:/shared-tags
     depends_on:
       - gocd-server
 
@@ -228,6 +234,7 @@ services:
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
       - .:/gocd-server:ro
+      - ./shared-tags:/shared-tags
     depends_on:
       - gocd-server
 
@@ -254,6 +261,7 @@ services:
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
       - .:/gocd-server:ro
+      - ./shared-tags:/shared-tags
     depends_on:
       - gocd-server
 
@@ -280,6 +288,7 @@ services:
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
       - .:/gocd-server:ro
+      - ./shared-tags:/shared-tags
     depends_on:
       - gocd-server
       

@@ -71,6 +71,30 @@ until curl -k -f -s "$SERVER_URL/go/api/v1/health" > /dev/null; do
 done
 echo "GoCD server is ready!"
 
+# --- FIX /godata OWNERSHIP (CORRECT VERSION) ---
+# /godata is already owned by go:root (uid 1000, gid 0) in the base image.
+# The issue is that /godata/config doesn't exist on first run, and the
+# official /docker-entrypoint.sh tries to cp a file into it AFTER dropping
+# to the go user — but it doesn't mkdir the dir first.
+#
+# Solution: pre-create the subdirs AS the go user (so they're owned by go),
+# and pre-copy the logback config so the official entrypoint's cp is a no-op.
+
+echo "Preparing /godata subdirectories as go user..."
+gosu go mkdir -p /godata/config /godata/logs /godata/pipelines
+
+# Pre-copy the logback config as go user (the file the official entrypoint tries to cp)
+if [ -f /go-agent/config/agent-bootstrapper-logback-include.xml ]; then
+    echo "Pre-copying logback config as go user..."
+    gosu go cp -f /go-agent/config/agent-bootstrapper-logback-include.xml /godata/config/agent-bootstrapper-logback-include.xml
+fi
+
+# Debug: show final state
+echo "--- /godata after fix ---"
+ls -la /godata/
+echo "--- /godata/config after fix ---"
+ls -la /godata/config/
+
 # Hand off to the stock GoCD agent entrypoint
 echo "Starting GoCD agent as user 'go'..."
 exec gosu go /docker-entrypoint.sh "$@"

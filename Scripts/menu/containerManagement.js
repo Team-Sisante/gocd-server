@@ -311,4 +311,9 @@ try {
         await module.exports['1.1'](ctx);  // calls the same function as option 1.1
         await ctx.pause();
     },
+    '1.12': async (ctx) => {
+        // Delegates to the standalone reset script — keeps this file slim.
+        ctx.sh('node Scripts/gocd-reset.js', { stdio: 'inherit' });
+        await ctx.pause();
+    }    
 };

@@ -48,6 +48,8 @@ services:
       - ../pearl-hello-world:/pearl-hello-world:rw
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
+      # Mount .env.docker as .env.common so pipeline tasks can source it
+      - ./.env.docker:/godata/config/.env.common:ro
     depends_on:
       - gocd-server
 
@@ -76,6 +78,8 @@ services:
       - .:/gocd-server:ro
       # Shared volume for artifact promotion tags
       - ./shared-tags:/shared-tags
+      # Mount .env.docker as .env.common so pipeline tasks can source it
+      - ./.env.docker:/godata/config/.env.common:ro
     depends_on:
       - gocd-server
 
@@ -100,6 +104,8 @@ services:
       - ../solvpn:/solvpn:rw
       - ./secrets:/secret:ro
       - ./certs:/certs:ro
+      # Mount .env.docker as .env.common so pipeline tasks can source it
+      - ./.env.docker:/godata/config/.env.common:ro
     depends_on:
       - gocd-server
 
@@ -128,6 +134,7 @@ services:
       - ./certs:/certs:ro
       - .:/gocd-server:ro
       - ./shared-tags:/shared-tags
+      - ./.env.docker:/godata/config/.env.common:ro
     depends_on:
       - gocd-server
 
@@ -156,6 +163,7 @@ services:
       - ./certs:/certs:ro
       - .:/gocd-server:ro
       - ./shared-tags:/shared-tags
+      - ./.env.docker:/godata/config/.env.common:ro
     depends_on:
       - gocd-server
 
@@ -184,6 +192,7 @@ services:
       - ./certs:/certs:ro
       - .:/gocd-server:ro
       - ./shared-tags:/shared-tags
+      - ./.env.docker:/godata/config/.env.common:ro
     depends_on:
       - gocd-server
 
@@ -212,6 +221,7 @@ services:
       - ./certs:/certs:ro
       - .:/gocd-server:ro
       - ./shared-tags:/shared-tags
+      - ./.env.docker:/godata/config/.env.common:ro
     depends_on:
       - gocd-server
 
@@ -240,6 +250,7 @@ services:
       - ./certs:/certs:ro
       - .:/gocd-server:ro
       - ./shared-tags:/shared-tags
+      - ./.env.docker:/godata/config/.env.common:ro
     depends_on:
       - gocd-server
 
@@ -268,6 +279,7 @@ services:
       - ./certs:/certs:ro
       - .:/gocd-server:ro
       - ./shared-tags:/shared-tags
+      - ./.env.docker:/godata/config/.env.common:ro
     depends_on:
       - gocd-server
 
@@ -296,6 +308,7 @@ services:
       - ./certs:/certs:ro
       - .:/gocd-server:ro
       - ./shared-tags:/shared-tags
+      - ./.env.docker:/godata/config/.env.common:ro
     depends_on:
       - gocd-server
 

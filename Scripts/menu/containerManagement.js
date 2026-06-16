@@ -250,5 +250,65 @@ try {
             ctx.log('Restart cancelled.', '\x1b[33m');
         }
         await ctx.pause();
-    }
+    },
+    '1.11': async (ctx) => {
+        ctx.log('Resetting GoCD Server config (volume wipe)...', '\x1b[33m');
+
+        // Confirm
+        const confirm = await ctx.ask('This will delete the GoCD server config volume and restart. Continue? (y/N): ');
+        if (confirm.toLowerCase() !== 'y') {
+            ctx.log('Reset cancelled.', '\x1b[33m');
+            await ctx.pause();
+            return;
+        }
+
+        // 1. Stop the server container (if running)
+        const serverContainerName = 'gocd-server';  // adjust if your container has a different name
+        try {
+            ctx.log(`Stopping container ${serverContainerName}...`, '\x1b[33m');
+            ctx.sh(`docker stop ${serverContainerName}`, { ignoreError: true });
+        } catch (e) {
+            // Container may already be stopped
+        }
+
+        // 2. Identify the server data volume (the one mounted to /godata)
+        let volumeName = null;
+        try {
+            // Use docker inspect to get the volume name for the /godata mount
+            const inspectOutput = ctx.execSync(
+                `docker inspect ${serverContainerName} --format '{{ range .Mounts }}{{ if eq .Destination "/godata" }}{{ .Name }}{{ end }}{{ end }}'`,
+                { encoding: 'utf8', stdio: 'pipe' }
+            ).trim();
+            if (inspectOutput) {
+                volumeName = inspectOutput;
+            }
+        } catch (e) {
+            // Container may not exist or was already removed; try to find volume by name pattern
+            const lsOutput = ctx.execSync('docker volume ls --format "{{.Name}}"', { encoding: 'utf8', stdio: 'pipe' });
+            const lines = lsOutput.split('\n').filter(Boolean);
+            volumeName = lines.find(name => name.includes('gocd-server') && name.includes('data'));
+        }
+
+        if (!volumeName) {
+            ctx.log('❌ Could not automatically identify the GoCD server volume. Please delete it manually and restart.', '\x1b[31m');
+            await ctx.pause();
+            return;
+        }
+
+        ctx.log(`Found server volume: ${volumeName}`, '\x1b[36m');
+
+        // 3. Remove the container (optional but clean)
+        try {
+            ctx.sh(`docker rm ${serverContainerName}`, { ignoreError: true });
+        } catch (e) {}
+
+        // 4. Remove the volume
+        ctx.log(`Removing volume ${volumeName}...`, '\x1b[33m');
+        ctx.sh(`docker volume rm ${volumeName}`, { ignoreError: true });
+
+        // 5. Rebuild and restart using existing option 1.1
+        ctx.log('Volume cleaned. Now rebuilding and restarting GoCD...', '\x1b[32m');
+        await module.exports['1.1'](ctx);  // calls the same function as option 1.1
+        await ctx.pause();
+    },
 };

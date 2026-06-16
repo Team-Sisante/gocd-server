@@ -54,15 +54,10 @@
                   npm ls axios >/dev/null 2>&1 || npm install axios
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   node Scripts/build-and-push.js
-                  mkdir -p build-info
-                  git rev-parse --short HEAD > build-info/image-tag.txt
-                  cp build-info/image-tag.txt /shared-tags/humrine_site-tag-${GO_PIPELINE_COUNTER}.txt
+                  git rev-parse --short HEAD > /shared-tags/humrine_site-tag-${GO_PIPELINE_COUNTER}.txt
                 ]]></arg>
               </exec>
             </tasks>
-            <artifacts>
-              <artifact src="build-info/image-tag.txt" type="build" />
-            </artifacts>
           </job>
         </jobs>
       </stage>
@@ -166,15 +161,10 @@
                   npm ls axios >/dev/null 2>&1 || npm install axios
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   node Scripts/build-and-push.js
-                  mkdir -p build-info
-                  git rev-parse --short HEAD > build-info/image-tag.txt
-                  cp build-info/image-tag.txt /shared-tags/badminton_court-tag-${GO_PIPELINE_COUNTER}.txt
+                  git rev-parse --short HEAD > /shared-tags/badminton_court-tag-${GO_PIPELINE_COUNTER}.txt
                 ]]></arg>
               </exec>
             </tasks>
-            <artifacts>
-              <artifact src="build-info/image-tag.txt" type="build" />
-            </artifacts>
           </job>
         </jobs>
       </stage>
@@ -275,14 +265,9 @@
                 <arg><![CDATA[
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   node /pay-sol/Scripts/build-and-push.js
-                  mkdir -p build-info
-                  git rev-parse --short HEAD > build-info/image-tag.txt
                 ]]></arg>
               </exec>
             </tasks>
-            <artifacts>
-              <artifact src="build-info/image-tag.txt" type="build" />
-            </artifacts>
           </job>
         </jobs>
       </stage>
@@ -309,10 +294,11 @@
               <exec command="bash">
                 <arg>-c</arg>
                 <arg><![CDATA[
-                  if [ -z "$OVERRIDE_IMAGE_TAG" ]; then
-                    OVERRIDE_IMAGE_TAG=sha-$(cat /godata/pipelines/pay-sol-artifacts/build-info/image-tag.txt)
+                  if [ -n "$OVERRIDE_IMAGE_TAG" ]; then
+                    export IMAGE_TAG="$OVERRIDE_IMAGE_TAG"
+                  else
+                    export IMAGE_TAG=latest
                   fi
-                  export IMAGE_TAG="$OVERRIDE_IMAGE_TAG"
                   echo "Deploying image tag: $IMAGE_TAG"
                   node /pay-sol/Scripts/deploy.js staging __GITHUB_TOKEN__
                 ]]></arg>
@@ -344,10 +330,11 @@
               <exec command="bash">
                 <arg>-c</arg>
                 <arg><![CDATA[
-                  if [ -z "$OVERRIDE_IMAGE_TAG" ]; then
-                    OVERRIDE_IMAGE_TAG=sha-$(cat /godata/pipelines/pay-sol-artifacts/build-info/image-tag.txt)
+                  if [ -n "$OVERRIDE_IMAGE_TAG" ]; then
+                    export IMAGE_TAG="$OVERRIDE_IMAGE_TAG"
+                  else
+                    export IMAGE_TAG=latest
                   fi
-                  export IMAGE_TAG="$OVERRIDE_IMAGE_TAG"
                   echo "Deploying image tag: $IMAGE_TAG"
                   node /pay-sol/Scripts/deploy.js production __GITHUB_TOKEN__
                 ]]></arg>

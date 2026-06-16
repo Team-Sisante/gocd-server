@@ -3,8 +3,8 @@
  * deploy.js – Unified staging / production deployment for all Django apps.
  *
  * Runs on the GoCD agent. Loads required variables from GitHub Environments
- * and GCP Secret Manager. A temporary .env file is created, used, and deleted
- * immediately – no secrets remain on the VM.
+ * and GCP Secret Manager. A temporary shell script is created, scp’d to the VM,
+ * and executed – no secrets remain on the VM after the run.
  *
  * Usage:
  *   node deploy.js <app_name> <target> <github_token>
@@ -16,7 +16,7 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const appName = process.argv[2];          // e.g. 'badminton_court'
+const appName = process.argv[2];
 const target   = process.argv[3];
 const token    = process.argv[4];
 
@@ -27,9 +27,6 @@ console.log('--- Environment Variables Check ---');
 });
 console.log('-----------------------------------');
 
-/**
- * Helper to warn, pause for user input, and exit.
- */
 function waitAndExit(message) {
   console.error(`\x1b[31m${message}\x1b[0m`);
   console.log('\x1b[33mPress Enter to exit and stop the process...\x1b[0m');
@@ -50,15 +47,9 @@ if (token) {
   console.log('WARNING: GITHUB_TOKEN is not set in environment');
 }
 
-// ------------------------------------------------------------------
-// Override GITHUB_TOKEN with the pipeline’s token
-// ------------------------------------------------------------------
 process.env.GITHUB_TOKEN = token;
 
-// Derive SSH key path from DEPLOY_SSH_KEY_PATH if available, otherwise default to secrets/agent-key relative to this script
 const sshKeyPath = process.env.DEPLOY_SSH_KEY_PATH || path.resolve(__dirname, '..', 'secrets', 'agent-key');
-
-// Common SSH options
 const SSH_OPTS = '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o KexAlgorithms=+diffie-hellman-group14-sha256';
 const SSH_CMD = `ssh -i "${sshKeyPath}" ${SSH_OPTS}`;
 const SCP_CMD = `scp -i "${sshKeyPath}" ${SSH_OPTS}`;
@@ -93,7 +84,6 @@ const APP_CONFIG = {
       staging:    'humrine-nginx-staging',
       production: 'humrine-nginx-production',
     },
-    // humrine does not use a mail container
   },
 };
 
@@ -103,18 +93,15 @@ if (!appConf) {
   process.exit(1);
 }
 
-// Force the correct repository name for GitHub variable fetches
 process.env.GIT_REPO_REPONAME = appName;
-
 process.chdir(appConf.workDir);
 
-// ----- Infrastructure variables (must come from pipeline env) -----
+// ----- Infrastructure variables -----
 const missing = [];
 if (!process.env.GCP_PROJECT_ID) missing.push('GCP_PROJECT_ID');
 if (!process.env.GCP_ZONE) missing.push('GCP_ZONE');
 if (!process.env.GIT_REPO_USERNAME) missing.push('GIT_REPO_USERNAME');
 if (!process.env.VM_SSH_USER) missing.push('VM_SSH_USER');
-
 if (missing.length > 0) {
   let errorMsg = 'ERROR: The following required infrastructure variables are missing:\n';
   missing.forEach(v => errorMsg += `  - ${v}\n`);
@@ -158,7 +145,7 @@ templateFiles.forEach(file => {
 const REQUIRED_VARS = [...new Set(requiredVars)];
 
 // ---------------------------------------------------------------
-// 1. Fetch secrets from GCP (with app‑specific prefix)
+// 1. Fetch secrets from GCP
 // ---------------------------------------------------------------
 console.log('\x1b[33mFetching secrets from GCP Secret Manager...\x1b[0m');
 const certFile = process.env.CLOUDSDK_CA_CERTS_FILE;
@@ -168,9 +155,7 @@ if (certFile) {
   childEnv.REQUESTS_CA_BUNDLE = certFile;
 }
 
-// Prefix all GCP secret names with the app name to avoid collisions
 const secretPrefix = `${appName}_`;
-
 for (const secret of SECRETS_TO_FETCH) {
   let fullSecretName;
   try {
@@ -180,7 +165,6 @@ for (const secret of SECRETS_TO_FETCH) {
       { encoding: 'utf8', stdio: 'pipe', env: childEnv }
     ).trim();
     if (value) {
-      // Store under the original variable name (without prefix)
       process.env[secret] = value;
       console.log(`  🔐 ${secret} (from ${fullSecretName})`);
     } else {
@@ -192,7 +176,7 @@ for (const secret of SECRETS_TO_FETCH) {
 }
 
 // ---------------------------------------------------------------
-// 2. Fetch GitHub Environment variables (ALL config)
+// 2. Fetch GitHub Environment variables
 // ---------------------------------------------------------------
 console.log('\x1b[33mFetching variables from GitHub Environments...\x1b[0m');
 try {
@@ -204,17 +188,11 @@ try {
   const variables = JSON.parse(stdout);
   variables.forEach(v => {
     if (v.name) {
-      // Never allow a fetched variable to overwrite a non‑empty existing value with an empty one
       if (v.value === '' || v.value === undefined || v.value === null) {
-        // If the fetched value is empty and we already have a non‑empty value, keep the existing one
-        if (process.env[v.name] && process.env[v.name] !== '') {
-          return;   // keep existing value
-        }
-        // Otherwise, delete and set nothing (or empty) – required later for validation
+        if (process.env[v.name] && process.env[v.name] !== '') return;
         delete process.env[v.name];
         return;
       }
-      // Valid non‑empty value – always overwrite
       process.env[v.name] = v.value;
     }
   });
@@ -223,9 +201,7 @@ try {
   console.log(`\x1b[33mWarning: Could not fetch GitHub variables: ${e.message}\x1b[0m`);
 }
 
-// ---------------------------------------------------------------
 // Diagnostic dump
-// ---------------------------------------------------------------
 console.log('\x1b[36m--- Required variables after fetch (masked) ---\x1b[0m');
 REQUIRED_VARS.forEach(v => {
   const val = process.env[v];
@@ -235,10 +211,8 @@ REQUIRED_VARS.forEach(v => {
   console.log(`  ${v}: ${status}`);
 });
 
-// Validation
 const missingVars = REQUIRED_VARS.filter(v => process.env[v] === undefined);
 const emptyVars   = REQUIRED_VARS.filter(v => process.env[v] === '');
-
 if (missingVars.length > 0 || emptyVars.length > 0) {
   if (missingVars.length > 0) {
     console.error(`\x1b[31mABORTING: The following required variables are missing:\x1b[0m`);
@@ -248,7 +222,6 @@ if (missingVars.length > 0 || emptyVars.length > 0) {
     console.error(`\x1b[31mABORTING: The following required variables have empty values:\x1b[0m`);
     emptyVars.forEach(v => console.error(`  - ${v}`));
   }
-  console.error(`\x1b[33mCheck the GitHub Environment and GCP Secret Manager for these keys.\x1b[0m`);
   waitAndExit('Deployment aborted due to missing or empty configuration.');
 }
 
@@ -280,16 +253,13 @@ if (target === 'staging' || target === 'production') {
     if (!fs.existsSync(certsDir) || !fs.existsSync(path.join(certsDir, 'posteio-cert.pem'))) {
       waitAndExit(`ERROR: nginx is enabled for ${target} but the certs/ directory (with posteio-cert.pem) is missing.\nPlease run "node Scripts/generate-certs.js" first and commit the resulting certs/ folder.`);
     }
-
     const webHttpsPort = process.env.WEB_HOST_PORT;
     if (!webHttpsPort) waitAndExit('ERROR: WEB_HOST_PORT is not defined in environment.');
-
     const nginxTemplate = fs.readFileSync(nginxTemplatePath, 'utf8');
     const webBackendService = `web-${target}`;
     const nginxConf = nginxTemplate
       .replace(/__WEB_HOST_PORT__/g, webHttpsPort)
       .replace(/__BACKEND_SERVICE__/g, webBackendService);
-
     const nginxConfFile = `nginx-${target}.conf`;
     fs.writeFileSync(nginxConfFile, nginxConf);
     console.log(`\x1b[32mGenerated ${nginxConfFile} with port ${webHttpsPort}\x1b[0m`);
@@ -299,7 +269,6 @@ if (target === 'staging' || target === 'production') {
       const ruleName = `allow-web-https-${target}`;
       const targetTag = process.env.GCP_VM_NAME;
       if (!targetTag) waitAndExit('ERROR: GCP_VM_NAME is not defined in environment.');
-
       console.log(`Ensuring firewall rule ${ruleName} for port ${webHttpsPort}...`);
       try {
         const existingPort = execSync(
@@ -334,17 +303,14 @@ const vmIP = process.env.GCP_VM_IP;
 if (!vmIP) waitAndExit('ERROR: GCP_VM_IP is not set in environment.');
 
 // ------------------------------------------------------------------
-// 5. Pre‑deploy health checks
+// 5. Pre‑deploy health checks (unchanged)
 // ------------------------------------------------------------------
-
-// ---- Docker daemon DNS & MTU configuration ----
 const DOCKER_CONF = '{"dns":["8.8.8.8"],"mtu":1460}';
 try {
   const currentConf = execSync(
     `ssh -i ${sshKeyPath} ${SSH_OPTS} -o LogLevel=ERROR ${SSH_USER}@${vmIP} "cat /etc/docker/daemon.json 2>/dev/null || echo ''"`,
     { encoding: 'utf8', stdio: 'pipe' }
   ).trim();
-
   if (currentConf !== DOCKER_CONF) {
     console.log('Configuring Docker daemon DNS and MTU on VM...');
     execSync(
@@ -357,27 +323,20 @@ try {
   console.log(`\x1b[33mWarning: Failed to verify/configure Docker daemon: ${e.message}\x1b[0m`);
 }
 
-// ---- System load check ----
 console.log('Running pre‑deploy health checks...');
 const healthCheckResult = execSync(
   `ssh -i ${sshKeyPath} ${SSH_OPTS} -o LogLevel=ERROR ${SSH_USER}@${vmIP} ` +
-  `"sudo bash -c '` +
-    `load=$(awk \"{print \\\\$1}\" /proc/loadavg); ` +
-    `echo \"LOAD=\\$load\"'` +
-  `"`,
+  `"sudo bash -c 'load=$(awk \"{print \\\\$1}\" /proc/loadavg); echo \"LOAD=\\$load\"'"`,
   { encoding: 'utf8', stdio: 'pipe' }
 ).trim();
 console.log(`  VM health: ${healthCheckResult}`);
-
 const loadMatch = healthCheckResult.match(/LOAD=([0-9.]+)/);
 const systemLoad = loadMatch ? parseFloat(loadMatch[1]) : 0;
-
 if (systemLoad > 2.0) {
   console.log(`\x1b[33mWarning: System load is ${systemLoad}, which may cause timeouts. Consider stopping heavy processes before deploying.\x1b[0m`);
 }
 console.log('\x1b[32mPre‑deploy health checks passed.\x1b[0m');
 
-// ---- ghcr.io connectivity check ----
 console.log('Checking ghcr.io connectivity...');
 try {
   execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "curl -v --connect-timeout 10 https://ghcr.io/v2/ 2>&1 | head -20"`, { stdio: 'inherit' });
@@ -389,117 +348,114 @@ try {
 }
 
 // ------------------------------------------------------------------
-// 6. Prepare VM directory
+// 6. Prepare VM directory (unchanged)
 // ------------------------------------------------------------------
 const deployDir = appConf.deployDir;
 console.log('Preparing deployment directory on VM...');
 execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo rm -rf ${deployDir}/certs && sudo mkdir -p ${deployDir}/certs ${deployDir}/Scripts && sudo chown -R ${SSH_USER}:${SSH_USER} ${deployDir}"`, { stdio: 'inherit' });
 
-// 7. Copy files to VM
+// 7. Copy files to VM (unchanged)
 console.log('Copying deployment files to VM...');
 const scpBase = `scp -i ${sshKeyPath} ${SSH_OPTS}`;
 const vmDest = `${SSH_USER}@${vmIP}:${deployDir}/`;
-
 execSync(`${scpBase} ${composeFile} ${vmDest}`, { stdio: 'inherit' });
-
 if (useNginx) {
   const nginxConfFile = `nginx-${target}.conf`;
   execSync(`${scpBase} ${nginxConfFile} ${vmDest}`, { stdio: 'inherit' });
   console.log('Copying certs/ to VM...');
   execSync(`${scpBase} -r certs ${vmDest}`, { stdio: 'inherit' });
 }
-
 const mailSetupScript = 'Scripts/mail-setup.sh';
 if (fs.existsSync(mailSetupScript)) {
   execSync(`${scpBase} ${mailSetupScript} ${vmDest}Scripts/`, { stdio: 'inherit' });
   execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "chmod +x ${deployDir}/Scripts/mail-setup.sh"`, { stdio: 'inherit' });
 }
-
 const posteRelayScript = 'Scripts/configure-poste-relay.js';
 if (fs.existsSync(posteRelayScript)) {
   execSync(`${scpBase} ${posteRelayScript} ${vmDest}Scripts/`, { stdio: 'inherit' });
 }
 
-// ---------------------------------------------------------------
-// 8. Deploy
-// ---------------------------------------------------------------
-console.log('Logging into ghcr.io and deploying...');
-const tokenFile = '/tmp/gh_token';
-fs.writeFileSync(tokenFile, token, { mode: 0o600 });
+// ==================================================================
+// 8. NEW APPROACH: Build a shell script, copy & execute on the VM
+// ==================================================================
+console.log('Building deployment script...');
 
-// Pre-flight check for critical variables
-const criticalVars = ['DEBUG', 'SECRET_KEY', 'SITE_HEADER', 'POSTE_PROTOCOL'];
-console.log('\x1b[36m--- Checking critical vars in process.env before .env generation ---\x1b[0m');
-criticalVars.forEach(v => {
-  const val = process.env[v];
-  if (val === undefined) {
-    console.log(`  \x1b[31m${v}: MISSING\x1b[0m`);
-  } else if (val === '') {
-    console.log(`  \x1b[33m${v}: EMPTY\x1b[0m`);
-  } else {
-    console.log(`  \x1b[32m${v}: PRESENT\x1b[0m (length: ${val.length})`);
-  }
-});
-
-// Build .env content (as export commands for in-memory injection)
-const envLines = [];
+// Build the export lines in a safe way (no in‑shell escaping needed)
+const exportLines = [];
 for (const [key, value] of Object.entries(process.env)) {
   // Exclude internal Node.js / system variables
   if (key.startsWith('npm_') || ['PATH', 'HOME', 'PWD', 'SHELL', 'HOSTNAME'].includes(key)) continue;
 
-  // Remove ALL control characters (0x00‑0x1F) and DEL (0x7F) from the KEY.
+  // Remove control characters from key & value
   const cleanKey = key.replace(/[\x00-\x1F\x7F]/g, '');
-  if (cleanKey === '') continue;   // skip entirely broken keys
-
-  // Strip control characters from the VALUE.
+  if (cleanKey === '') continue;
   const cleanValue = (value || '').replace(/[\x00-\x1F\x7F]/g, '');
-  
-  // Properly escape backslashes, quotes, and dollar signs for bash export
-  const safeValue  = cleanValue
-    .replace(/\\/g, '\\\\')   // Escape backslashes
-    .replace(/"/g, '\\"')     // Escape double quotes
-    .replace(/\$/g, '\\$');   // Escape dollar signs to prevent shell interpolation
 
-  envLines.push(`${cleanKey}="${safeValue}"`);
+  // Use a heredoc to avoid any escaping. We'll write the exports as:
+  // export KEY='...'  (single‑quote safe)
+  // To handle single quotes in the value, replace ' with '\''
+  const safeValue = cleanValue
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "'\\''")
+    .replace(/`/g, '\\`')
+    .replace(/"/g, '\\"')
+    .replace(/\$/g, '\\$');
+
+  exportLines.push(`export ${cleanKey}='${safeValue}'`);
 }
 
-// Create the bash export command string
-const envExportString = envLines.map(line => `export ${line}`).join(' && ');
-
-// ------------------------------------------------------------------
-// Remote deploy command – sources the environment variables in-memory
-// ------------------------------------------------------------------
 const nginxContainerName = appConf.nginxContainer[target];
 const mailContainerName = appConf.mailContainer ? appConf.mailContainer[target] : null;
 
-const mailSetupCmd = mailContainerName ? 
-  ` && echo "Syncing Poste.io admin password..." && ` +
-  `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console domain:create ${process.env.POSTE_DOMAIN || 'aeropace.com'} || true ) && ` +
-  `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:create ${process.env.EMAIL_HOST_USER} "${process.env.POSTE_ADMIN_PASSWORD}" Admin || true ) && ` +
-  `( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:admin ${process.env.EMAIL_HOST_USER} || true ) && ` +
-  `echo "Configuring SMTP relay..." && ` +
-  `node ${deployDir}/Scripts/configure-poste-relay.js ${mailContainerName} "${process.env.POSTE_RELAY_HOST}" "${process.env.POSTE_RELAY_USER}" "${process.env.POSTE_RELAY_PASS}" "${process.env.POSTE_API_USER}" "${process.env.POSTE_ADMIN_PASSWORD}"` : '';
+let mailSetupLines = '';
+if (mailContainerName) {
+  mailSetupLines = `
+echo "Syncing Poste.io admin password..."
+( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console domain:create ${process.env.POSTE_DOMAIN || 'aeropace.com'} || true )
+( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:create ${process.env.EMAIL_HOST_USER} "${process.env.POSTE_ADMIN_PASSWORD}" Admin || true )
+( sudo -E docker exec --user 8 ${mailContainerName} /opt/admin/bin/console email:admin ${process.env.EMAIL_HOST_USER} || true )
+echo "Configuring SMTP relay..."
+node ${deployDir}/Scripts/configure-poste-relay.js ${mailContainerName} "${process.env.POSTE_RELAY_HOST}" "${process.env.POSTE_RELAY_USER}" "${process.env.POSTE_RELAY_PASS}" "${process.env.POSTE_API_USER}" "${process.env.POSTE_ADMIN_PASSWORD}"
+`;
+}
 
 const imageTag = process.env.IMAGE_TAG || 'latest';
-const deployCmd =
-  `cd ${deployDir} && ` +
-  `flock ${remoteLockFile} bash -c '` +
-    `${envExportString} && ` + // Export env vars in this session
-    `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans && ` +
-    `sudo docker rm -f ${nginxContainerName} || true && ` +
-    `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
-    (mailContainerName ? 
-    ` && echo "Diagnostic: Network bindings in container:" && ` +
-    `sudo docker exec -i ${mailContainerName} netstat -tulpn || echo "netstat not available, trying ss..." && sudo docker exec -i ${mailContainerName} ss -tulpn || true` : '') +
-    (mailContainerName ? mailSetupCmd : '') + `'`;
+const remoteLockFile = `/tmp/${appName}_deploy.lock`;
 
-const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;
+// Assemble the full script content
+const scriptContent = `#!/bin/bash
+set -e  # stop on error
 
+# Export all environment variables
+${exportLines.join('\n')}
+
+# Docker login
+echo "${token}" | sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin
+
+# Acquire lock and deploy
+cd ${deployDir}
+flock ${remoteLockFile} bash -c "
+  IMAGE_TAG='${imageTag}' sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans
+  sudo docker rm -f ${nginxContainerName} || true
+  IMAGE_TAG='${imageTag}' sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans
+  ${mailSetupLines}
+"`;
+
+// Write the script to a local temp file
+const localScriptPath = '/tmp/deploy_script.sh';
+fs.writeFileSync(localScriptPath, scriptContent, { mode: 0o755 });
+
+// Copy it to the VM
+const remoteScriptPath = '/tmp/deploy_script.sh';
+execSync(`scp -i ${sshKeyPath} ${SSH_OPTS} ${localScriptPath} ${SSH_USER}@${vmIP}:${remoteScriptPath}`, { stdio: 'inherit' });
+
+// Execute the script remotely
+console.log('Executing deployment script on VM...');
 let success = false;
 for (let attempt = 1; attempt <= 3; attempt++) {
   try {
     if (attempt > 1) console.log(`\x1b[33mRetry attempt ${attempt}/3...\x1b[0m`);
-    execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} -o LogLevel=ERROR ${SSH_USER}@${vmIP} "${fullRemote.replace(/"/g, '\\"')}" < ${tokenFile}`, { stdio: 'inherit' });
+    execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} -o LogLevel=ERROR ${SSH_USER}@${vmIP} "bash ${remoteScriptPath}"`, { stdio: 'inherit' });
     success = true;
     break;
   } catch (e) {
@@ -511,10 +467,11 @@ for (let attempt = 1; attempt <= 3; attempt++) {
   }
 }
 
-try { fs.unlinkSync(tokenFile); } catch (_) {}
+// Clean up local and remote script
+try { fs.unlinkSync(localScriptPath); } catch (_) {}
+execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "rm -f ${remoteScriptPath}"`, { stdio: 'pipe' });
 
 if (success) {
-  // Post‑deploy verification: check that the web container actually received POSTE_PROTOCOL
   const webContainer = `${appConf.projectPrefix}-${cfg.env}-web-${cfg.env}-1`;
   try {
     const checkCmd = `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker exec ${webContainer} printenv POSTE_PROTOCOL"`;
@@ -525,7 +482,6 @@ if (success) {
       console.log(`\x1b[32mPost‑deploy check: POSTE_PROTOCOL = ${output}\x1b[0m`);
     }
   } catch (e) { /* ignore */ }
-
   console.log('\x1b[32m✓ Deployment completed successfully.\x1b[0m');
   console.log('\x1b[36mAll configuration injected from GitHub/GCP – no .env files left on disk.\x1b[0m');
 } else {

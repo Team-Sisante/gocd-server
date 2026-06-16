@@ -78,7 +78,7 @@
                   cd /humrine_site
                   npm install
                   env | grep GO_REVISION >&2
-                  IMAGE_TAG=sha-${GO_REVISION_HUMRINE_SITE_ARTIFACTS} node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__
+                  IMAGE_TAG=sha-${GO_REVISION_ARTIFACTS} node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__
                 ]]></arg>
               </exec>
             </tasks>
@@ -106,7 +106,7 @@
                   cd /humrine_site
                   npm install
                   env | grep GO_REVISION >&2
-                  IMAGE_TAG=sha-${GO_REVISION_HUMRINE_SITE_ARTIFACTS} node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__
+                  IMAGE_TAG=sha-${GO_REVISION_ARTIFACTS} node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__
                 ]]></arg>
               </exec>
             </tasks>
@@ -135,7 +135,6 @@
                 <arg><![CDATA[
                   git config --global --add safe.directory /badminton_court
                   cd /badminton_court
-                  node Scripts/diagnose-network.js
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   node Scripts/build-and-push.js
                 ]]></arg>
@@ -165,7 +164,7 @@
                   cd /badminton_court
                   npm install
                   env | grep GO_REVISION >&2
-                  IMAGE_TAG=sha-${GO_REVISION_BADMINTON_COURT_ARTIFACTS} node /gocd-server/Scripts/deploy.js badminton_court staging __GITHUB_TOKEN__
+                  IMAGE_TAG=sha-${GO_REVISION_ARTIFACTS} node /gocd-server/Scripts/deploy.js badminton_court staging __GITHUB_TOKEN__
                 ]]></arg>
               </exec>
             </tasks>
@@ -193,7 +192,7 @@
                   cd /badminton_court
                   npm install
                   env | grep GO_REVISION >&2
-                  IMAGE_TAG=sha-${GO_REVISION_BADMINTON_COURT_ARTIFACTS} node /gocd-server/Scripts/deploy.js badminton_court production __GITHUB_TOKEN__
+                  IMAGE_TAG=sha-${GO_REVISION_ARTIFACTS} node /gocd-server/Scripts/deploy.js badminton_court production __GITHUB_TOKEN__
                 ]]></arg>
               </exec>
             </tasks>

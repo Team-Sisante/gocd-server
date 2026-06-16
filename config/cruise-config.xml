@@ -51,9 +51,6 @@
                   npm ls axios >/dev/null 2>&1 || npm install axios
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   node Scripts/build-and-push.js
-                  # Record the SHA for future promotion
-                  git rev-parse --short HEAD > /tmp/humrine_site-sha.txt
-                  echo "ARTIFACT_SHA=$(cat /tmp/humrine_site-sha.txt)"
                 ]]></arg>
               </exec>
             </tasks>
@@ -131,9 +128,6 @@
                   npm ls axios >/dev/null 2>&1 || npm install axios
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   node Scripts/build-and-push.js
-                  # Record the SHA for future promotion
-                  git rev-parse --short HEAD > /tmp/badminton_court-sha.txt
-                  echo "ARTIFACT_SHA=$(cat /tmp/badminton_court-sha.txt)"
                 ]]></arg>
               </exec>
             </tasks>

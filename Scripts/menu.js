@@ -199,6 +199,9 @@ async function showMenu(ctx) {
             console.log('   6.37. Show load balancer host rules');
             console.log('\n\x1b[36m0. Exit\x1b[0m\n');
 
+            console.log('\x1b[32mGoCD Management Menu (.js)\x1b[0m');
+            console.log('\x1b[32m===========================\x1b[0m\n');
+
             const choice = await ask('Select an option: ');
             if (choice === '0') return;
             await executeChoice(choice, ctx);

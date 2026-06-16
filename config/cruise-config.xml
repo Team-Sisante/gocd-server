@@ -25,11 +25,13 @@
       <siteUrl>__SITE_URL__</siteUrl>
     </siteUrls>
     <artifacts>
-      <!-- Absolute path inside the server container to avoid NullPointerException -->
-      <artifactsDir>/godata/artifacts</artifactsDir>
+      <artifactsDir>artifacts</artifactsDir>
     </artifacts>
   </server>
 
+  <!-- ============================================================ -->
+  <!-- humrine_site pipelines                                       -->
+  <!-- ============================================================ -->
   <pipelines group="humrine_site_group">
     <pipeline name="humrine_site-artifacts">
       <materials>
@@ -52,13 +54,14 @@
                   npm ls axios >/dev/null 2>&1 || npm install axios
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   node Scripts/build-and-push.js
-                  # Write the commit SHA to a file for artifact publishing
-                  git rev-parse --short HEAD > image-tag.txt
+                  mkdir -p build-info
+                  git rev-parse --short HEAD > build-info/image-tag.txt
+                  cp build-info/image-tag.txt /shared-tags/humrine_site-tag-${GO_PIPELINE_COUNTER}.txt
                 ]]></arg>
               </exec>
             </tasks>
             <artifacts>
-              <artifact type="build" src="image-tag.txt" />
+              <artifact src="build-info/image-tag.txt" type="build" />
             </artifacts>
           </job>
         </jobs>
@@ -66,6 +69,11 @@
     </pipeline>
 
     <pipeline name="humrine_site-staging">
+      <environmentvariables>
+        <variable name="OVERRIDE_IMAGE_TAG">
+          <value></value>
+        </variable>
+      </environmentvariables>
       <materials>
         <pipeline pipelineName="humrine_site-artifacts" stageName="build_and_push" />
       </materials>
@@ -78,11 +86,17 @@
               <resource>humrine_site</resource>
             </resources>
             <tasks>
-              <fetchartifact origin="gocd" pipeline="humrine_site-artifacts" stage="build_and_push" job="artifact_generation" srcfile="image-tag.txt" />
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>export IMAGE_TAG=sha-$(cat image-tag.txt)
-                      node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__</arg>
+                <arg><![CDATA[
+                  if [ -n "$OVERRIDE_IMAGE_TAG" ]; then
+                    export IMAGE_TAG="$OVERRIDE_IMAGE_TAG"
+                  else
+                    export IMAGE_TAG=sha-$(cat /shared-tags/humrine_site-tag-${GO_DEPENDENCY_LABEL_HUMRINE_SITE_ARTIFACTS}.txt)
+                  fi
+                  echo "Deploying image tag: $IMAGE_TAG"
+                  node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__
+                ]]></arg>
               </exec>
             </tasks>
           </job>
@@ -91,6 +105,11 @@
     </pipeline>
 
     <pipeline name="humrine_site-production">
+      <environmentvariables>
+        <variable name="OVERRIDE_IMAGE_TAG">
+          <value></value>
+        </variable>
+      </environmentvariables>
       <materials>
         <pipeline pipelineName="humrine_site-artifacts" stageName="build_and_push" />
       </materials>
@@ -103,11 +122,17 @@
               <resource>humrine_site</resource>
             </resources>
             <tasks>
-              <fetchartifact origin="gocd" pipeline="humrine_site-artifacts" stage="build_and_push" job="artifact_generation" srcfile="image-tag.txt" />
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>export IMAGE_TAG=sha-$(cat image-tag.txt)
-                      node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__</arg>
+                <arg><![CDATA[
+                  if [ -n "$OVERRIDE_IMAGE_TAG" ]; then
+                    export IMAGE_TAG="$OVERRIDE_IMAGE_TAG"
+                  else
+                    export IMAGE_TAG=sha-$(cat /shared-tags/humrine_site-tag-${GO_DEPENDENCY_LABEL_HUMRINE_SITE_ARTIFACTS}.txt)
+                  fi
+                  echo "Deploying image tag: $IMAGE_TAG"
+                  node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__
+                ]]></arg>
               </exec>
             </tasks>
           </job>
@@ -116,6 +141,9 @@
     </pipeline>
   </pipelines>
 
+  <!-- ============================================================ -->
+  <!-- badminton_court pipelines                                    -->
+  <!-- ============================================================ -->
   <pipelines group="badminton_court_group">
     <pipeline name="badminton_court-artifacts">
       <materials>
@@ -138,13 +166,14 @@
                   npm ls axios >/dev/null 2>&1 || npm install axios
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   node Scripts/build-and-push.js
-                  # Write the commit SHA to a file for artifact publishing
-                  git rev-parse --short HEAD > image-tag.txt
+                  mkdir -p build-info
+                  git rev-parse --short HEAD > build-info/image-tag.txt
+                  cp build-info/image-tag.txt /shared-tags/badminton_court-tag-${GO_PIPELINE_COUNTER}.txt
                 ]]></arg>
               </exec>
             </tasks>
             <artifacts>
-              <artifact type="build" src="image-tag.txt" />
+              <artifact src="build-info/image-tag.txt" type="build" />
             </artifacts>
           </job>
         </jobs>
@@ -152,6 +181,11 @@
     </pipeline>
 
     <pipeline name="badminton_court-staging">
+      <environmentvariables>
+        <variable name="OVERRIDE_IMAGE_TAG">
+          <value></value>
+        </variable>
+      </environmentvariables>
       <materials>
         <pipeline pipelineName="badminton_court-artifacts" stageName="build_and_push" />
       </materials>
@@ -164,11 +198,17 @@
               <resource>badminton_court</resource>
             </resources>
             <tasks>
-              <fetchartifact origin="gocd" pipeline="badminton_court-artifacts" stage="build_and_push" job="artifact_generation" srcfile="image-tag.txt" />
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>export IMAGE_TAG=sha-$(cat image-tag.txt)
-                      node /gocd-server/Scripts/deploy.js badminton_court staging __GITHUB_TOKEN__</arg>
+                <arg><![CDATA[
+                  if [ -n "$OVERRIDE_IMAGE_TAG" ]; then
+                    export IMAGE_TAG="$OVERRIDE_IMAGE_TAG"
+                  else
+                    export IMAGE_TAG=sha-$(cat /shared-tags/badminton_court-tag-${GO_DEPENDENCY_LABEL_BADMINTON_COURT_ARTIFACTS}.txt)
+                  fi
+                  echo "Deploying image tag: $IMAGE_TAG"
+                  node /gocd-server/Scripts/deploy.js badminton_court staging __GITHUB_TOKEN__
+                ]]></arg>
               </exec>
             </tasks>
           </job>
@@ -177,6 +217,11 @@
     </pipeline>
 
     <pipeline name="badminton_court-production">
+      <environmentvariables>
+        <variable name="OVERRIDE_IMAGE_TAG">
+          <value></value>
+        </variable>
+      </environmentvariables>
       <materials>
         <pipeline pipelineName="badminton_court-artifacts" stageName="build_and_push" />
       </materials>
@@ -189,11 +234,17 @@
               <resource>badminton_court</resource>
             </resources>
             <tasks>
-              <fetchartifact origin="gocd" pipeline="badminton_court-artifacts" stage="build_and_push" job="artifact_generation" srcfile="image-tag.txt" />
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>export IMAGE_TAG=sha-$(cat image-tag.txt)
-                      node /gocd-server/Scripts/deploy.js badminton_court production __GITHUB_TOKEN__</arg>
+                <arg><![CDATA[
+                  if [ -n "$OVERRIDE_IMAGE_TAG" ]; then
+                    export IMAGE_TAG="$OVERRIDE_IMAGE_TAG"
+                  else
+                    export IMAGE_TAG=sha-$(cat /shared-tags/badminton_court-tag-${GO_DEPENDENCY_LABEL_BADMINTON_COURT_ARTIFACTS}.txt)
+                  fi
+                  echo "Deploying image tag: $IMAGE_TAG"
+                  node /gocd-server/Scripts/deploy.js badminton_court production __GITHUB_TOKEN__
+                ]]></arg>
               </exec>
             </tasks>
           </job>
@@ -202,8 +253,10 @@
     </pipeline>
   </pipelines>
 
+  <!-- ============================================================ -->
+  <!-- pay-sol pipelines                                            -->
+  <!-- ============================================================ -->
   <pipelines group="pay-sol-group">
-    <!-- unchanged -->
     <pipeline name="pay-sol-artifacts">
       <materials>
         <git url="__PAYSOL_REPO_URL_WITH_CREDENTIALS__" branch="master" />
@@ -222,15 +275,25 @@
                 <arg><![CDATA[
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   node /pay-sol/Scripts/build-and-push.js
+                  mkdir -p build-info
+                  git rev-parse --short HEAD > build-info/image-tag.txt
                 ]]></arg>
               </exec>
             </tasks>
+            <artifacts>
+              <artifact src="build-info/image-tag.txt" type="build" />
+            </artifacts>
           </job>
         </jobs>
       </stage>
     </pipeline>
 
     <pipeline name="pay-sol-staging">
+      <environmentvariables>
+        <variable name="OVERRIDE_IMAGE_TAG">
+          <value></value>
+        </variable>
+      </environmentvariables>
       <materials>
         <pipeline pipelineName="pay-sol-artifacts" stageName="build_and_push" />
       </materials>
@@ -245,7 +308,14 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /pay-sol/Scripts/deploy.js staging __GITHUB_TOKEN__</arg>
+                <arg><![CDATA[
+                  if [ -z "$OVERRIDE_IMAGE_TAG" ]; then
+                    OVERRIDE_IMAGE_TAG=sha-$(cat /godata/pipelines/pay-sol-artifacts/build-info/image-tag.txt)
+                  fi
+                  export IMAGE_TAG="$OVERRIDE_IMAGE_TAG"
+                  echo "Deploying image tag: $IMAGE_TAG"
+                  node /pay-sol/Scripts/deploy.js staging __GITHUB_TOKEN__
+                ]]></arg>
               </exec>
             </tasks>
           </job>
@@ -254,6 +324,11 @@
     </pipeline>
 
     <pipeline name="pay-sol-production">
+      <environmentvariables>
+        <variable name="OVERRIDE_IMAGE_TAG">
+          <value></value>
+        </variable>
+      </environmentvariables>
       <materials>
         <pipeline pipelineName="pay-sol-artifacts" stageName="build_and_push" />
       </materials>
@@ -268,7 +343,14 @@
             <tasks>
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>node /pay-sol/Scripts/deploy.js production __GITHUB_TOKEN__</arg>
+                <arg><![CDATA[
+                  if [ -z "$OVERRIDE_IMAGE_TAG" ]; then
+                    OVERRIDE_IMAGE_TAG=sha-$(cat /godata/pipelines/pay-sol-artifacts/build-info/image-tag.txt)
+                  fi
+                  export IMAGE_TAG="$OVERRIDE_IMAGE_TAG"
+                  echo "Deploying image tag: $IMAGE_TAG"
+                  node /pay-sol/Scripts/deploy.js production __GITHUB_TOKEN__
+                ]]></arg>
               </exec>
             </tasks>
           </job>

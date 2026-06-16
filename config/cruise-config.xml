@@ -51,14 +51,12 @@
                   npm ls axios >/dev/null 2>&1 || npm install axios
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   node Scripts/build-and-push.js
-                  # Write the commit SHA to a file for downstream promotion
-                  git rev-parse --short HEAD > image-tag.txt
+                  # Record the SHA for future promotion
+                  git rev-parse --short HEAD > /tmp/humrine_site-sha.txt
+                  echo "ARTIFACT_SHA=$(cat /tmp/humrine_site-sha.txt)"
                 ]]></arg>
               </exec>
             </tasks>
-            <artifacts>
-              <artifact src="image-tag.txt" />
-            </artifacts>
           </job>
         </jobs>
       </stage>
@@ -77,12 +75,9 @@
               <resource>humrine_site</resource>
             </resources>
             <tasks>
-              <!-- Fetch the artifact containing the image tag -->
-              <fetchartifact pipeline="humrine_site-artifacts" stage="build_and_push" job="artifact_generation" srcfile="image-tag.txt" />
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>export IMAGE_TAG=sha-$(cat image-tag.txt)
-                      node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__</arg>
+                <arg>node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -103,11 +98,9 @@
               <resource>humrine_site</resource>
             </resources>
             <tasks>
-              <fetchartifact pipeline="humrine_site-artifacts" stage="build_and_push" job="artifact_generation" srcfile="image-tag.txt" />
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>export IMAGE_TAG=sha-$(cat image-tag.txt)
-                      node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__</arg>
+                <arg>node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -138,14 +131,12 @@
                   npm ls axios >/dev/null 2>&1 || npm install axios
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   node Scripts/build-and-push.js
-                  # Write the commit SHA to a file for downstream promotion
-                  git rev-parse --short HEAD > image-tag.txt
+                  # Record the SHA for future promotion
+                  git rev-parse --short HEAD > /tmp/badminton_court-sha.txt
+                  echo "ARTIFACT_SHA=$(cat /tmp/badminton_court-sha.txt)"
                 ]]></arg>
               </exec>
             </tasks>
-            <artifacts>
-              <artifact src="image-tag.txt" />
-            </artifacts>
           </job>
         </jobs>
       </stage>
@@ -164,11 +155,9 @@
               <resource>badminton_court</resource>
             </resources>
             <tasks>
-              <fetchartifact pipeline="badminton_court-artifacts" stage="build_and_push" job="artifact_generation" srcfile="image-tag.txt" />
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>export IMAGE_TAG=sha-$(cat image-tag.txt)
-                      node /gocd-server/Scripts/deploy.js badminton_court staging __GITHUB_TOKEN__</arg>
+                <arg>node /gocd-server/Scripts/deploy.js badminton_court staging __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -189,11 +178,9 @@
               <resource>badminton_court</resource>
             </resources>
             <tasks>
-              <fetchartifact pipeline="badminton_court-artifacts" stage="build_and_push" job="artifact_generation" srcfile="image-tag.txt" />
               <exec command="bash">
                 <arg>-c</arg>
-                <arg>export IMAGE_TAG=sha-$(cat image-tag.txt)
-                      node /gocd-server/Scripts/deploy.js badminton_court production __GITHUB_TOKEN__</arg>
+                <arg>node /gocd-server/Scripts/deploy.js badminton_court production __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>

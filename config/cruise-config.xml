@@ -30,9 +30,9 @@
   </server>
 
   <pipelines group="humrine_site_group">
-    <pipeline name="humrine_site-artifacts" labelTemplate="${repo}">
+    <pipeline name="humrine_site-artifacts">
       <materials>
-        <git url="__HUMRINE_SITE_REPO_URL_WITH_CREDENTIALS__" branch="master" dest="humrine_site" name="repo" />
+        <git url="__HUMRINE_SITE_REPO_URL_WITH_CREDENTIALS__" branch="master" dest="humrine_site" />
       </materials>
       <stage name="build_and_push">
         <approval type="manual" />
@@ -48,12 +48,17 @@
                 <arg><![CDATA[
                   git config --global --add safe.directory /humrine_site
                   cd /humrine_site
-                  npm install axios
+                  npm ls axios >/dev/null 2>&1 || npm install axios
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   node Scripts/build-and-push.js
+                  # Write the commit SHA to a file for downstream promotion
+                  git rev-parse --short HEAD > image-tag.txt
                 ]]></arg>
               </exec>
             </tasks>
+            <artifacts>
+              <artifact src="image-tag.txt" />
+            </artifacts>
           </job>
         </jobs>
       </stage>
@@ -61,7 +66,7 @@
 
     <pipeline name="humrine_site-staging">
       <materials>
-        <pipeline pipelineName="humrine_site-artifacts" stageName="build_and_push" name="ARTIFACTS" />
+        <pipeline pipelineName="humrine_site-artifacts" stageName="build_and_push" />
       </materials>
       <stage name="deploy_staging">
         <approval type="manual" />
@@ -72,14 +77,12 @@
               <resource>humrine_site</resource>
             </resources>
             <tasks>
+              <!-- Fetch the artifact containing the image tag -->
+              <fetchartifact pipeline="humrine_site-artifacts" stage="build_and_push" job="artifact_generation" srcfile="image-tag.txt" />
               <exec command="bash">
                 <arg>-c</arg>
-                <arg><![CDATA[
-                  cd /humrine_site
-                  npm install
-                  env | grep GO_REVISION >&2
-                  IMAGE_TAG=sha-${GO_REVISION_ARTIFACTS} node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__
-                ]]></arg>
+                <arg>export IMAGE_TAG=sha-$(cat image-tag.txt)
+                      node /gocd-server/Scripts/deploy.js humrine_site staging __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -89,7 +92,7 @@
 
     <pipeline name="humrine_site-production">
       <materials>
-        <pipeline pipelineName="humrine_site-artifacts" stageName="build_and_push" name="ARTIFACTS" />
+        <pipeline pipelineName="humrine_site-artifacts" stageName="build_and_push" />
       </materials>
       <stage name="deploy_production">
         <approval type="manual" />
@@ -100,14 +103,11 @@
               <resource>humrine_site</resource>
             </resources>
             <tasks>
+              <fetchartifact pipeline="humrine_site-artifacts" stage="build_and_push" job="artifact_generation" srcfile="image-tag.txt" />
               <exec command="bash">
                 <arg>-c</arg>
-                <arg><![CDATA[
-                  cd /humrine_site
-                  npm install
-                  env | grep GO_REVISION >&2
-                  IMAGE_TAG=sha-${GO_REVISION_ARTIFACTS} node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__
-                ]]></arg>
+                <arg>export IMAGE_TAG=sha-$(cat image-tag.txt)
+                      node /gocd-server/Scripts/deploy.js humrine_site production __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -117,9 +117,9 @@
   </pipelines>
 
   <pipelines group="badminton_court_group">
-    <pipeline name="badminton_court-artifacts" labelTemplate="${repo}">
+    <pipeline name="badminton_court-artifacts">
       <materials>
-        <git url="__GIT_REPO_URL_WITH_CREDENTIALS__" branch="master" dest="badminton_court" name="repo" />
+        <git url="__GIT_REPO_URL_WITH_CREDENTIALS__" branch="master" dest="badminton_court" />
       </materials>
       <stage name="build_and_push">
         <approval type="manual" />
@@ -135,11 +135,17 @@
                 <arg><![CDATA[
                   git config --global --add safe.directory /badminton_court
                   cd /badminton_court
+                  npm ls axios >/dev/null 2>&1 || npm install axios
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   node Scripts/build-and-push.js
+                  # Write the commit SHA to a file for downstream promotion
+                  git rev-parse --short HEAD > image-tag.txt
                 ]]></arg>
               </exec>
             </tasks>
+            <artifacts>
+              <artifact src="image-tag.txt" />
+            </artifacts>
           </job>
         </jobs>
       </stage>
@@ -147,7 +153,7 @@
 
     <pipeline name="badminton_court-staging">
       <materials>
-        <pipeline pipelineName="badminton_court-artifacts" stageName="build_and_push" name="ARTIFACTS" />
+        <pipeline pipelineName="badminton_court-artifacts" stageName="build_and_push" />
       </materials>
       <stage name="deploy_staging">
         <approval type="manual" />
@@ -158,14 +164,11 @@
               <resource>badminton_court</resource>
             </resources>
             <tasks>
+              <fetchartifact pipeline="badminton_court-artifacts" stage="build_and_push" job="artifact_generation" srcfile="image-tag.txt" />
               <exec command="bash">
                 <arg>-c</arg>
-                <arg><![CDATA[
-                  cd /badminton_court
-                  npm install
-                  env | grep GO_REVISION >&2
-                  IMAGE_TAG=sha-${GO_REVISION_ARTIFACTS} node /gocd-server/Scripts/deploy.js badminton_court staging __GITHUB_TOKEN__
-                ]]></arg>
+                <arg>export IMAGE_TAG=sha-$(cat image-tag.txt)
+                      node /gocd-server/Scripts/deploy.js badminton_court staging __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>
@@ -175,7 +178,7 @@
 
     <pipeline name="badminton_court-production">
       <materials>
-        <pipeline pipelineName="badminton_court-artifacts" stageName="build_and_push" name="ARTIFACTS" />
+        <pipeline pipelineName="badminton_court-artifacts" stageName="build_and_push" />
       </materials>
       <stage name="deploy_production">
         <approval type="manual" />
@@ -186,14 +189,11 @@
               <resource>badminton_court</resource>
             </resources>
             <tasks>
+              <fetchartifact pipeline="badminton_court-artifacts" stage="build_and_push" job="artifact_generation" srcfile="image-tag.txt" />
               <exec command="bash">
                 <arg>-c</arg>
-                <arg><![CDATA[
-                  cd /badminton_court
-                  npm install
-                  env | grep GO_REVISION >&2
-                  IMAGE_TAG=sha-${GO_REVISION_ARTIFACTS} node /gocd-server/Scripts/deploy.js badminton_court production __GITHUB_TOKEN__
-                ]]></arg>
+                <arg>export IMAGE_TAG=sha-$(cat image-tag.txt)
+                      node /gocd-server/Scripts/deploy.js badminton_court production __GITHUB_TOKEN__</arg>
               </exec>
             </tasks>
           </job>

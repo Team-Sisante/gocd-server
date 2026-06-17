@@ -296,7 +296,12 @@ if (target === 'staging' || target === 'production') {
     useNginx = true;
 
     if (GCP_PROJECT_ID) {
-      const ruleName = `allow-web-https-${target}`;
+      // Firewall rule name is app-scoped so concurrent deploys of different apps
+      // don't collide on a shared rule name and clobber each other's port.
+      // GCP resource names must match [a-z](?:[-a-z0-9]{0,61}[a-z0-9])? — no underscores,
+      // so replace any underscores in the app name with hyphens (e.g. "humrine_site" → "humrine-site").
+      const gcpSafeAppName = appName.replace(/_/g, '-');
+      const ruleName = `allow-web-https-${gcpSafeAppName}-${target}`;
       const targetTag = process.env.GCP_VM_NAME;
       if (!targetTag) waitAndExit('ERROR: GCP_VM_NAME is not defined in environment.');
 

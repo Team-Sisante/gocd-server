@@ -499,7 +499,7 @@ const deployCmd =
     (mailContainerName ? 
     ` && echo "Diagnostic: Network bindings in container:" && ` +
     `sudo docker exec -i ${mailContainerName} netstat -tulpn || echo "netstat not available, trying ss..." && sudo docker exec -i ${mailContainerName} ss -tulpn || true` : '') +
-    (mailContainerName ? mailSetupCmd : '') + `'`;
+    (mailContainerName ? ` && ${mailSetupCmd}` : '') + `'`;
 
 const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;
 

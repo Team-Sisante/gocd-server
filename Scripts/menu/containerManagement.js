@@ -315,5 +315,10 @@ try {
         // Delegates to the standalone reset script — keeps this file slim.
         ctx.sh('node Scripts/gocd-reset.js', { stdio: 'inherit' });
         await ctx.pause();
-    }    
+    },
+    '1.13': async (ctx) => {
+        // Delegates to the standalone script — keeps this file slim.
+        ctx.sh('node Scripts/gocd-recreate-server.js', { stdio: 'inherit' });
+        await ctx.pause();
+    } 
 };

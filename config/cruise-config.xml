@@ -54,7 +54,7 @@
                   cd /humrine_site
                   npm ls axios >/dev/null 2>&1 || npm install axios
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
-                  node Scripts/build-and-push.js
+                  node Scripts/build-and-push.js && \
                   git rev-parse --short HEAD > /shared-tags/humrine_site-tag-${GO_PIPELINE_COUNTER}.txt
                 ]]></arg>
               </exec>
@@ -162,7 +162,7 @@
                   cd /badminton_court
                   npm ls axios >/dev/null 2>&1 || npm install axios
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
-                  node Scripts/build-and-push.js
+                  node Scripts/build-and-push.js && \
                   git rev-parse --short HEAD > /shared-tags/badminton_court-tag-${GO_PIPELINE_COUNTER}.txt
                 ]]></arg>
               </exec>
@@ -265,6 +265,7 @@
               <exec command="bash">
                 <arg>-c</arg>
                 <arg><![CDATA[
+                  set -e
                   export GITHUB_TOKEN='__GITHUB_TOKEN__'
                   node /pay-sol/Scripts/build-and-push.js
                 ]]></arg>

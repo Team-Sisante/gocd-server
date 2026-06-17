@@ -23,6 +23,7 @@
  */
 
 const { execSync } = require('child_process');
+const http = require('http');
 const readline = require('readline');
 const path = require('path');
 
@@ -47,6 +48,54 @@ function sh(cmd, options = {}) {
         if (options.ignoreError) return '';
         throw e;
     }
+}
+
+/**
+ * Check if the GoCD server is responding. Uses Node's built-in http module
+ * instead of curl to avoid Windows curl quirks (multiple curl binaries,
+ * IPv4/IPv6 resolution issues, etc.).
+ *
+ * Tries two endpoints because the server boots in stages — the API health
+ * endpoint may not be available until late in the boot process, but the
+ * root URL usually responds earlier.
+ *
+ * Uses 127.0.0.1 explicitly (not localhost) to force IPv4 and avoid
+ * Windows IPv6-first resolution delays.
+ */
+function isServerReady() {
+    return new Promise((resolve) => {
+        const tryEndpoint = (path, label) => {
+            return new Promise((res) => {
+                const req = http.get({
+                    host: '127.0.0.1',
+                    port: 8153,
+                    path: path,
+                    timeout: 3000,
+                }, (response) => {
+                    response.resume(); // drain the response so the socket closes
+                    if (response.statusCode === 200 ||
+                        response.statusCode === 302 ||
+                        response.statusCode === 401) {
+                        res(label);
+                    } else {
+                        res(null);
+                    }
+                });
+                req.on('error', () => res(null));
+                req.on('timeout', () => {
+                    req.destroy();
+                    res(null);
+                });
+            });
+        };
+
+        // Try the API health endpoint first (most reliable signal)
+        tryEndpoint('/go/api/v1/health', 'health').then(result => {
+            if (result) return resolve(result);
+            // Fall back to the root UI URL (responds earlier in boot)
+            return tryEndpoint('/go/', 'root');
+        }).then(resolve);
+    });
 }
 
 async function main() {
@@ -80,33 +129,59 @@ async function main() {
 
     // ---------------------------------------------------------------
     // STEP 3: Wait for the server to become healthy
+    // GoCD is a Java app and can take 2-5 minutes to fully boot, especially
+    // after a force-recreate. Poll patiently for up to 5 minutes.
     // ---------------------------------------------------------------
     log('STEP 3: Waiting for GoCD server to become healthy...', '\x1b[33m');
+    log('  (GoCD can take 2-5 minutes to fully boot — be patient)', '\x1b[36m');
+
+    const MAX_ATTEMPTS = 60;     // 60 attempts × 5s = 300s = 5 minutes
+    const INTERVAL_MS = 5000;
+    const startTime = Date.now();
+
     let ready = false;
-    for (let attempt = 1; attempt <= 30; attempt++) {
-        try {
-            execSync('curl -s -o /dev/null -f http://localhost:8153/go/api/v1/health', { stdio: 'pipe' });
+    let readyEndpoint = null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const endpoint = await isServerReady();
+        if (endpoint) {
             ready = true;
-            log(`Server is healthy (attempt ${attempt}/30).`, '\x1b[32m');
+            readyEndpoint = endpoint;
+            log(`Server is responding via /${endpoint} (attempt ${attempt}/${MAX_ATTEMPTS}, ${elapsed}s elapsed).`, '\x1b[32m');
             break;
-        } catch (_) {
-            process.stdout.write('.');
-            await sleep(5000);
         }
+        if (attempt === 1 || attempt % 6 === 0) {
+            log(`  Still waiting... attempt ${attempt}/${MAX_ATTEMPTS} (${elapsed}s elapsed)`, '\x1b[36m');
+        }
+        await sleep(INTERVAL_MS);
     }
-    process.stdout.write('\n');
 
     if (!ready) {
-        log('Server did not become healthy within 150 seconds. Check logs:', '\x1b[31m');
+        log(`Server did not become healthy within ${MAX_ATTEMPTS * INTERVAL_MS / 1000} seconds.`, '\x1b[31m');
+        log('', '\x1b[0m');
+        log('Recent server logs:', '\x1b[33m');
+        try {
+            execSync('docker logs gocd-server --tail=30 2>&1', { stdio: 'inherit' });
+        } catch (_) {}
+        log('', '\x1b[0m');
+        log('The container may still be booting. Check again in a minute with:', '\x1b[33m');
+        log('  curl -s -o /dev/null -w "%{http_code}\\n" http://127.0.0.1:8153/go/api/v1/health', '\x1b[33m');
         log('  docker logs gocd-server --tail=50', '\x1b[33m');
         rl.close();
         process.exit(1);
     }
 
     // ---------------------------------------------------------------
-    // STEP 4: Verify entrypoint.js ran successfully (no leftover placeholders)
+    // STEP 4: Give it a few extra seconds to finish booting
+    // (even after the endpoint responds, plugin loading may still be in progress)
     // ---------------------------------------------------------------
-    log('STEP 4: Verifying entrypoint.js output...', '\x1b[33m');
+    log('STEP 4: Giving the server 10 extra seconds to finish booting...', '\x1b[33m');
+    await sleep(10000);
+
+    // ---------------------------------------------------------------
+    // STEP 5: Verify entrypoint.js ran successfully (no leftover placeholders)
+    // ---------------------------------------------------------------
+    log('STEP 5: Verifying entrypoint.js output...', '\x1b[33m');
 
     try {
         const leftover = execSync(
@@ -126,7 +201,7 @@ async function main() {
     }
 
     // ---------------------------------------------------------------
-    // STEP 5: Show recent entrypoint log lines for confirmation
+    // STEP 6: Show recent entrypoint log lines for confirmation
     // ---------------------------------------------------------------
     log('', '\x1b[0m');
     log('Recent entrypoint.js log lines:', '\x1b[36m');

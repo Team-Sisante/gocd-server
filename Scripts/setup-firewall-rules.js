@@ -33,6 +33,17 @@ const PORTS = {
   PRODUCTION_HTTPS: process.env.WEB_HTTPS_PORT_PRODUCTION_BADMINTON,
   MAIL_HTTPS_STAGING: process.env.MAIL_HTTPS_HOST_PORT_STAGING,
   MAIL_HTTPS_PRODUCTION: process.env.MAIL_HTTPS_HOST_PORT_PRODUCTION,
+  // Mail service ports (SMTP/IMAP/POP3/Sieve) — needed for Poste.io setup wizard
+  // connectivity tests and for actual mail delivery. These are standard ports
+  // that Poste.io listens on.
+  MAIL_SMTP: '25',
+  MAIL_SMTPS: '465',
+  MAIL_SUBMISSION: '587',
+  MAIL_IMAP: '143',
+  MAIL_IMAPS: '993',
+  MAIL_POP3: '110',
+  MAIL_POP3S: '995',
+  MAIL_SIEVE: '4190',
 };
 
 // Validate all application ports are set
@@ -114,8 +125,14 @@ async function main() {
   console.log(`  - allow-production-https (port ${PORTS.PRODUCTION_HTTPS})`);
   console.log(`  - allow-mail-https-staging (port ${PORTS.MAIL_HTTPS_STAGING})`);
   console.log(`  - allow-mail-https-production (port ${PORTS.MAIL_HTTPS_PRODUCTION})`);
-  console.log('\n\x1b[31mOpening ports to the internet (0.0.0.0/0) can expose services to attackers.\x1b[0m');
-  console.log('\x1b[31mEnsure you have authentication enabled on all exposed services.\x1b[0m\n');
+  console.log(`  - allow-mail-smtp (port ${PORTS.MAIL_SMTP})`);
+  console.log(`  - allow-mail-smtps (port ${PORTS.MAIL_SMTPS})`);
+  console.log(`  - allow-mail-submission (port ${PORTS.MAIL_SUBMISSION})`);
+  console.log(`  - allow-mail-imap (port ${PORTS.MAIL_IMAP})`);
+  console.log(`  - allow-mail-imaps (port ${PORTS.MAIL_IMAPS})`);
+  console.log(`  - allow-mail-pop3 (port ${PORTS.MAIL_POP3})`);
+  console.log(`  - allow-mail-pop3s (port ${PORTS.MAIL_POP3S})`);
+  console.log(`  - allow-mail-sieve (port ${PORTS.MAIL_SIEVE})`);
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   
@@ -151,6 +168,16 @@ async function main() {
     ['allow-production-https', PORTS.PRODUCTION_HTTPS],
     ['allow-mail-https-staging', PORTS.MAIL_HTTPS_STAGING],
     ['allow-mail-https-production', PORTS.MAIL_HTTPS_PRODUCTION],
+    // Mail service ports (SMTP/IMAP/POP3/Sieve) — needed for Poste.io setup
+    // wizard connectivity tests and for actual mail delivery.
+    ['allow-mail-smtp', PORTS.MAIL_SMTP],
+    ['allow-mail-smtps', PORTS.MAIL_SMTPS],
+    ['allow-mail-submission', PORTS.MAIL_SUBMISSION],
+    ['allow-mail-imap', PORTS.MAIL_IMAP],
+    ['allow-mail-imaps', PORTS.MAIL_IMAPS],
+    ['allow-mail-pop3', PORTS.MAIL_POP3],
+    ['allow-mail-pop3s', PORTS.MAIL_POP3S],
+    ['allow-mail-sieve', PORTS.MAIL_SIEVE],
   ];
 
   // Combine and process all rules

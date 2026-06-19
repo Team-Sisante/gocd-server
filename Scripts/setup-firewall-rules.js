@@ -12,6 +12,7 @@
  */
 
 const { execSync } = require('child_process');
+const readline = require('readline');
 
 const PROJECT_ID = process.env.GCP_PROJECT_ID;
 if (!PROJECT_ID) {
@@ -65,10 +66,14 @@ function run(cmd, options = {}) {
     // Check if the rule was actually created despite the error
     if (cmd.includes('firewall-rules create')) {
       const ruleName = cmd.match(/create\s+(\S+)/)[1];
-      const verify = execSync(`gcloud compute firewall-rules describe ${ruleName} --project=${PROJECT_ID} --format="value(name)"`, { encoding: 'utf8', stdio: 'pipe' }).trim();
-      if (verify === ruleName) {
-        log(`Rule ${ruleName} created (despite gcloud warning).`, '\x1b[32m');
-        return ruleName;
+      try {
+        const verify = execSync(`gcloud compute firewall-rules describe ${ruleName} --project=${PROJECT_ID} --format="value(name)"`, { encoding: 'utf8', stdio: 'pipe' }).trim();
+        if (verify === ruleName) {
+          log(`Rule ${ruleName} created (despite gcloud warning).`, '\x1b[32m');
+          return ruleName;
+        }
+      } catch (verifyErr) {
+        // Verification failed, fall through to error handling
       }
     }
     if (!options.ignoreError) {
@@ -93,33 +98,67 @@ function ensureRule(name, port, existingRules, protocol = 'tcp') {
   }
 }
 
-// Fetch all rules once to avoid expensive CLI calls in a loop
-log('Fetching existing firewall rules list...', '\x1b[33m');
-const rawRules = run(`gcloud compute firewall-rules list --project=${PROJECT_ID} --format="value(name)"`, { silent: true }) || "";
-const existingRules = new Set(rawRules.split('\n').map(r => r.trim()));
-log(`Found ${existingRules.size} existing rules.`, '\x1b[32m');
+// --- Main Execution ---
+async function main() {
+  console.log('\x1b[33m========================================\x1b[0m');
+  console.log('\x1b[33m⚠️  FIREWALL RULE MANAGEMENT WARNING ⚠️\x1b[0m');
+  console.log('\x1b[33m========================================\x1b[0m');
+  console.log('This script will create the following firewall rules if they do not exist:');
+  console.log('  - default-allow-ssh (port 22)');
+  console.log('  - default-allow-http (port 80)');
+  console.log('  - default-allow-https (port 443)');
+  console.log('  - allow-gocd-web (port 8153)');
+  console.log(`  - allow-staging-http (port ${PORTS.STAGING_HTTP})`);
+  console.log(`  - allow-staging-https (port ${PORTS.STAGING_HTTPS})`);
+  console.log(`  - allow-production-http (port ${PORTS.PRODUCTION_HTTP})`);
+  console.log(`  - allow-production-https (port ${PORTS.PRODUCTION_HTTPS})`);
+  console.log(`  - allow-mail-https-staging (port ${PORTS.MAIL_HTTPS_STAGING})`);
+  console.log(`  - allow-mail-https-production (port ${PORTS.MAIL_HTTPS_PRODUCTION})`);
+  console.log('\n\x1b[31mOpening ports to the internet (0.0.0.0/0) can expose services to attackers.\x1b[0m');
+  console.log('\x1b[31mEnsure you have authentication enabled on all exposed services.\x1b[0m\n');
 
-// Standard ports (universal, never change)
-const standardRules = [
-  ['default-allow-ssh', PORTS.SSH],
-  ['default-allow-http', PORTS.HTTP],
-  ['default-allow-https', PORTS.HTTPS],
-  ['allow-gocd-web', PORTS.GOCD_WEB],
-];
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  
+  const answer = await new Promise(resolve => {
+    rl.question('\x1b[33mType "yes" to continue, or anything else to abort: \x1b[0m', resolve);
+  });
+  rl.close();
 
-// Application-specific ports (read from env vars, change per deployment)
-const appRules = [
-  ['allow-staging-http', PORTS.STAGING_HTTP],
-  ['allow-staging-https', PORTS.STAGING_HTTPS],
-  ['allow-production-http', PORTS.PRODUCTION_HTTP],
-  ['allow-production-https', PORTS.PRODUCTION_HTTPS],
-  ['allow-mail-https-staging', PORTS.MAIL_HTTPS_STAGING],
-  ['allow-mail-https-production', PORTS.MAIL_HTTPS_PRODUCTION],
-];
+  if (answer.trim().toLowerCase() !== 'yes') {
+    console.log('\x1b[36m[0s] Aborted by user. No changes made.\x1b[0m');
+    process.exit(0);
+  }
 
-// Combine and process all rules
-[...standardRules, ...appRules].forEach(([name, port]) => {
-  ensureRule(name, port, existingRules);
-});
+  // Fetch all rules once to avoid expensive CLI calls in a loop
+  log('Fetching existing firewall rules list...', '\x1b[33m');
+  const rawRules = run(`gcloud compute firewall-rules list --project=${PROJECT_ID} --format="value(name)"`, { silent: true }) || "";
+  const existingRules = new Set(rawRules.split('\n').map(r => r.trim()));
+  log(`Found ${existingRules.size} existing rules.`, '\x1b[32m');
 
-console.log(`\x1b[32m[${elapsed()}] Firewall rules verification complete.\x1b[0m`);
+  // Standard ports (universal, never change)
+  const standardRules = [
+    ['default-allow-ssh', PORTS.SSH],
+    ['default-allow-http', PORTS.HTTP],
+    ['default-allow-https', PORTS.HTTPS],
+    ['allow-gocd-web', PORTS.GOCD_WEB],
+  ];
+
+  // Application-specific ports (read from env vars, change per deployment)
+  const appRules = [
+    ['allow-staging-http', PORTS.STAGING_HTTP],
+    ['allow-staging-https', PORTS.STAGING_HTTPS],
+    ['allow-production-http', PORTS.PRODUCTION_HTTP],
+    ['allow-production-https', PORTS.PRODUCTION_HTTPS],
+    ['allow-mail-https-staging', PORTS.MAIL_HTTPS_STAGING],
+    ['allow-mail-https-production', PORTS.MAIL_HTTPS_PRODUCTION],
+  ];
+
+  // Combine and process all rules
+  [...standardRules, ...appRules].forEach(([name, port]) => {
+    ensureRule(name, port, existingRules);
+  });
+
+  console.log(`\x1b[32m[${elapsed()}] Firewall rules verification complete.\x1b[0m`);
+}
+
+main();

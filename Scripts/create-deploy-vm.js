@@ -154,7 +154,9 @@ async function main() {
     log(`[${elapsed()}] Environment variables refreshed (Zone: ${process.env.GCP_ZONE}).`);
 
     const steps = [
-      ['setup-firewall-rules.js',      'Configure firewall rules (6.2)'],
+      // setup-firewall-rules.js removed — create-fresh-vm.js (6.1) now runs it
+      // internally right after the VM reaches RUNNING.
+      // ['setup-firewall-rules.js',      'Configure firewall rules (6.2)'],
       ['setup-agent-ssh.js',           'Setup agent SSH keys (6.3)'],
       // Polling for tool readiness can be slow; note added for user clarity
       ['wait-for-vm-tools.js',         'Install / Verify tools on VM (6.4) - This takes ~5-10 min'],

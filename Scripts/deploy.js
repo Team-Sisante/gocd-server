@@ -489,10 +489,13 @@ const mailSetupCmd = mailContainerName ?
   `( node ${deployDir}/Scripts/configure-poste-relay.js ${mailContainerName} "${process.env.POSTE_RELAY_HOST}" "${process.env.POSTE_RELAY_USER}" "${process.env.POSTE_RELAY_PASS}" "${process.env.POSTE_API_USER}" "${process.env.POSTE_ADMIN_PASSWORD}" || echo "WARNING: SMTP relay config failed, but deployment completed." )` : '';
 
 const imageTag = process.env.IMAGE_TAG || 'latest';
+const DOCKER_CONFIG_DIR = '/root/.docker';
+
 const deployCmd =
   `cd ${deployDir} && ` +
   `flock ${remoteLockFile} bash -c '` +
-    `${envExportString} && ` + // Export env vars in this session
+    `export DOCKER_CONFIG=${DOCKER_CONFIG_DIR} && ` +
+    `${envExportString} && ` +
     `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans && ` +
     `sudo docker rm -f ${nginxContainerName} || true && ` +
     `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
@@ -501,7 +504,7 @@ const deployCmd =
     `sudo docker exec -i ${mailContainerName} netstat -tulpn || echo "netstat not available, trying ss..." && sudo docker exec -i ${mailContainerName} ss -tulpn || true` : '') +
     (mailContainerName ? ` && ${mailSetupCmd}` : '') + `'`;
 
-const fullRemote = `sudo docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;
+const fullRemote = `export DOCKER_CONFIG=${DOCKER_CONFIG_DIR} && sudo -E docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin && ${deployCmd}`;
 
 let success = false;
 for (let attempt = 1; attempt <= 3; attempt++) {

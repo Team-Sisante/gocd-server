@@ -506,7 +506,7 @@ console.log(`Pulling and verifying ${expectedImage}...`);
 const pullCmd = `sudo docker pull ${expectedImage}`;
 execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "${pullCmd}"`, { stdio: 'inherit' });
 
-const webContainerName = `${appConf.projectPrefix}-${cfg.env}-web-${cfg.env}-1`;
+const webContainerName = appConf.webContainer[target];
 execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker stop ${webContainerName} 2>/dev/null || true; sudo docker rm ${webContainerName} 2>/dev/null || true"`, { stdio: 'inherit' });
 
 // ------------------------------------------------------------------

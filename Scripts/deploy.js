@@ -127,6 +127,39 @@ const GIT_REPO_USERNAME = process.env.GIT_REPO_USERNAME;
 const SSH_USER = process.env.VM_SSH_USER;
 
 // ---------------------------------------------------------------
+// Helper: read health‑check info from loadbalancer.json
+// ---------------------------------------------------------------
+function getHealthCheckInfo(app, env) {
+  try {
+    const lbConfigPath = path.resolve(__dirname, 'loadbalancer.json');
+    if (!fs.existsSync(lbConfigPath)) return null;
+    const raw = fs.readFileSync(lbConfigPath, 'utf8');
+    // Interpolate environment variables (same logic as in setup‑load‑balancer.js)
+    const interpolated = raw.replace(/\$\{(\w+)\}/g, (_, varName) => process.env[varName] || '');
+    const config = JSON.parse(interpolated);
+    const appConfig = config[app];
+    if (!appConfig) return null;
+
+    // Find the backend that matches the target environment
+    const backend = appConfig.backends.find(b =>
+      b.host && (
+        (env === 'staging'  && b.host.startsWith('staging')) ||
+        (env === 'production' && !b.host.startsWith('staging') && !b.host.startsWith('app'))
+      )
+    );
+    if (!backend) return null;
+
+    return {
+      healthCheck: backend.healthCheck,
+      host:        backend.host,
+    };
+  } catch (e) {
+    console.error(`\x1b[31mFailed to read health check info from loadbalancer.json: ${e.message}\x1b[0m`);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------
 // Read <?secret?> / <?var?> from templates
 // ---------------------------------------------------------------
 function extractTemplatePlaceholders(templatePath, pattern) {
@@ -567,6 +600,21 @@ for (let attempt = 1; attempt <= 3; attempt++) {
 try { fs.unlinkSync(tokenFile); } catch (_) {}
 
 if (success) {
+  // --- Post‑deploy health‑check repair (reads from loadbalancer.json) ---
+  const hcInfo = getHealthCheckInfo(appName, cfg.env);
+  if (hcInfo) {
+    console.log(`\x1b[33mEnsuring health check ${hcInfo.healthCheck} has correct Host header…\x1b[0m`);
+    try {
+      execSync(
+        `gcloud compute health-checks update http ${hcInfo.healthCheck} --host=${hcInfo.host} --project=${GCP_PROJECT_ID}`,
+        { stdio: 'inherit' }
+      );
+      console.log(`\x1b[32mHealth check ${hcInfo.healthCheck} is now up‑to‑date.\x1b[0m`);
+    } catch (e) {
+      console.error(`\x1b[31mHealth check update failed (non‑fatal): ${e.message}\x1b[0m`);
+    }
+  }
+
   // Post‑deploy verification: check that the web container actually received POSTE_PROTOCOL
   try {
     const checkCmd = `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker exec ${webContainerName} printenv POSTE_PROTOCOL"`;

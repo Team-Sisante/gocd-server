@@ -610,6 +610,12 @@ if (success) {
         { stdio: 'inherit' }
       );
       console.log(`\x1b[32mHealth check ${hcInfo.healthCheck} is now up‑to‑date.\x1b[0m`);
+
+      execSync(
+        `slelep 90 && gcloud compute backend-services get-health ${hcInfo.backend} --global --project=${GCP_PROJECT_ID}`,
+        { stdio: 'inherit' }
+      );
+
     } catch (e) {
       console.error(`\x1b[31mHealth check update failed (non‑fatal): ${e.message}\x1b[0m`);
     }

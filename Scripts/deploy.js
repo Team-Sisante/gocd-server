@@ -76,6 +76,10 @@ const APP_CONFIG = {
     projectPrefix: 'badminton',
     workDir:       '/badminton_court',
     deployDir:     '/opt/badminton_court',
+    webContainer: {
+      staging:    'badminton-staging-web-staging-1',     // matches compose
+      production: 'badminton-production-web-production-1',
+    },
     nginxContainer: {
       staging:    'badminton_court-nginx-staging',
       production: 'badminton_court-nginx-production',
@@ -89,11 +93,15 @@ const APP_CONFIG = {
     projectPrefix: 'humrine',
     workDir:       '/humrine_site',
     deployDir:     '/opt/humrine_site',
+    webContainer: {
+      staging:    'humrine-web-staging',                 
+      production: 'humrine-web-production',              
+    },
     nginxContainer: {
       staging:    'humrine-nginx-staging',
       production: 'humrine-nginx-production',
     },
-    // humrine does not use a mail container
+    // mailContainer not used for humrine
   },
 };
 

@@ -120,6 +120,9 @@ module.exports = async function siteDiagnostics(ctx) {
   const yellow = (t) => `\x1b[33m${t}\x1b[0m`;
   const cyan   = (t) => `\x1b[36m${t}\x1b[0m`;
 
+  // ── Accumulate critical errors for summary ──────────────────
+  const criticalErrors = [];
+
   console.log(`\n${yellow(`=== Diagnostics for ${p.label} ===`)}\n`);
 
   // 1. Container status
@@ -135,6 +138,47 @@ module.exports = async function siteDiagnostics(ctx) {
     console.log(logsOut.trim());
   } else {
     log(`No logs available for ${p.webContainer}.`, yellow(''));
+  }
+
+  // ── NEW: Missing template tag detection ──────────────────────
+  if (logsOut) {
+    // Look for Django template syntax errors about missing tag libraries
+    const missingTagRegex = /TemplateSyntaxError: .* '(\w+)' is not a registered tag library/;
+    const match = logsOut.match(missingTagRegex);
+    if (match) {
+      const missingTag = match[1];
+      const msg = `Template tag library '${missingTag}' is missing – causes HTTP 500 on affected pages.`;
+      criticalErrors.push({ type: 'missing_template_tag', tag: missingTag, message: msg });
+
+      console.log(`\n${red('❌ CRITICAL:')} ${yellow(`'${missingTag}'`)} ${red('template tag library is missing!')}`);
+      console.log(red('   This causes HTTP 500 errors on pages that use this tag.'));
+      console.log(yellow(`   To fix:`));
+      console.log(`     1. Ensure the app containing '${missingTag}' is in INSTALLED_APPS.`);
+      console.log(`     2. Create a file templatetags/${missingTag}.py in that app.`);
+      console.log(`     3. Define your template tags/filters with @register.simple_tag etc.`);
+      console.log(`     4. Restart the web container: sudo docker restart ${p.webContainer}`);
+
+      // Check if the tag file exists somewhere inside the container
+      const tagFileCheck = remoteExec(
+        `sudo docker exec ${p.webContainer} find /app -name "${missingTag}.py" 2>/dev/null | head -1`
+      );
+      if (tagFileCheck && tagFileCheck.trim()) {
+        console.log(green(`   Found file: ${tagFileCheck.trim()}`));
+        console.log('   → The file exists – ensure the parent app is in INSTALLED_APPS, then restart.');
+      } else {
+        console.log(red(`   ❌ No file named ${missingTag}.py found inside the container.`));
+        console.log(`   → Create it in the appropriate app's templatetags/ directory.`);
+      }
+    }
+
+    // Also look for generic TemplateSyntaxError
+    const genericTemplateError = logsOut.match(/TemplateSyntaxError: (.+)/);
+    if (genericTemplateError && !match) {
+      const errMsg = `TemplateSyntaxError detected: ${genericTemplateError[1]}`;
+      criticalErrors.push({ type: 'template_syntax_error', message: errMsg });
+      console.log(`\n${red('❌ TemplateSyntaxError:')} ${genericTemplateError[1]}`);
+      console.log(yellow('   Check the template that caused this error and fix the syntax.'));
+    }
   }
 
   // 3. Container health details
@@ -162,6 +206,11 @@ module.exports = async function siteDiagnostics(ctx) {
     console.log(green(`App response: ${appCode}`));
   } else {
     console.log(red(`App response: ${appCode}`));
+    if (appCode === '500') {
+      criticalErrors.push({ type: 'app_500', message: 'Application returns HTTP 500 – check logs for template errors or other exceptions.' });
+      console.log(red('   ⚠️  HTTP 500 – the application is failing to render the homepage.'));
+      console.log(yellow('   → Look at the logs above for the exact error.'));
+    }
   }
 
   // 5. Resource usage
@@ -485,6 +534,9 @@ except Exception as e:
         } else if (code && code >= 500) {
           console.log(red(`❌ Backend returned HTTP ${code} — server error`));
           console.log(`   Response: ${proxyTestOut.trim()}`);
+          if (code === 500) {
+            criticalErrors.push({ type: 'nginx_proxy_500', message: `Nginx proxy test to ${backendHost}:${backendPort} returned 500 – check web container logs.` });
+          }
         } else if (code) {
           console.log(yellow(`⚠️  Backend returned HTTP ${code}`));
           console.log(`   Response: ${proxyTestOut.trim()}`);
@@ -511,6 +563,9 @@ except Exception as e:
     );
     if (healthResult) {
       console.log(healthResult.trim());
+      if (healthResult.trim().startsWith('UNHEALTHY')) {
+        criticalErrors.push({ type: 'gcp_unhealthy', message: `GCP backend ${p.gcpBackendService} is UNHEALTHY – check health check path and app response.` });
+      }
     } else {
       log('Could not retrieve backend health.', red(''));
     }
@@ -557,7 +612,7 @@ except Exception as e:
           // secrets.push(`${varName}=***`);
           // Mask the secret: show first 4 chars + '***'
           const masked = value.length > 4 ? value.substring(0, 4) + '***' : '***';
-          secrets.push(`${varName}=${masked}`);          
+          secrets.push(`${varName}=${masked}`);
         } else {
           regular.push(line);
         }
@@ -575,6 +630,23 @@ except Exception as e:
     }
   } else {
     log(`Could not read environment from ${p.webContainer}.`, red(''));
+  }
+
+  // ---- CRITICAL ERRORS SUMMARY ----
+  if (criticalErrors.length > 0) {
+    console.log(`\n${red('═══════════════════════════════════════════════════════════')}`);
+    console.log(`${red('❌ CRITICAL ISSUES FOUND ❌')}`);
+    console.log(`${red('═══════════════════════════════════════════════════════════')}`);
+    criticalErrors.forEach((err, idx) => {
+      console.log(`${yellow(`  ${idx + 1}.`)} ${red(err.message)}`);
+      if (err.type === 'missing_template_tag' && err.tag) {
+        console.log(`     → Missing tag: ${yellow(err.tag)}`);
+        console.log(`     → Fix: add the template tag library and restart.`);
+      }
+    });
+    console.log(`${red('═══════════════════════════════════════════════════════════')}\n`);
+  } else {
+    console.log(`\n${green('✅ No critical issues detected.')}`);
   }
 
   console.log(`\n${yellow(`=== End of diagnostics for ${p.label} ===`)}\n`);

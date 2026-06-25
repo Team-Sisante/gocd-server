@@ -127,6 +127,39 @@ const GIT_REPO_USERNAME = process.env.GIT_REPO_USERNAME;
 const SSH_USER = process.env.VM_SSH_USER;
 
 // ---------------------------------------------------------------
+// Helper: read health‑check info from loadbalancer.json
+// ---------------------------------------------------------------
+function getHealthCheckInfo(app, env) {
+  try {
+    const lbConfigPath = path.resolve(__dirname, 'loadbalancer.json');
+    if (!fs.existsSync(lbConfigPath)) return null;
+    const raw = fs.readFileSync(lbConfigPath, 'utf8');
+    // Interpolate environment variables (same logic as in setup‑load‑balancer.js)
+    const interpolated = raw.replace(/\$\{(\w+)\}/g, (_, varName) => process.env[varName] || '');
+    const config = JSON.parse(interpolated);
+    const appConfig = config[app];
+    if (!appConfig) return null;
+
+    // Find the backend that matches the target environment
+    const backend = appConfig.backends.find(b =>
+      b.host && (
+        (env === 'staging'  && b.host.startsWith('staging')) ||
+        (env === 'production' && !b.host.startsWith('staging') && !b.host.startsWith('app'))
+      )
+    );
+    if (!backend) return null;
+
+    return {
+      healthCheck: backend.healthCheck,
+      host:        backend.host,
+    };
+  } catch (e) {
+    console.error(`\x1b[31mFailed to read health check info from loadbalancer.json: ${e.message}\x1b[0m`);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------
 // Read <?secret?> / <?var?> from templates
 // ---------------------------------------------------------------
 function extractTemplatePlaceholders(templatePath, pattern) {
@@ -426,8 +459,51 @@ if (fs.existsSync(posteRelayScript)) {
 }
 
 // ---------------------------------------------------------------
-// 8. Deploy
+// 8. Determine the exact image tag to deploy
 // ---------------------------------------------------------------
+let imageTag = process.env.IMAGE_TAG;
+const webImageName = `ghcr.io/${GIT_REPO_USERNAME}/${appName}-web`;
+
+if (!imageTag || imageTag === 'latest') {
+  console.log(`\x1b[33mIMAGE_TAG not set or is 'latest'. Discovering most recent SHA tag from GHCR...\x1b[0m`);
+  try {
+    const tagsOutput = execSync(
+      `curl -s -H "Authorization: Bearer ${token}" https://ghcr.io/v2/${GIT_REPO_USERNAME}/${appName}-web/tags/list`,
+      { encoding: 'utf8', stdio: 'pipe' }
+    );
+    const tags = JSON.parse(tagsOutput).tags || [];
+    const shaTag = tags.find(t => t.startsWith('sha-'));
+    if (shaTag) {
+      imageTag = shaTag;
+      console.log(`\x1b[32mFound latest SHA tag: ${imageTag}\x1b[0m`);
+    } else {
+      // Fallback to 'latest' if no SHA tags exist (shouldn't happen)
+      imageTag = 'latest';
+      console.log('\x1b[33mNo SHA tags found. Falling back to latest.\x1b[0m');
+    }
+  } catch (e) {
+    console.error('\x1b[31mFailed to query GHCR for tags. Falling back to latest.\x1b[0m');
+    imageTag = 'latest';
+  }
+} else {
+  console.log(`\x1b[32mUsing IMAGE_TAG from environment: ${imageTag}\x1b[0m`);
+}
+
+const expectedImage = `${webImageName}:${imageTag}`;
+
+// ------------------------------------------------------------------
+// 9. Pre‑deploy: force pull the exact image and remove old web container
+// ------------------------------------------------------------------
+console.log(`Pulling and verifying ${expectedImage}...`);
+const pullCmd = `sudo docker pull ${expectedImage}`;
+execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "${pullCmd}"`, { stdio: 'inherit' });
+
+const webContainerName = `${appConf.projectPrefix}-${cfg.env}-web-${cfg.env}-1`;
+execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker stop ${webContainerName} 2>/dev/null || true; sudo docker rm ${webContainerName} 2>/dev/null || true"`, { stdio: 'inherit' });
+
+// ------------------------------------------------------------------
+// 10. Deploy command
+// ------------------------------------------------------------------
 console.log('Logging into ghcr.io and deploying...');
 const tokenFile = '/tmp/gh_token';
 fs.writeFileSync(tokenFile, token, { mode: 0o600 });
@@ -488,7 +564,6 @@ const mailSetupCmd = mailContainerName ?
   `echo "Configuring SMTP relay..." && ` +
   `( node ${deployDir}/Scripts/configure-poste-relay.js ${mailContainerName} "${process.env.POSTE_RELAY_HOST}" "${process.env.POSTE_RELAY_USER}" "${process.env.POSTE_RELAY_PASS}" "${process.env.POSTE_API_USER}" "${process.env.POSTE_ADMIN_PASSWORD}" || echo "WARNING: SMTP relay config failed, but deployment completed." )` : '';
 
-const imageTag = process.env.IMAGE_TAG || 'latest';
 const DOCKER_CONFIG_DIR = '/root/.docker';
 
 const deployCmd =
@@ -525,10 +600,24 @@ for (let attempt = 1; attempt <= 3; attempt++) {
 try { fs.unlinkSync(tokenFile); } catch (_) {}
 
 if (success) {
+  // --- Post‑deploy health‑check repair (reads from loadbalancer.json) ---
+  const hcInfo = getHealthCheckInfo(appName, cfg.env);
+  if (hcInfo) {
+    console.log(`\x1b[33mEnsuring health check ${hcInfo.healthCheck} has correct Host header…\x1b[0m`);
+    try {
+      execSync(
+        `gcloud compute health-checks update http ${hcInfo.healthCheck} --host=${hcInfo.host} --project=${GCP_PROJECT_ID}`,
+        { stdio: 'inherit' }
+      );
+      console.log(`\x1b[32mHealth check ${hcInfo.healthCheck} is now up‑to‑date.\x1b[0m`);
+    } catch (e) {
+      console.error(`\x1b[31mHealth check update failed (non‑fatal): ${e.message}\x1b[0m`);
+    }
+  }
+
   // Post‑deploy verification: check that the web container actually received POSTE_PROTOCOL
-  const webContainer = `${appConf.projectPrefix}-${cfg.env}-web-${cfg.env}-1`;
   try {
-    const checkCmd = `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker exec ${webContainer} printenv POSTE_PROTOCOL"`;
+    const checkCmd = `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker exec ${webContainerName} printenv POSTE_PROTOCOL"`;
     const output = execSync(checkCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
     if (!output) {
       console.error(`\x1b[31mWARNING: POSTE_PROTOCOL is empty inside the web container.\x1b[0m`);

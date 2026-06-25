@@ -11,8 +11,8 @@
  * interpolates environment variables (like ${HUMRINE_DOMAIN}), and then
  * idempotently inspects and corrects the following components:
  *
- *   - Instance group (named ports)
- *   - Health checks (request paths)
+ *   - Instance group (named ports + VM membership)
+ *   - Health checks (request paths, port, host header)
  *   - Backend services (protocol, port)
  *   - Static IP address
  *   - SSL certificate (reuse / create / wait / auto‑diagnose on failure)
@@ -28,6 +28,11 @@
  * =========================================================================
  * SELF‑HEALING SCENARIOS (what the script fixes automatically)
  * =========================================================================
+ *
+ * INSTANCE GROUP
+ *  - Missing → create with correct named ports.
+ *  - VM not a member → add it automatically.
+ *  - Named ports outdated → update.
  *
  * CERTIFICATE
  *  - No certificate exists → create new versioned cert, wait for ACTIVE, attach.
@@ -46,12 +51,14 @@
  *  - Missing → create with HTTP protocol and correct named port.
  *  - Protocol is HTTPS → update to HTTP.
  *  - Named port is wrong → correct it.
- *  - (NEW) Orphaned backends (in GCP but not in JSON) are deleted after the
+ *  - Orphaned backends (in GCP but not in JSON) are deleted after the
  *    URL map has been updated, ensuring no broken references.
  *
  * HEALTH CHECKS
- *  - Missing → create with correct request path (/prefix/ or /).
+ *  - Missing → create with correct request path (/prefix/ or /), port, and host header.
  *  - Request path wrong → update to correct path.
+ *  - Port wrong → update to correct port.
+ *  - Host header missing/wrong → update to backend's host.
  *
  * URL MAP
  *  - Missing → create with default backend + all host/path rules.
@@ -59,7 +66,7 @@
  *  - Bare‑domain host rule missing → create it with correct default + all
  *    exact and wildcard path rules.
  *  - Path rules incomplete or missing → remove and recreate host rule.
- *  - (NEW) Global default service is always corrected to the configured
+ *  - Global default service is always corrected to the configured
  *    default backend, preventing wrong defaults after renames.
  *
  * FIREWALL RULES
@@ -313,53 +320,7 @@ function getHighestVersion() {
   return maxVer;
 }
 
-// ----- Step 5: SSL Certificate (versioned, with automatic waiting and diagnostics) -----
-function createVersionedCert() {
-  log('Step 5: Ensuring multi-domain SSL certificate exists (versioned)...', '\x1b[33m');
-
-  if (!conf.certDomains || !Array.isArray(conf.certDomains) || conf.certDomains.length === 0) {
-    console.error('\x1b[31mERROR: No certDomains defined in loadbalancer.json for ' + appName + '\x1b[0m');
-    process.exit(1);
-  }
-  const domainList = conf.certDomains;
-
-  // If an active certificate already covers all domains, use it (skip provisioning)
-  const existingActiveCert = getActiveCertCoveringDomains(domainList);
-  if (existingActiveCert) {
-    log(`Using existing active certificate: ${existingActiveCert}`, '\x1b[32m');
-    return existingActiveCert;
-  }
-
-  // No valid ACTIVE cert – create a new one, with retries
-  let newCertName = null;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    const versionedName = conf.certName + '-v' + (getHighestVersion() + 1);
-    log(`Attempt ${attempt}: creating ${versionedName}...`);
-
-    deleteCertIfExists(versionedName);
-
-    run(`gcloud compute ssl-certificates create ${versionedName} --project=${PROJECT_ID} --domains=${domainList.join(',')} --global`, { stdio: 'inherit' });
-    log(`Waiting for ${versionedName} to become ACTIVE...`);
-    const ready = waitForCertActive(versionedName, 60);
-    if (ready) {
-      newCertName = versionedName;
-      break;
-    } else {
-      log(`Certificate ${versionedName} failed or timed out. Deleting and retrying...`, '\x1b[31m');
-      deleteCertIfExists(versionedName);
-    }
-  }
-
-  if (!newCertName) {
-    log('ERROR: Could not provision a new certificate after 3 attempts. The load balancer will keep its current certificate.', '\x1b[31m');
-    return null;
-  }
-
-  log(`New certificate ${newCertName} is ACTIVE.`, '\x1b[32m');
-  return newCertName;
-}
-
-// ----- Step 1: Instance Group -----
+// ----- Step 1: Instance Group (including VM membership) -----
 function ensureInstanceGroup() {
   log('Step 1: Ensuring unmanaged instance group exists...', '\x1b[33m');
   const exists = run(
@@ -381,6 +342,21 @@ function ensureInstanceGroup() {
   log('Named ports configured.', '\x1b[32m');
 }
 
+function ensureInstanceInGroup() {
+  log('Step 1b: Ensuring VM is a member of the instance group...', '\x1b[33m');
+  const members = run(
+    `gcloud compute instance-groups unmanaged list-instances ${conf.instanceGroup} --zone=${GCP_ZONE} --project=${PROJECT_ID} --format="value(instance)"`,
+    { silent: true, ignoreError: true }
+  );
+  if (!members || !members.includes(GCP_VM_NAME)) {
+    log(`Adding VM ${GCP_VM_NAME} to instance group ${conf.instanceGroup}...`);
+    run(`gcloud compute instance-groups unmanaged add-instances ${conf.instanceGroup} --zone=${GCP_ZONE} --project=${PROJECT_ID} --instances=${GCP_VM_NAME}`);
+    log('VM added to instance group.', '\x1b[32m');
+  } else {
+    log('VM is already a member of the instance group.', '\x1b[32m');
+  }
+}
+
 // ----- Helper to read current health check request path -----
 function getHealthCheckRequestPath(healthCheckName) {
   const path = run(
@@ -390,12 +366,13 @@ function getHealthCheckRequestPath(healthCheckName) {
   return path ? path.trim() : null;
 }
 
-// ----- Step 2: Health Checks (HTTP) – now corrects port AND request path in-place -----
+// ----- Step 2: Health Checks (HTTP) – corrects port, request path, AND host in-place -----
 function ensureHealthChecks() {
-  log('Step 2: Ensuring health checks exist with correct port and request path...', '\x1b[33m');
+  log('Step 2: Ensuring health checks exist with correct port, request path, and host...', '\x1b[33m');
 
   for (const b of conf.backends) {
     const healthPath = b.pathPrefix ? (b.pathPrefix + '/') : '/';
+    const expectedHost = b.host || conf.domain;
 
     if (resourceExists('health-checks', b.healthCheck, '--global')) {
       const currentPath = getHealthCheckRequestPath(b.healthCheck);
@@ -403,24 +380,30 @@ function ensureHealthChecks() {
         `gcloud compute health-checks describe ${b.healthCheck} --global --project=${PROJECT_ID} --format="value(httpHealthCheck.port)"`,
         { silent: true, ignoreError: true }
       );
+      const currentHost = run(
+        `gcloud compute health-checks describe ${b.healthCheck} --global --project=${PROJECT_ID} --format="value(httpHealthCheck.host)"`,
+        { silent: true, ignoreError: true }
+      );
 
       const pathMismatch = (currentPath !== healthPath);
       const portMismatch = (currentPort !== b.port);
+      const hostMismatch = (currentHost !== expectedHost);
 
-      if (pathMismatch || portMismatch) {
+      if (pathMismatch || portMismatch || hostMismatch) {
         const updateArgs = [];
         if (portMismatch) updateArgs.push(`--port=${b.port}`);
         if (pathMismatch) updateArgs.push(`--request-path=${healthPath}`);
+        if (hostMismatch) updateArgs.push(`--host=${expectedHost}`);
 
-        log(`Updating health check ${b.healthCheck} (port ${currentPort}→${b.port}, path ${currentPath}→${healthPath})...`);
+        log(`Updating health check ${b.healthCheck} (port ${currentPort}→${b.port}, path ${currentPath}→${healthPath}, host ${currentHost}→${expectedHost})...`);
         run(`gcloud compute health-checks update http ${b.healthCheck} --global --project=${PROJECT_ID} ${updateArgs.join(' ')}`);
         log(`Health check ${b.healthCheck} updated.`, '\x1b[32m');
       } else {
         log(`Health check ${b.healthCheck} already correct.`, '\x1b[32m');
       }
     } else {
-      log(`Creating health check ${b.healthCheck} (HTTP port ${b.port}, path ${healthPath})...`);
-      run(`gcloud compute health-checks create http ${b.healthCheck} --project=${PROJECT_ID} --port=${b.port} --request-path=${healthPath} --global`);
+      log(`Creating health check ${b.healthCheck} (HTTP port ${b.port}, path ${healthPath}, host ${expectedHost})...`);
+      run(`gcloud compute health-checks create http ${b.healthCheck} --project=${PROJECT_ID} --port=${b.port} --request-path=${healthPath} --host=${expectedHost} --global`);
       log(`Health check ${b.healthCheck} created.`, '\x1b[32m');
     }
   }
@@ -547,6 +530,52 @@ function ensureStaticIP() {
   );
   log('Load Balancer IP: ' + ip, '\x1b[32m');
   return ip;
+}
+
+// ----- Step 5: SSL Certificate (versioned, with automatic waiting and diagnostics) -----
+function createVersionedCert() {
+  log('Step 5: Ensuring multi-domain SSL certificate exists (versioned)...', '\x1b[33m');
+
+  if (!conf.certDomains || !Array.isArray(conf.certDomains) || conf.certDomains.length === 0) {
+    console.error('\x1b[31mERROR: No certDomains defined in loadbalancer.json for ' + appName + '\x1b[0m');
+    process.exit(1);
+  }
+  const domainList = conf.certDomains;
+
+  // If an active certificate already covers all domains, use it (skip provisioning)
+  const existingActiveCert = getActiveCertCoveringDomains(domainList);
+  if (existingActiveCert) {
+    log(`Using existing active certificate: ${existingActiveCert}`, '\x1b[32m');
+    return existingActiveCert;
+  }
+
+  // No valid ACTIVE cert – create a new one, with retries
+  let newCertName = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const versionedName = conf.certName + '-v' + (getHighestVersion() + 1);
+    log(`Attempt ${attempt}: creating ${versionedName}...`);
+
+    deleteCertIfExists(versionedName);
+
+    run(`gcloud compute ssl-certificates create ${versionedName} --project=${PROJECT_ID} --domains=${domainList.join(',')} --global`, { stdio: 'inherit' });
+    log(`Waiting for ${versionedName} to become ACTIVE...`);
+    const ready = waitForCertActive(versionedName, 60);
+    if (ready) {
+      newCertName = versionedName;
+      break;
+    } else {
+      log(`Certificate ${versionedName} failed or timed out. Deleting and retrying...`, '\x1b[31m');
+      deleteCertIfExists(versionedName);
+    }
+  }
+
+  if (!newCertName) {
+    log('ERROR: Could not provision a new certificate after 3 attempts. The load balancer will keep its current certificate.', '\x1b[31m');
+    return null;
+  }
+
+  log(`New certificate ${newCertName} is ACTIVE.`, '\x1b[32m');
+  return newCertName;
 }
 
 // ----- Recreate confirmation -----
@@ -963,16 +992,25 @@ async function main() {
   console.log('\x1b[32m  Project: ' + PROJECT_ID + '\x1b[0m');
   console.log('\x1b[32m========================================\x1b[0m\n');
 
+  // Step 1: Instance group + VM membership
   ensureInstanceGroup();
+  ensureInstanceInGroup();
+
+  // Step 2: Health checks (with host header)
   ensureHealthChecks();
-  ensureBackendServices();          // Step 3 – creates/updates backends, no orphan deletion
+
+  // Step 3: Backend services
+  ensureBackendServices();
+
+  // Step 4: Static IP
   const lbIP = ensureStaticIP();
 
+  // Step 5: SSL certificate
   const newCertName = createVersionedCert();
 
+  // Ask before rebuilding
   const shouldRebuild = await confirmRecreateLoadBalancer();
   if (shouldRebuild) {
-    // Only delete the load balancer if the user explicitly confirms
     log('Rebuilding load balancer components...');
     run(`gcloud compute forwarding-rules delete ${conf.httpsFwdRule} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
     run(`gcloud compute forwarding-rules delete ${conf.httpFwdRule} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
@@ -981,13 +1019,25 @@ async function main() {
     run(`gcloud compute url-maps delete ${conf.lbName} --global --project=${PROJECT_ID} --quiet`, { silent: true, ignoreError: true });
   }
 
-  ensureURLMap();                   // Step 6 – updates the URL map (global default + host/path rules)
-  cleanupOrphanBackends();          // Step 3b – now safe to delete orphaned backends
+  // Step 6: URL map
+  ensureURLMap();
 
+  // Step 3b: Clean up orphaned backends
+  cleanupOrphanBackends();
+
+  // Step 7: HTTPS proxy
   ensureHTTPSProxy(newCertName);
+
+  // Step 8: HTTPS forwarding rule
   ensureHTTPSForwardingRule();
+
+  // Step 9: HTTP→HTTPS redirect
   ensureHTTPRedirect();
+
+  // Step 10: Firewall rules
   ensureFirewallRules();
+
+  // Step 11: DNS records
   ensureDNSRecords(lbIP);
 
   console.log('\n\x1b[32m========================================\x1b[0m');

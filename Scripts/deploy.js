@@ -620,7 +620,7 @@ if (success) {
       console.log(`\x1b[32mHealth check ${hcInfo.healthCheck} is now up‑to‑date.\x1b[0m`);
 
       execSync(
-        `slelep 90 && gcloud compute backend-services get-health ${hcInfo.backend} --global --project=${GCP_PROJECT_ID}`,
+        `sleep 90 && gcloud compute backend-services get-health ${hcInfo.backend} --global --project=${GCP_PROJECT_ID}`,
         { stdio: 'inherit' }
       );
 

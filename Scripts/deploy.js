@@ -151,7 +151,7 @@ function getHealthCheckInfo(app, env) {
     // Find the backend that matches the target environment
     const backend = appConfig.backends.find(b =>
       b.host && (
-        (env === 'staging'  && b.host.startsWith('staging')) ||
+        (env === 'staging' && b.host.startsWith('staging')) ||
         (env === 'production' && !b.host.startsWith('staging') && !b.host.startsWith('app'))
       )
     );
@@ -160,6 +160,7 @@ function getHealthCheckInfo(app, env) {
     return {
       healthCheck: backend.healthCheck,
       host:        backend.host,
+      backend:     backend.name,   // <-- add this line
     };
   } catch (e) {
     console.error(`\x1b[31mFailed to read health check info from loadbalancer.json: ${e.message}\x1b[0m`);

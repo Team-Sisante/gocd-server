@@ -617,7 +617,7 @@ if (success) {
         `gcloud compute health-checks update http ${hcInfo.healthCheck} --host=${hcInfo.host} --project=${GCP_PROJECT_ID}`,
         { stdio: 'inherit' }
       );
-      console.log(`\x1b[32mHealth check ${hcInfo.healthCheck} is now up‑to‑date.\x1b[0m`);
+      console.log(`\x1b[32mHealth check ${hcInfo.healthCheck} is now up‑to‑date. Waiting 90 seconds for changes to take effect\x1b[0m`);
 
       execSync(
         `sleep 90 && gcloud compute backend-services get-health ${hcInfo.backend} --global --project=${GCP_PROJECT_ID}`,

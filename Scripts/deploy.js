@@ -473,29 +473,48 @@ if (fs.existsSync(posteRelayScript)) {
 let imageTag = process.env.IMAGE_TAG;
 const webImageName = `ghcr.io/${GIT_REPO_USERNAME}/${appName}-web`;
 
+// If IMAGE_TAG is not set or is 'latest', try to read from the artifacts shared file
 if (!imageTag || imageTag === 'latest') {
-  console.log(`\x1b[33mIMAGE_TAG not set or is 'latest'. Discovering most recent SHA tag from GHCR...\x1b[0m`);
-  try {
-    const tagsOutput = execSync(
-      `curl -s -H "Authorization: Bearer ${token}" https://ghcr.io/v2/${GIT_REPO_USERNAME}/${appName}-web/tags/list`,
-      { encoding: 'utf8', stdio: 'pipe' }
-    );
-    const tags = JSON.parse(tagsOutput).tags || [];
-    const shaTag = tags.find(t => t.startsWith('sha-'));
-    if (shaTag) {
-      imageTag = shaTag;
-      console.log(`\x1b[32mFound latest SHA tag: ${imageTag}\x1b[0m`);
-    } else {
-      // Fallback to 'latest' if no SHA tags exist (shouldn't happen)
-      imageTag = 'latest';
-      console.log('\x1b[33mNo SHA tags found. Falling back to latest.\x1b[0m');
+    // Check if GoCD passed the dependency label
+    const depLabelVar = `GO_DEPENDENCY_LABEL_${appName.toUpperCase().replace(/-/g, '_')}_ARTIFACTS`;
+    const depLabel = process.env[depLabelVar];
+    if (depLabel) {
+        const tagFile = `/shared-tags/${appName}-tag-${depLabel}.txt`;
+        try {
+            const tagContent = fs.readFileSync(tagFile, 'utf8').trim();
+            if (tagContent) {
+                imageTag = `sha-${tagContent}`;
+                console.log(`\x1b[32mRead image tag from artifacts: ${imageTag}\x1b[0m`);
+            }
+        } catch (e) {
+            console.log(`\x1b[33mCould not read tag file ${tagFile}: ${e.message}\x1b[0m`);
+        }
     }
-  } catch (e) {
-    console.error('\x1b[31mFailed to query GHCR for tags. Falling back to latest.\x1b[0m');
-    imageTag = 'latest';
-  }
+}
+
+// If still not set, fallback to querying GHCR
+if (!imageTag || imageTag === 'latest') {
+    console.log(`\x1b[33mIMAGE_TAG not set or is 'latest'. Discovering most recent SHA tag from GHCR...\x1b[0m`);
+    try {
+        const tagsOutput = execSync(
+            `curl -s -H "Authorization: Bearer ${token}" https://ghcr.io/v2/${GIT_REPO_USERNAME}/${appName}-web/tags/list`,
+            { encoding: 'utf8', stdio: 'pipe' }
+        );
+        const tags = JSON.parse(tagsOutput).tags || [];
+        const shaTag = tags.find(t => t.startsWith('sha-'));
+        if (shaTag) {
+            imageTag = shaTag;
+            console.log(`\x1b[32mFound latest SHA tag: ${imageTag}\x1b[0m`);
+        } else {
+            imageTag = 'latest';
+            console.log('\x1b[33mNo SHA tags found. Falling back to latest.\x1b[0m');
+        }
+    } catch (e) {
+        console.error('\x1b[31mFailed to query GHCR for tags. Falling back to latest.\x1b[0m');
+        imageTag = 'latest';
+    }
 } else {
-  console.log(`\x1b[32mUsing IMAGE_TAG from environment: ${imageTag}\x1b[0m`);
+    console.log(`\x1b[32mUsing IMAGE_TAG from environment: ${imageTag}\x1b[0m`);
 }
 
 const expectedImage = `${webImageName}:${imageTag}`;
@@ -615,7 +634,7 @@ if (success) {
     console.log(`\x1b[33mEnsuring health check ${hcInfo.healthCheck} has correct Host header…\x1b[0m`);
     try {
       execSync(
-        `gcloud compute health-checks update http ${hcInfo.healthCheck} --host=${hcInfo.host} --project=${GCP_PROJECT_ID}`,
+        `gcloud compute health-checks update http ${hcInfo.healthCheck} --host=${hcInfo.host} --timeout=30 --check-interval=30 --project=${GCP_PROJECT_ID}`,
         { stdio: 'inherit' }
       );
       console.log(`\x1b[32mHealth check ${hcInfo.healthCheck} is now up‑to‑date. Waiting 90 seconds for changes to take effect\x1b[0m`);

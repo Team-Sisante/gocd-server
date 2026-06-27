@@ -36,7 +36,7 @@ const readline = require('readline');
 const os = require('os');
 
 // ----- Setup logging -----
-const LOG_DIR = path.join(__dirname, "health-checks"); // Scripts/health-checks/ directory
+const LOG_DIR = path.join(__dirname, "health-checks");
 const now = new Date();
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const monthAbbr = months[now.getMonth()];
@@ -56,6 +56,9 @@ const originalLog = console.log;
 const originalError = console.error;
 const originalWarn = console.warn;
 const originalInfo = console.info;
+
+// ----- Debug mode (off by default) -----
+let SCRIPT_DEBUG = false;
 
 function writeToLog(level, args) {
     const timestamp = new Date().toISOString();
@@ -217,16 +220,12 @@ function detectComposeCommand() {
 async function selectSites(args) {
     const allIds = SITES.map(s => s.id);
 
-    // Check if --all is passed
     if (args.includes('--all')) return SITES;
-
-    // Check for specific site IDs in args
     const requested = args.filter(arg => allIds.includes(arg));
     if (requested.length > 0) {
         return SITES.filter(s => requested.includes(s.id));
     }
 
-    // Interactive selection
     console.log('\nAvailable sites:');
     SITES.forEach((s, idx) => {
         console.log(`  ${idx + 1}. ${s.name} (${s.id})`);
@@ -274,7 +273,23 @@ function fetchRequiredVars(site) {
         requiredVars = requiredVars.concat(extractPlaceholders(file, '<\\?secret\\?>'));
     });
 
-    return { gcpSecrets: [...new Set(gcpSecrets)], requiredVars: [...new Set(requiredVars)] };
+    // ---- NEW: Also extract variables from docker-compose.vm.yml ----
+    const composePath = path.join(templateDir, site.composeFile);
+    if (fs.existsSync(composePath)) {
+        const composeContent = fs.readFileSync(composePath, 'utf8');
+        // Match ${VAR} and ${VAR:-default}
+        const matches = composeContent.match(/\$\{([^:}]+)/g);
+        if (matches) {
+            const composeVars = matches.map(m => m.slice(2, m.indexOf(':'))).filter(v => v && v.trim());
+            requiredVars = requiredVars.concat(composeVars);
+        }
+    }
+
+    // Remove duplicates
+    return {
+        gcpSecrets: [...new Set(gcpSecrets)],
+        requiredVars: [...new Set(requiredVars)]
+    };
 }
 
 // ----- Helper: fetch secrets from GCP (with app prefix) -----
@@ -282,7 +297,6 @@ function fetchGCPSecrets(appName, secretsList) {
     console.log(`  Using GCP credentials from: ${process.env.GOOGLE_APPLICATION_CREDENTIALS || 'not set'}`);
     const env = {};
 
-    // ----- Set up GCP credentials -----
     if (process.env.GCP_SA_KEY_PATH) {
         const keyPath = path.isAbsolute(process.env.GCP_SA_KEY_PATH)
             ? process.env.GCP_SA_KEY_PATH
@@ -302,7 +316,6 @@ function fetchGCPSecrets(appName, secretsList) {
     for (const secret of secretsList) {
         const fullSecretName = prefix + secret;
         try {
-            // Remove 2>/dev/null to see the actual error
             const value = execSync(
                 `gcloud secrets versions access latest --secret="${fullSecretName}" --project=${GCP_PROJECT_ID}`,
                 { encoding: 'utf8', stdio: 'pipe' }
@@ -311,7 +324,6 @@ function fetchGCPSecrets(appName, secretsList) {
                 env[secret] = value;
                 console.log(`  🔐 ${secret} (from ${fullSecretName})`);
             } else {
-                // If value is empty (shouldn't happen), fallback
                 if (process.env[secret]) {
                     env[secret] = process.env[secret];
                     console.log(`  ℹ️  ${fullSecretName} returned empty, using process.env.${secret}: ${process.env[secret]}`);
@@ -320,11 +332,8 @@ function fetchGCPSecrets(appName, secretsList) {
                 }
             }
         } catch (err) {
-            // Log the full error message for debugging
             console.log(`  ⚠️  ${fullSecretName} fetch failed: ${err.message}`);
-            // Also print stderr if available
             if (err.stderr) console.log(`  stderr: ${err.stderr.toString().trim()}`);
-            // Fallback to process.env
             if (process.env[secret]) {
                 env[secret] = process.env[secret];
                 console.log(`  ℹ️  using process.env.${secret}: ${process.env[secret]}`);
@@ -375,15 +384,15 @@ function fetchGitHubVars(repo, environment, token) {
 
 // ----- Main fetcher: returns a promise with all variables -----
 async function fetchAllVars(site) {
-    const { appName, target } = site;
+    const { appName, target, templateDir } = site;
     const repo = `${process.env.GIT_REPO_USERNAME || 'Team-Sisante'}/${appName}`;
 
-    // Start with a copy of process.env (all env vars from the agent)
-    const env = { ...process.env };
-    console.log(`📦 Fetching variables for ${appName} (${target})...`);
-    console.log(`  Starting with ${Object.keys(env).length} variables from process.env.`);
+    // Start with an empty object (do NOT include process.env yet)
+    const env = {};
 
-    // 1. Override with GCP secrets (if available)
+    console.log(`📦 Fetching variables for ${appName} (${target})...`);
+
+    // 1. Fetch GCP secrets
     if (GCP_PROJECT_ID) {
         console.log('  Fetching GCP secrets...');
         const { gcpSecrets } = fetchRequiredVars(site);
@@ -392,7 +401,7 @@ async function fetchAllVars(site) {
         console.log(`  Added ${Object.keys(secrets).length} secrets from GCP.`);
     }
 
-    // 2. Override with GitHub Environment variables
+    // 2. Fetch GitHub Environment variables
     if (GITHUB_TOKEN) {
         console.log('  Fetching GitHub Environment variables...');
         try {
@@ -404,66 +413,53 @@ async function fetchAllVars(site) {
         }
     }
 
-    // 3. Ensure IMAGE_TAG is set (for docker compose)
-    if (!env.IMAGE_TAG) {
-        // Try to read from artifacts shared file (if running on GoCD agent)
-        const depLabelVar = `GO_DEPENDENCY_LABEL_${appName.toUpperCase().replace(/-/g, '_')}_ARTIFACTS`;
-        const depLabel = process.env[depLabelVar];
-        if (depLabel) {
-            const tagFile = `/shared-tags/${appName}-tag-${depLabel}.txt`;
-            try {
-                const tagContent = fs.readFileSync(tagFile, 'utf8').trim();
-                if (tagContent) {
-                    env.IMAGE_TAG = `sha-${tagContent}`;
-                    console.log(`  Read IMAGE_TAG from artifacts: ${env.IMAGE_TAG}`);
-                }
-            } catch (e) {
-                console.log(`  Could not read tag file: ${e.message}`);
-            }
+    // 3. Override with process.env (for local testing, but only if not set)
+    for (const [key, value] of Object.entries(process.env)) {
+        if (!env[key] && value) {
+            env[key] = value;
         }
-        // If still not set, try to query GHCR
-        if (!env.IMAGE_TAG) {
-            const token = process.env.GITHUB_TOKEN;
-            if (token) {
-                try {
-                    const tagsOutput = execSync(
-                        `curl -s -H "Authorization: Bearer ${token}" https://ghcr.io/v2/Team-Sisante/${appName}-web/tags/list`,
-                        { encoding: 'utf8', stdio: 'pipe' }
-                    );
-                    const tags = JSON.parse(tagsOutput).tags || [];
-                    const shaTag = tags.find(t => t.startsWith('sha-'));
-                    if (shaTag) {
-                        env.IMAGE_TAG = shaTag;
-                        console.log(`  Found latest SHA tag from GHCR: ${env.IMAGE_TAG}`);
-                    } else {
-                        env.IMAGE_TAG = 'latest';
-                        console.log(`  No SHA tags found, using 'latest'`);
+    }
+
+    // 4. FALLBACK: read local .env.staging and .env.common from the repository
+    //    This fills missing variables that are not in GCP/GitHub/process.env
+    console.log('  Reading local .env files as fallback...');
+    const localEnvFiles = [
+        path.join(templateDir, `.env.${target}`),
+        path.join(templateDir, '.env.common')
+    ];
+    for (const file of localEnvFiles) {
+        if (fs.existsSync(file)) {
+            const content = fs.readFileSync(file, 'utf8');
+            const lines = content.split('\n');
+            let loaded = 0;
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+                    const eqIndex = trimmed.indexOf('=');
+                    const key = trimmed.substring(0, eqIndex).trim();
+                    let value = trimmed.substring(eqIndex + 1).trim();
+                    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+                        value = value.slice(1, -1);
                     }
-                } catch (e) {
-                    env.IMAGE_TAG = 'latest';
-                    console.log(`  GHCR query failed, using 'latest'`);
+                    if (!env[key]) {
+                        env[key] = value;
+                        loaded++;
+                    }
                 }
-            } else {
-                env.IMAGE_TAG = 'latest';
-                console.log(`  GITHUB_TOKEN not set, using 'latest' for IMAGE_TAG`);
+            }
+            if (loaded > 0) {
+                console.log(`  Loaded ${loaded} variables from local ${path.basename(file)}`);
             }
         }
+    }
+
+    // 5. Ensure IMAGE_TAG is set (if still missing)
+    if (!env.IMAGE_TAG) {
+        env.IMAGE_TAG = 'latest';
         console.log(`  IMAGE_TAG set to: ${env.IMAGE_TAG}`);
-    } else {
-        console.log(`  IMAGE_TAG already set: ${env.IMAGE_TAG}`);
     }
 
-    // 4. Override with .env file from the VM (if exists)
-    console.log('  Reading .env file from VM (if present)...');
-    const vmEnv = readEnvFileFromVM(site);
-    if (Object.keys(vmEnv).length > 0) {
-        Object.assign(env, vmEnv);
-        console.log(`  Added ${Object.keys(vmEnv).length} variables from VM .env file.`);
-    } else {
-        console.log('  No VM .env file found or empty.');
-    }
-
-    // 5. Remove internal Node.js variables that are not needed
+    // 6. Remove internal Node variables
     const internalPrefixes = ['npm_', 'TERM_', 'XDG_', 'SSH_', 'LC_', 'LS_COLORS', 'DBUS_', 'DISPLAY', 'LANGUAGE', 'WINDOW', 'COLORTERM', 'PAGER', 'EDITOR', 'VISUAL'];
     const internalKeys = ['PATH', 'HOME', 'PWD', 'SHELL', 'HOSTNAME', '_', 'OLDPWD', 'SHLVL', 'LOGNAME', 'USER', 'TERM', 'LANG', 'MAIL', 'PROMPT_COMMAND', 'PS1', 'PS2', 'PS4', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'TERM_SESSION_ID', 'WINDOWID'];
     for (const key of Object.keys(env)) {
@@ -474,15 +470,14 @@ async function fetchAllVars(site) {
 
     console.log(`  Final variable count: ${Object.keys(env).length}`);
 
-    // Diagnostic: print some key variables (mask secrets)
-    const diagnosticKeys = ['DEBUG', 'SECRET_KEY', 'SITE_HEADER', 'ALLOWED_HOSTS', 'POSTE_PROTOCOL', 'IMAGE_TAG'];
+    // Diagnostic output
+    const diagnosticKeys = ['DEBUG', 'SECRET_KEY', 'SITE_HEADER', 'SITE_TITLE', 'ALLOWED_HOSTS', 'POSTE_PROTOCOL', 'IMAGE_TAG'];
     console.log('  Diagnostic variables:');
     diagnosticKeys.forEach(key => {
         const val = env[key];
         if (val === undefined) {
             console.log(`    ${key}: MISSING`);
         } else {
-            // Mask secrets: show only first 4 chars for sensitive values
             const secretPattern = /(PASSWORD|SECRET|KEY|TOKEN|PASS|ENCRYPT|PRIVATE|SIGNING|AUTHTOKEN)/i;
             if (secretPattern.test(key)) {
                 const masked = val.length > 4 ? val.substring(0, 4) + '****' : '****';
@@ -500,100 +495,108 @@ async function fetchAllVars(site) {
 function buildExportString(env) {
     const lines = [];
     for (const [key, value] of Object.entries(env)) {
-        // Skip keys that are comments or empty
         if (key.startsWith('#') || key.trim() === '') continue;
-        // Skip internal Node variables (already filtered, but just in case)
         const safeValue = String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         lines.push(`export ${key}="${safeValue}"`);
     }
     return lines.join(' && ');
 }
 
-// ----- Remote execution with fetched env -----
+// ----- Remote execution with fetched env (using SCP) -----
 function remoteExecWithEnv(cmd, env, site) {
-  // Filter out comment lines and empty keys
-  const envPairs = Object.entries(env)
-    .filter(([key]) => !key.startsWith('#') && key.trim() !== '')
-    .map(([key, value]) => `${key}=${String(value).replace(/"/g, '\\"')}`);
+    // Get required vars (templates + compose)
+    const { requiredVars } = fetchRequiredVars(site);
 
-  if (envPairs.length === 0) {
-    console.log('   No environment variables to write. Running command without env file.');
-    return remoteExec(cmd);
-  }
+    // Filter: only include required vars that have a value and a valid name
+    const envPairs = Object.entries(env)
+        .filter(([key]) => {
+            if (!requiredVars.includes(key)) return false;
+            // Only allow valid env var names: letters, numbers, underscore
+            return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key);
+        })
+        .map(([key, value]) => `${key}=${String(value).replace(/"/g, '\\"')}`);
 
-  const envContent = envPairs.join('\n');
-  const tempFileLocal = path.join(os.tmpdir(), `health_env_${Date.now()}.env`);
-  const tempFileRemote = `/tmp/health_env_${Date.now()}.env`;
+    if (envPairs.length === 0) {
+        console.log('   No required environment variables to write. Running command without env file.');
+        return remoteExec(cmd);
+    }
 
-  // Write local temp file
-  fs.writeFileSync(tempFileLocal, envContent, 'utf8');
+    const envContent = envPairs.join('\n');
+    const tempFileLocal = path.join(os.tmpdir(), `health_env_${Date.now()}.env`);
+    const tempFileRemote = `/tmp/health_env_${Date.now()}.env`;
 
-  // SCP the file to the VM
-  const scpArgs = [
-    '-i', SSH_KEY_PATH,
-    '-o', 'StrictHostKeyChecking=no',
-    '-o', 'UserKnownHostsFile=/dev/null',
-    '-o', 'ConnectTimeout=15',
-    '-o', 'LogLevel=ERROR',
-    tempFileLocal,
-    `${SSH_USER}@${VM_IP}:${tempFileRemote}`
-  ];
-  try {
-    execFileSync('scp', scpArgs, { stdio: 'pipe' });
-    console.log(`   ✅ Copied env file to VM: ${tempFileRemote}`);
-  } catch (err) {
-    console.error(`   ❌ Failed to copy env file to VM: ${err.message}`);
+    // Write local file
+    fs.writeFileSync(tempFileLocal, envContent, 'utf8');
+
+    // SCP to VM
+    const scpArgs = [
+        '-i', SSH_KEY_PATH,
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'UserKnownHostsFile=/dev/null',
+        '-o', 'ConnectTimeout=15',
+        '-o', 'LogLevel=ERROR',
+        tempFileLocal,
+        `${SSH_USER}@${VM_IP}:${tempFileRemote}`
+    ];
+    try {
+        execFileSync('scp', scpArgs, { stdio: 'pipe' });
+        if (SCRIPT_DEBUG) console.log(`   ✅ Copied env file to VM: ${tempFileRemote}`);
+    } catch (err) {
+        console.error(`   ❌ Failed to copy env file to VM: ${err.message}`);
+        try { fs.unlinkSync(tempFileLocal); } catch (_) {}
+        return { success: false, output: err.message };
+    }
+
     // Clean up local file
     try { fs.unlinkSync(tempFileLocal); } catch (_) {}
-    return { success: false, output: err.message };
-  }
 
-  // Clean up local file
-  try { fs.unlinkSync(tempFileLocal); } catch (_) {}
+    // Inject --env-file into the command
+    const fullCmd = cmd.replace(/(docker compose(?:-)?)/, `$1 --env-file ${tempFileRemote}`);
+    const result = remoteExec(fullCmd);
 
-  // Inject --env-file into the command
-  const fullCmd = cmd.replace(/(docker compose(?:-)?)/, `$1 --env-file ${tempFileRemote}`);
-  const result = remoteExec(fullCmd);
+    // Clean up remote file
+    remoteExec(`rm -f ${tempFileRemote}`);
 
-  // Clean up the remote temp file
-  remoteExec(`rm -f ${tempFileRemote}`);
-
-  return result;
+    return result;
 }
 
 function remoteExec(cmd) {
-  const args = [
-    '-i', SSH_KEY_PATH,
-    '-o', 'StrictHostKeyChecking=no',
-    '-o', 'UserKnownHostsFile=/dev/null',
-    '-o', 'ConnectTimeout=15',
-    '-o', 'LogLevel=ERROR',
-    '-o', 'KexAlgorithms=+diffie-hellman-group14-sha256',
-    `${SSH_USER}@${VM_IP}`,
-    cmd,
-  ];
+    const args = [
+        '-i', SSH_KEY_PATH,
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'UserKnownHostsFile=/dev/null',
+        '-o', 'ConnectTimeout=15',
+        '-o', 'LogLevel=ERROR',
+        '-o', 'KexAlgorithms=+diffie-hellman-group14-sha256',
+        `${SSH_USER}@${VM_IP}`,
+        cmd,
+    ];
 
-  // Debug: print the full SSH command (without exposing the key path)
-  console.log(`   DEBUG SSH: ssh -i [key] ${SSH_USER}@${VM_IP} "${cmd}"`);
+    if (SCRIPT_DEBUG) {
+        console.log(`   DEBUG SSH: ssh -i [key] ${SSH_USER}@${VM_IP} "${cmd}"`);
+    }
 
-  try {
-    const output = execFileSync('ssh', args, { encoding: 'utf8', stdio: 'pipe' });
-    return { success: true, stdout: output.trim(), stderr: '', output: output.trim(), code: 0 };
-  } catch (err) {
-    // Log everything from the error object
-    console.log(`   DEBUG: err.code = ${err.code}`);
-    console.log(`   DEBUG: err.status = ${err.status}`);
-    console.log(`   DEBUG: err.signal = ${err.signal}`);
-    console.log(`   DEBUG: err.stdout = ${err.stdout ? err.stdout.toString().trim() : '(empty)'}`);
-    console.log(`   DEBUG: err.stderr = ${err.stderr ? err.stderr.toString().trim() : '(empty)'}`);
-    console.log(`   DEBUG: err.message = ${err.message}`);
-    console.log(`   DEBUG: err.cmd = ${err.cmd}`);
-
-    const stdout = err.stdout ? err.stdout.toString().trim() : '';
-    const stderr = err.stderr ? err.stderr.toString().trim() : '';
-    const combined = stdout + (stderr ? '\n' + stderr : '');
-    return { success: false, stdout, stderr, output: combined, code: err.status };
-  }
+    try {
+        const output = execFileSync('ssh', args, { encoding: 'utf8', stdio: 'pipe' });
+        const out = output.trim();
+        if (out) console.log(out);
+        return { success: true, stdout: out, stderr: '', output: out, code: 0 };
+    } catch (err) {
+        const stdout = err.stdout ? err.stdout.toString().trim() : '';
+        const stderr = err.stderr ? err.stderr.toString().trim() : '';
+        const combined = stdout + (stderr ? '\n' + stderr : '');
+        if (combined) console.log(combined);
+        if (SCRIPT_DEBUG) {
+            console.log(`   DEBUG: err.code = ${err.code}`);
+            console.log(`   DEBUG: err.status = ${err.status}`);
+            console.log(`   DEBUG: err.signal = ${err.signal}`);
+            console.log(`   DEBUG: err.stdout =\n${stdout}`);
+            console.log(`   DEBUG: err.stderr =\n${stderr}`);
+            console.log(`   DEBUG: err.message = ${err.message}`);
+            console.log(`   DEBUG: err.cmd = ${err.cmd}`);
+        }
+        return { success: false, stdout, stderr, output: combined, code: err.status };
+    }
 }
 
 function readEnvFileFromVM(site) {
@@ -640,26 +643,26 @@ function getContainerLogs(container, lines = 20) {
 }
 
 function repairCollectStatic(site, env) {
-    const { webContainer } = site;
-    console.log(`   → Running collectstatic on ${webContainer}...`);
-    // Try binary first
-    let cmd = `sudo docker exec ${webContainer} /app/humrine_site_linux collectstatic --noinput 2>&1`;
-    let result = remoteExecSilent(cmd, env);
-    if (result.success && result.output && !result.output.includes('No such file')) {
-        console.log(`   ✅ Static files collected.`);
-        return true;
-    }
-    // Fallback to python
-    console.log(`   → Binary not found, trying python manage.py...`);
-    cmd = `sudo docker exec ${webContainer} python manage.py collectstatic --noinput 2>&1`;
-    result = remoteExecSilent(cmd, env);
-    if (result.success) {
-        console.log(`   ✅ Static files collected (python).`);
-        return true;
-    }
-    console.log(`   ❌ collectstatic failed.`);
-    if (result.output) console.log(`   Error:\n${result.output}`);
-    return false;
+  const { webContainer } = site;
+  console.log(`   → Running collectstatic on ${webContainer}...`);
+  // Try binary first
+  let cmd = `sudo docker exec ${webContainer} /app/humrine_site_linux collectstatic --noinput 2>&1`;
+  let result = remoteExecSilent(cmd, env);
+  if (result.success && result.output && !result.output.includes('No such file')) {
+    console.log(`   ✅ Static files collected.`);
+    return true;
+  }
+  // Fallback to python
+  console.log(`   → Binary not found, trying python manage.py...`);
+  cmd = `sudo docker exec ${webContainer} python manage.py collectstatic --noinput 2>&1`;
+  result = remoteExecSilent(cmd, env);
+  if (result.success) {
+    console.log(`   ✅ Static files collected (python).`);
+    return true;
+  }
+  console.log(`   ❌ collectstatic failed.`);
+  if (result.output) console.log(`   Error:\n${result.output}`);
+  return false;
 }
 
 function repairNginx(nginxContainer) {
@@ -683,7 +686,7 @@ function ensureImagesExist(site, env) {
   }
   console.log(`   → Ensuring images are up-to-date via compose pull...`);
   const pullCmd = `cd ${composeDir} && ${composeCmd} -p ${project} -f ${composeFile} --profile ${profile} pull ${webServiceName} 2>&1`;
-  const result = remoteExecWithEnv(validateCmd, env, site);
+  const result = remoteExecWithEnv(pullCmd, env, site);
   if (result.output) console.log(`   Output:\n${result.output}`);
   if (result.success) {
     console.log(`   ✅ Images pulled.`);
@@ -715,10 +718,10 @@ function recreateContainer(site, env) {
   }
   console.log(`   ✅ Compose file is valid.`);
 
-  // Run up
+  // Run up (single service)
   console.log(`   → Recreating ${webContainer} via compose (service ${webServiceName})...`);
   let cmd = `cd ${composeDir} && ${composeCmd} -p ${project} -f ${composeFile} --profile ${profile} up ${webServiceName} 2>&1`;
-  let result = remoteExecWithEnv(cmd, env);
+  let result = remoteExecWithEnv(cmd, env, site);
 
   if (result.output) console.log(`   Output:\n${result.output}`);
   if (result.success) {
@@ -736,7 +739,7 @@ function recreateContainer(site, env) {
   console.log(`   → Single service up failed.`);
   console.log(`   → Trying full project up...`);
   cmd = `cd ${composeDir} && ${composeCmd} -p ${project} -f ${composeFile} --profile ${profile} up 2>&1`;
-  result = remoteExecWithEnv(cmd, env);
+  result = remoteExecWithEnv(cmd, env, site);
   if (result.output) console.log(`   Output:\n${result.output}`);
   if (result.success) {
     console.log(`   ✅ Full project started.`);
@@ -757,18 +760,18 @@ function recreateContainer(site, env) {
 }
 
 function startContainer(site, env) {
-    const { webContainer } = site;
-    console.log(`   → Starting ${webContainer} via docker start...`);
-    let cmd = `sudo docker start ${webContainer} 2>&1`;
-    let result = remoteExecSilent(cmd, env);
-    if (result.success) {
-        console.log(`   ✅ ${webContainer} started.`);
-        return true;
-    }
-    console.log(`   → docker start failed.`);
-    if (result.output) console.log(`   Error:\n${result.output}`);
-    console.log(`   → Trying compose up...`);
-    return recreateContainer(site, env);
+  const { webContainer } = site;
+  console.log(`   → Starting ${webContainer} via docker start...`);
+  let cmd = `sudo docker start ${webContainer} 2>&1`;
+  let result = remoteExecSilent(cmd, env);
+  if (result.success) {
+    console.log(`   ✅ ${webContainer} started.`);
+    return true;
+  }
+  console.log(`   → docker start failed.`);
+  if (result.output) console.log(`   Error:\n${result.output}`);
+  console.log(`   → Trying compose up...`);
+  return recreateContainer(site, env);
 }
 
 function updateHealthCheckTimeout(healthCheck) {
@@ -832,9 +835,6 @@ function runGcloud(cmd) {
 
 // ----- Case detection -----
 function detectCase(siteStatus, logs, nginxLogs, env) {
-    // siteStatus: { containerExists, containerRunning, httpStatus, gcpHealthy }
-    // logs: container logs (string)
-    // nginxLogs: nginx logs (string)
     for (const caseDef of caseSolutions.cases) {
         const detect = caseDef.detect;
         let matches = true;
@@ -855,8 +855,6 @@ function detectCase(siteStatus, logs, nginxLogs, env) {
         }
         if (detect.container_restarting && !siteStatus.containerRestarting) matches = false;
         if (detect.pull_error) {
-            // check if there was a pull error (we can pass pullError as part of status)
-            // For simplicity, we assume if siteStatus.pullError is set.
             if (!siteStatus.pullError || !new RegExp(detect.pull_error, 'i').test(siteStatus.pullError)) matches = false;
         }
 
@@ -869,7 +867,6 @@ function detectCase(siteStatus, logs, nginxLogs, env) {
 async function checkAndRepair(site, fix) {
     const { name, backend, webContainer, url } = site;
 
-    // Fetch env (only once per site)
     const env = await fetchAllVars(site);
     if (Object.keys(env).length === 0) {
         console.log(`❌ No environment variables fetched for ${name}. Aborting.`);
@@ -878,7 +875,6 @@ async function checkAndRepair(site, fix) {
 
     console.log(`\n🔍 Checking ${name} (${backend})...`);
 
-    // 1. Gather status
     const gcpHealth = runGcloud(backend);
     const gcpHealthy = gcpHealth && gcpHealth.includes('HEALTHY');
     console.log(`   → GCP backend: ${gcpHealthy ? '✅ HEALTHY' : '❌ UNHEALTHY'}`);
@@ -902,7 +898,6 @@ async function checkAndRepair(site, fix) {
         nginxLogs,
     };
 
-    // 2. Detect all matching cases
     const detectedCases = [];
     for (const caseDef of caseSolutions.cases) {
         const detect = caseDef.detect;
@@ -935,13 +930,11 @@ async function checkAndRepair(site, fix) {
     console.log(`   🔍 Detected ${detectedCases.length} issue(s):`);
     detectedCases.forEach(c => console.log(`     - ${c.description} (${c.id})`));
 
-    // 3. If --fix is not provided, just report
     if (!fix) {
         console.log(`   ℹ️  Use --fix to attempt repairs.`);
         return false;
     }
 
-    // 4. Apply fixes in order (case order as in JSON)
     let allFixed = true;
     for (const caseDef of detectedCases) {
         const fixScriptPath = path.join(__dirname, 'fixes', caseDef.fix_script);
@@ -982,16 +975,13 @@ async function checkAndRepair(site, fix) {
         }
     }
 
-    // 5. Wait and re-check
     console.log(`   ⏳ Waiting 30 seconds for services to settle...`);
     execSync('sleep 30', { stdio: 'pipe' });
 
-    // Re-check GCP
     const recheckGCP = runGcloud(backend);
     const gcpOK = recheckGCP && recheckGCP.includes('HEALTHY');
     console.log(`   → GCP after repair: ${gcpOK ? '✅ HEALTHY' : '❌ UNHEALTHY'}`);
 
-    // Re-check site
     const newStatus = checkSiteResponse(url, name);
     const newOK = newStatus !== null && newStatus >= 200 && newStatus < 400;
     console.log(`   → Site after repair: ${newOK ? `✅ HTTP ${newStatus}` : `❌ HTTP ${newStatus}`}`);
@@ -1012,6 +1002,11 @@ async function main() {
     const args = process.argv.slice(2);
     const fix = args.includes('--fix');
     const selectedSites = await selectSites(args);
+    const debug = args.includes('--debug') || args.includes('-d');
+    if (debug) {
+        SCRIPT_DEBUG = true;
+        console.log('🐞 Debug mode enabled – SSH commands will be printed.');
+    }
 
     console.log(`🏥 Running health checks${fix ? ' with auto-repair' : ''}...`);
     console.log(`📋 Selected sites: ${selectedSites.map(s => s.name).join(', ')}\n`);

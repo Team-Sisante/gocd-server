@@ -36,17 +36,19 @@
     },
     {
       "id": "image_pull_failed",
-      "description": "Docker pull failed due to network or missing tag",
+      "description": "Docker pull failed (only if container is missing)",
       "detect": {
-        "pull_error": "failed to resolve reference|TLS handshake timeout"
+        "container_status": "missing",
+        "pull_error": "failed to resolve reference|TLS handshake timeout|unauthorized"
       },
       "fix_script": "fix_image_pull.js"
     },
     {
       "id": "db_unreachable",
-      "description": "Database connection failure (timeout or refused)",
+      "description": "Database connection failure (container is running but DB unreachable)",
       "detect": {
-        "log_pattern": "could not translate host name|Connection refused|timeout"
+        "log_pattern": "could not translate host name|Connection refused|timeout",
+        "container_status": "running"
       },
       "fix_script": "fix_db_connectivity.js"
     }

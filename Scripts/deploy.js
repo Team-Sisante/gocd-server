@@ -611,9 +611,9 @@ const deployCmd =
   `flock ${remoteLockFile} bash -c '` +
     `export DOCKER_CONFIG=${DOCKER_CONFIG_DIR} && ` +
     `${envExportString} && ` +
-    `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans && ` +
+    `export IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans && ` +
     `sudo docker rm -f ${nginxContainerName} || true && ` +
-    `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
+    `exportIMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
     (mailContainerName ? 
     ` && echo "Diagnostic: Network bindings in container:" && ` +
     `sudo docker exec -i ${mailContainerName} netstat -tulpn || echo "netstat not available, trying ss..." && sudo docker exec -i ${mailContainerName} ss -tulpn || true` : '') +

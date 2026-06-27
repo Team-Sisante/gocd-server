@@ -10,14 +10,14 @@
  *    certificates, etc.) to the target VM via SCP.
  * 4. Determines the correct image tag (from artifacts shared file or GHCR).
  * 5. Pulls the target image on the VM, stops and removes the old web container.
- * 6. Injects all environment variables into the remote shell via `export`
- *    commands, then runs `docker compose up -d` with the new image.
+ * 6. Injects all environment variables via a temporary `.env` file (SCP) and
+ *    runs `docker compose up -d` with `--env-file`.
  * 7. After deployment, updates the GCP health check to use the correct host
  *    and timeout/interval settings.
  * 8. Verifies that the POSTE_PROTOCOL variable is present inside the container.
  *
- * No secrets are written to disk on the target VM; they are passed directly
- * via environment variables in the remote SSH command.
+ * No secrets are written to disk on the target VM; the `.env` file is cleaned up
+ * after the deployment.
  *
  * Usage:
  *   node deploy.js <app_name> <target> <github_token>
@@ -27,6 +27,7 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');   // <-- added for temp directory
 
 const appName = process.argv[2];          // e.g. 'badminton_court'
 const target   = process.argv[3];
@@ -89,7 +90,7 @@ const APP_CONFIG = {
     workDir:       '/badminton_court',
     deployDir:     '/opt/badminton_court',
     webContainer: {
-      staging:    'badminton-staging-web-staging-1',     // matches compose
+      staging:    'badminton-staging-web-staging-1',
       production: 'badminton-production-web-production-1',
     },
     nginxContainer: {
@@ -106,8 +107,8 @@ const APP_CONFIG = {
     workDir:       '/humrine_site',
     deployDir:     '/opt/humrine_site',
     webContainer: {
-      staging:    'humrine-web-staging',                 
-      production: 'humrine-web-production',              
+      staging:    'humrine-web-staging',
+      production: 'humrine-web-production',
     },
     nginxContainer: {
       staging:    'humrine-nginx-staging',
@@ -154,13 +155,11 @@ function getHealthCheckInfo(app, env) {
     const lbConfigPath = path.resolve(__dirname, 'loadbalancer.json');
     if (!fs.existsSync(lbConfigPath)) return null;
     const raw = fs.readFileSync(lbConfigPath, 'utf8');
-    // Interpolate environment variables (same logic as in setup‑load‑balancer.js)
     const interpolated = raw.replace(/\$\{(\w+)\}/g, (_, varName) => process.env[varName] || '');
     const config = JSON.parse(interpolated);
     const appConfig = config[app];
     if (!appConfig) return null;
 
-    // Find the backend that matches the target environment
     const backend = appConfig.backends.find(b =>
       b.host && (
         (env === 'staging' && b.host.startsWith('staging')) ||
@@ -172,7 +171,7 @@ function getHealthCheckInfo(app, env) {
     return {
       healthCheck: backend.healthCheck,
       host:        backend.host,
-      backend:     backend.name,   // <-- add this line
+      backend:     backend.name,
     };
   } catch (e) {
     console.error(`\x1b[31mFailed to read health check info from loadbalancer.json: ${e.message}\x1b[0m`);
@@ -222,7 +221,6 @@ if (certFile) {
   childEnv.REQUESTS_CA_BUNDLE = certFile;
 }
 
-// Prefix all GCP secret names with the app name to avoid collisions
 const secretPrefix = `${appName}_`;
 
 for (const secret of SECRETS_TO_FETCH) {
@@ -234,7 +232,6 @@ for (const secret of SECRETS_TO_FETCH) {
       { encoding: 'utf8', stdio: 'pipe', env: childEnv }
     ).trim();
     if (value) {
-      // Store under the original variable name (without prefix)
       process.env[secret] = value;
       console.log(`  🔐 ${secret} (from ${fullSecretName})`);
     } else {
@@ -258,17 +255,13 @@ try {
   const variables = JSON.parse(stdout);
   variables.forEach(v => {
     if (v.name) {
-      // Never allow a fetched variable to overwrite a non‑empty existing value with an empty one
       if (v.value === '' || v.value === undefined || v.value === null) {
-        // If the fetched value is empty and we already have a non‑empty value, keep the existing one
         if (process.env[v.name] && process.env[v.name] !== '') {
-          return;   // keep existing value
+          return;
         }
-        // Otherwise, delete and set nothing (or empty) – required later for validation
         delete process.env[v.name];
         return;
       }
-      // Valid non‑empty value – always overwrite
       process.env[v.name] = v.value;
     }
   });
@@ -289,7 +282,6 @@ REQUIRED_VARS.forEach(v => {
   console.log(`  ${v}: ${status}`);
 });
 
-// Validation
 const missingVars = REQUIRED_VARS.filter(v => process.env[v] === undefined);
 const emptyVars   = REQUIRED_VARS.filter(v => process.env[v] === '');
 
@@ -350,10 +342,6 @@ if (target === 'staging' || target === 'production') {
     useNginx = true;
 
     if (GCP_PROJECT_ID) {
-      // Firewall rule name is app-scoped so concurrent deploys of different apps
-      // don't collide on a shared rule name and clobber each other's port.
-      // GCP resource names must match [a-z](?:[-a-z0-9]{0,61}[a-z0-9])? — no underscores,
-      // so replace any underscores in the app name with hyphens (e.g. "humrine_site" → "humrine-site").
       const gcpSafeAppName = appName.replace(/_/g, '-');
       const ruleName = `allow-web-https-${gcpSafeAppName}-${target}`;
       const targetTag = process.env.GCP_VM_NAME;
@@ -395,8 +383,6 @@ if (!vmIP) waitAndExit('ERROR: GCP_VM_IP is not set in environment.');
 // ------------------------------------------------------------------
 // 5. Pre‑deploy health checks
 // ------------------------------------------------------------------
-
-// ---- Docker daemon DNS & MTU configuration ----
 const DOCKER_CONF = '{"dns":["8.8.8.8"],"mtu":1460}';
 try {
   const currentConf = execSync(
@@ -416,7 +402,6 @@ try {
   console.log(`\x1b[33mWarning: Failed to verify/configure Docker daemon: ${e.message}\x1b[0m`);
 }
 
-// ---- System load check ----
 console.log('Running pre‑deploy health checks...');
 const healthCheckResult = execSync(
   `ssh -i ${sshKeyPath} ${SSH_OPTS} -o LogLevel=ERROR ${SSH_USER}@${vmIP} ` +
@@ -436,7 +421,6 @@ if (systemLoad > 2.0) {
 }
 console.log('\x1b[32mPre‑deploy health checks passed.\x1b[0m');
 
-// ---- ghcr.io connectivity check ----
 console.log('Checking ghcr.io connectivity...');
 try {
   execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "curl -v --connect-timeout 10 https://ghcr.io/v2/ 2>&1 | head -20"`, { stdio: 'inherit' });
@@ -485,9 +469,7 @@ if (fs.existsSync(posteRelayScript)) {
 let imageTag = process.env.IMAGE_TAG;
 const webImageName = `ghcr.io/${GIT_REPO_USERNAME}/${appName}-web`;
 
-// If IMAGE_TAG is not set or is 'latest', try to read from the artifacts shared file
 if (!imageTag || imageTag === 'latest') {
-    // Check if GoCD passed the dependency label
     const depLabelVar = `GO_DEPENDENCY_LABEL_${appName.toUpperCase().replace(/-/g, '_')}_ARTIFACTS`;
     const depLabel = process.env[depLabelVar];
     if (depLabel) {
@@ -504,7 +486,6 @@ if (!imageTag || imageTag === 'latest') {
     }
 }
 
-// If still not set, fallback to querying GHCR
 if (!imageTag || imageTag === 'latest') {
     console.log(`\x1b[33mIMAGE_TAG not set or is 'latest'. Discovering most recent SHA tag from GHCR...\x1b[0m`);
     try {
@@ -542,7 +523,7 @@ const webContainerName = appConf.webContainer[target];
 execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker stop ${webContainerName} 2>/dev/null || true; sudo docker rm ${webContainerName} 2>/dev/null || true"`, { stdio: 'inherit' });
 
 // ------------------------------------------------------------------
-// 10. Deploy command
+// 10. Deploy command with temporary .env file via SCP
 // ------------------------------------------------------------------
 console.log('Logging into ghcr.io and deploying...');
 const tokenFile = '/tmp/gh_token';
@@ -562,38 +543,37 @@ criticalVars.forEach(v => {
   }
 });
 
-// Build .env content (as export commands for in-memory injection)
-const envLines = [];
+// Build .env file content (instead of export string)
+const envContentLines = [];
 for (const [key, value] of Object.entries(process.env)) {
-  // Exclude internal Node.js / system variables
   if (key.startsWith('npm_') || ['PATH', 'HOME', 'PWD', 'SHELL', 'HOSTNAME'].includes(key)) continue;
-
-  // Remove ALL control characters (0x00‑0x1F) and DEL (0x7F) from the KEY.
   const cleanKey = key.replace(/[\x00-\x1F\x7F]/g, '');
-  if (cleanKey === '') continue;   // skip entirely broken keys
-
-  // Strip control characters from the VALUE.
+  if (cleanKey === '') continue;
   const cleanValue = (value || '').replace(/[\x00-\x1F\x7F]/g, '');
-  
-  // Properly escape backslashes, quotes, and dollar signs for bash export
-  const safeValue  = cleanValue
-    .replace(/\\/g, '\\\\')   // Escape backslashes
-    .replace(/"/g, '\\"')     // Escape double quotes
-    .replace(/\$/g, '\\$');   // Escape dollar signs to prevent shell interpolation
-
-  envLines.push(`${cleanKey}="${safeValue}"`);
+  const safeValue = cleanValue.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  envContentLines.push(`${cleanKey}="${safeValue}"`);
 }
+const envContent = envContentLines.join('\n');
 
-// Create the bash export command string
-const envExportString = envLines.map(line => `export ${line}`).join(' && ');
+// Write local .env file
+const tempFileLocal = path.join(os.tmpdir(), `deploy_env_${Date.now()}.env`);
+fs.writeFileSync(tempFileLocal, envContent, 'utf8');
 
-// ------------------------------------------------------------------
-// Remote deploy command – sources the environment variables in-memory
-// ------------------------------------------------------------------
+// SCP it to the VM
+const tempFileRemote = `/tmp/deploy_env_${Date.now()}.env`;
+const scpCmd = `scp -i ${sshKeyPath} ${SSH_OPTS} ${tempFileLocal} ${SSH_USER}@${vmIP}:${tempFileRemote}`;
+try {
+  execSync(scpCmd, { stdio: 'inherit' });
+  console.log(`✅ Copied env file to VM: ${tempFileRemote}`);
+} catch (err) {
+  console.error(`❌ Failed to copy env file to VM: ${err.message}`);
+  process.exit(1);
+}
+try { fs.unlinkSync(tempFileLocal); } catch (_) {}
+
+// Remote deploy command – uses --env-file
 const nginxContainerName = appConf.nginxContainer[target];
 const mailContainerName = appConf.mailContainer ? appConf.mailContainer[target] : null;
-
-// Lock file path on the VM to prevent concurrent deploys of the same app
 const remoteLockFile = `/tmp/${appName}_deploy.lock`;
 
 const mailSetupCmd = mailContainerName ? 
@@ -610,10 +590,9 @@ const deployCmd =
   `cd ${deployDir} && ` +
   `flock ${remoteLockFile} bash -c '` +
     `export DOCKER_CONFIG=${DOCKER_CONFIG_DIR} && ` +
-    `${envExportString} && ` +
-    `export IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} down --remove-orphans && ` +
+    `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --env-file ${tempFileRemote} --profile ${cfg.profile} down --remove-orphans && ` +
     `sudo docker rm -f ${nginxContainerName} || true && ` +
-    `exportIMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
+    `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --env-file ${tempFileRemote} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
     (mailContainerName ? 
     ` && echo "Diagnostic: Network bindings in container:" && ` +
     `sudo docker exec -i ${mailContainerName} netstat -tulpn || echo "netstat not available, trying ss..." && sudo docker exec -i ${mailContainerName} ss -tulpn || true` : '') +
@@ -638,9 +617,12 @@ for (let attempt = 1; attempt <= 3; attempt++) {
 }
 
 try { fs.unlinkSync(tokenFile); } catch (_) {}
+// Clean up remote env file
+try {
+  execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "rm -f ${tempFileRemote}"`, { stdio: 'ignore' });
+} catch (_) {}
 
 if (success) {
-  // --- Post‑deploy health‑check repair (reads from loadbalancer.json) ---
   const hcInfo = getHealthCheckInfo(appName, cfg.env);
   if (hcInfo) {
     console.log(`\x1b[33mEnsuring health check ${hcInfo.healthCheck} has correct Host header…\x1b[0m`);
@@ -655,13 +637,11 @@ if (success) {
         `sleep 90 && gcloud compute backend-services get-health ${hcInfo.backend} --global --project=${GCP_PROJECT_ID}`,
         { stdio: 'inherit' }
       );
-
     } catch (e) {
       console.error(`\x1b[31mHealth check update failed (non‑fatal): ${e.message}\x1b[0m`);
     }
   }
 
-  // Post‑deploy verification: check that the web container actually received POSTE_PROTOCOL
   try {
     const checkCmd = `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker exec ${webContainerName} printenv POSTE_PROTOCOL"`;
     const output = execSync(checkCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();

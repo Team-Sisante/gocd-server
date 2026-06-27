@@ -23,5 +23,5 @@ secrets/agent-key.pub
 secrets/gcp-key.json
 .env.docker
 Scripts/setup-load-balancer*.log
-Scripts/health_check*.log
 shared-tags/
+Scripts/health-checks/

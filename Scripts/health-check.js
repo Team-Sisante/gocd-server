@@ -32,9 +32,10 @@ const { execSync, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
+const readline = require('readline');
 
 // ----- Setup logging -----
-const LOG_DIR = path.join(__dirname, "health-check"); // Scripts/ directory
+const LOG_DIR = path.join(__dirname, "health-checks"); // Scripts/health-checks/ directory
 const now = new Date();
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const monthAbbr = months[now.getMonth()];
@@ -186,22 +187,25 @@ const SITES = [
     },
 ];
 
+// ----- Interactive prompt (using readline) -----
+function ask(question) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  return new Promise(resolve => {
+    rl.question(question, answer => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
 async function selectSites(args) {
   const allIds = SITES.map(s => s.id);
+
   // Check if --all is passed
   if (args.includes('--all')) return SITES;
 
-    if (args.includes('--help') || args.includes('-h')) {
-        console.log(`Usage: node health-check.js [options] [site-id ...]
-Options:
-  --fix         Automatically repair issues
-  --all         Run all sites (default if no selection)
-  --help        Show this help
-
-Site IDs:
-${SITES.map(s => `  ${s.id}`).join('\n')}`);
-        process.exit(0);
-    }
   // Check for specific site IDs in args
   const requested = args.filter(arg => allIds.includes(arg));
   if (requested.length > 0) {
@@ -216,7 +220,7 @@ ${SITES.map(s => `  ${s.id}`).join('\n')}`);
   console.log('  a. All sites');
   console.log('  q. Quit\n');
 
-  const answer = ask('Enter numbers (comma-separated, e.g., 1,3) or "a" for all: ');
+  const answer = await ask('Enter numbers (comma-separated, e.g., 1,3) or "a" for all: ');
   if (answer.toLowerCase() === 'q') process.exit(0);
   if (answer.toLowerCase() === 'a') return SITES;
 

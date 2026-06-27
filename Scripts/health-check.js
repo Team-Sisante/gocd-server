@@ -757,6 +757,72 @@ function writeReport(reportData) {
     console.log(`\n📄 Report saved to: ${REPORT_FILE}`);
 }
 
+function remoteExecLive(cmd, env, site) {
+    // Write env file
+    const { requiredVars } = fetchRequiredVars(site);
+    const envPairs = Object.entries(env)
+        .filter(([key]) => {
+            if (!requiredVars.includes(key)) return false;
+            return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key);
+        })
+        .map(([key, value]) => `${key}=${String(value).replace(/"/g, '\\"')}`);
+
+    if (envPairs.length === 0) {
+        console.log('   No required env vars. Running command without env file.');
+        return remoteExec(cmd);
+    }
+
+    const envContent = envPairs.join('\n');
+    const tempFileLocal = path.join(os.tmpdir(), `live_env_${Date.now()}.env`);
+    const tempFileRemote = `/tmp/live_env_${Date.now()}.env`;
+
+    fs.writeFileSync(tempFileLocal, envContent, 'utf8');
+
+    const scpArgs = [
+        '-i', SSH_KEY_PATH,
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'UserKnownHostsFile=/dev/null',
+        '-o', 'ConnectTimeout=15',
+        '-o', 'LogLevel=ERROR',
+        tempFileLocal,
+        `${SSH_USER}@${VM_IP}:${tempFileRemote}`
+    ];
+    try {
+        execFileSync('scp', scpArgs, { stdio: 'pipe' });
+        if (SCRIPT_DEBUG) console.log(`   ✅ Copied env file to VM: ${tempFileRemote}`);
+    } catch (err) {
+        console.error(`   ❌ Failed to copy env file to VM: ${err.message}`);
+        try { fs.unlinkSync(tempFileLocal); } catch (_) {}
+        return { success: false, output: err.message };
+    }
+
+    try { fs.unlinkSync(tempFileLocal); } catch (_) {}
+
+    // Inject --env-file into the command
+    const fullCmd = cmd.replace(/(docker compose(?:-)?)/, `$1 --env-file ${tempFileRemote}`);
+    // Run with stdio: 'inherit' to stream output live
+    try {
+        const args = [
+            '-i', SSH_KEY_PATH,
+            '-o', 'StrictHostKeyChecking=no',
+            '-o', 'UserKnownHostsFile=/dev/null',
+            '-o', 'ConnectTimeout=15',
+            '-o', 'LogLevel=ERROR',
+            '-o', 'KexAlgorithms=+diffie-hellman-group14-sha256',
+            `${SSH_USER}@${VM_IP}`,
+            fullCmd,
+        ];
+        execFileSync('ssh', args, { stdio: 'inherit' });
+        // Clean up remote file
+        remoteExec(`rm -f ${tempFileRemote}`);
+        return { success: true };
+    } catch (err) {
+        console.error(`   ❌ Command failed: ${err.message}`);
+        remoteExec(`rm -f ${tempFileRemote}`);
+        return { success: false, output: err.message };
+    }
+}
+
 // ----- Main -----
 async function main() {
     const args = process.argv.slice(2);

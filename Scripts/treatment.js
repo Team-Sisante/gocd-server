@@ -366,7 +366,7 @@ function ensureImagesExist(site, env) {
     const composeCmd = 'docker compose'; // assume available, could detect
     console.log(`   → Ensuring images are up-to-date via compose pull...`);
     const pullCmd = `cd ${composeDir} && docker compose -p ${project} -f ${composeFile} --profile ${profile} pull ${webServiceName} 2>&1`;
-    const result = remoteExecWithEnv(pullCmd, env, site);
+    const result = remoteExecLive(pullCmd, env, site);
     if (result.output) console.log(`   Output:\n${result.output}`);
     if (result.success) {
         console.log(`   ✅ Images pulled.`);
@@ -390,7 +390,7 @@ function recreateContainer(site, env) {
 
     console.log(`   → Recreating ${webContainer} via compose (service ${webServiceName})...`);
     let cmd = `cd ${composeDir} && docker compose -p ${project} -f ${composeFile} --profile ${profile} up ${webServiceName} 2>&1`;
-    let result = remoteExecWithEnv(cmd, env, site);
+    let result = remoteExecLive(cmd, env, site);
 
     if (result.output) console.log(`   Output:\n${result.output}`);
     if (result.success) {
@@ -437,6 +437,72 @@ function updateHealthCheckTimeout(healthCheck) {
         return true;
     } catch (e) {
         return false;
+    }
+}
+
+function remoteExecLive(cmd, env, site) {
+    // Write env file
+    const { requiredVars } = fetchRequiredVars(site);
+    const envPairs = Object.entries(env)
+        .filter(([key]) => {
+            if (!requiredVars.includes(key)) return false;
+            return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key);
+        })
+        .map(([key, value]) => `${key}=${String(value).replace(/"/g, '\\"')}`);
+
+    if (envPairs.length === 0) {
+        console.log('   No required env vars. Running command without env file.');
+        return remoteExec(cmd);
+    }
+
+    const envContent = envPairs.join('\n');
+    const tempFileLocal = path.join(os.tmpdir(), `live_env_${Date.now()}.env`);
+    const tempFileRemote = `/tmp/live_env_${Date.now()}.env`;
+
+    fs.writeFileSync(tempFileLocal, envContent, 'utf8');
+
+    const scpArgs = [
+        '-i', SSH_KEY_PATH,
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'UserKnownHostsFile=/dev/null',
+        '-o', 'ConnectTimeout=15',
+        '-o', 'LogLevel=ERROR',
+        tempFileLocal,
+        `${SSH_USER}@${VM_IP}:${tempFileRemote}`
+    ];
+    try {
+        execFileSync('scp', scpArgs, { stdio: 'pipe' });
+        if (SCRIPT_DEBUG) console.log(`   ✅ Copied env file to VM: ${tempFileRemote}`);
+    } catch (err) {
+        console.error(`   ❌ Failed to copy env file to VM: ${err.message}`);
+        try { fs.unlinkSync(tempFileLocal); } catch (_) {}
+        return { success: false, output: err.message };
+    }
+
+    try { fs.unlinkSync(tempFileLocal); } catch (_) {}
+
+    // Inject --env-file into the command
+    const fullCmd = cmd.replace(/(docker compose(?:-)?)/, `$1 --env-file ${tempFileRemote}`);
+    // Run with stdio: 'inherit' to stream output live
+    try {
+        const args = [
+            '-i', SSH_KEY_PATH,
+            '-o', 'StrictHostKeyChecking=no',
+            '-o', 'UserKnownHostsFile=/dev/null',
+            '-o', 'ConnectTimeout=15',
+            '-o', 'LogLevel=ERROR',
+            '-o', 'KexAlgorithms=+diffie-hellman-group14-sha256',
+            `${SSH_USER}@${VM_IP}`,
+            fullCmd,
+        ];
+        execFileSync('ssh', args, { stdio: 'inherit' });
+        // Clean up remote file
+        remoteExec(`rm -f ${tempFileRemote}`);
+        return { success: true };
+    } catch (err) {
+        console.error(`   ❌ Command failed: ${err.message}`);
+        remoteExec(`rm -f ${tempFileRemote}`);
+        return { success: false, output: err.message };
     }
 }
 

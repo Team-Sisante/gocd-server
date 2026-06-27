@@ -403,25 +403,16 @@ function remoteExecWithEnv(cmd, env) {
 }
 
 function remoteExec(cmd) {
-    const args = [
-        '-i', SSH_KEY_PATH,
-        '-o', 'StrictHostKeyChecking=no',
-        '-o', 'UserKnownHostsFile=/dev/null',
-        '-o', 'ConnectTimeout=15',
-        '-o', 'LogLevel=ERROR',
-        '-o', 'KexAlgorithms=+diffie-hellman-group14-sha256',
-        `${SSH_USER}@${VM_IP}`,
-        cmd,
-    ];
-    try {
-        const output = execFileSync('ssh', args, { encoding: 'utf8', stdio: 'pipe' });
-        return { success: true, stdout: output.trim(), stderr: '', output: output.trim() };
-    } catch (err) {
-        const stdout = err.stdout ? err.stdout.toString().trim() : '';
-        const stderr = err.stderr ? err.stderr.toString().trim() : '';
-        const combined = stdout + (stderr ? '\n' + stderr : '');
-        return { success: false, stdout, stderr, output: combined };
-    }
+  const args = [ /* ... ssh args ... */, cmd ];
+  try {
+    const output = execFileSync('ssh', args, { encoding: 'utf8', stdio: 'pipe' });
+    return { success: true, output: output.trim() };
+  } catch (err) {
+    const stdout = err.stdout ? err.stdout.toString().trim() : '';
+    const stderr = err.stderr ? err.stderr.toString().trim() : '';
+    const combined = stdout + (stderr ? '\n' + stderr : '');
+    return { success: false, output: combined };
+  }
 }
 
 function readEnvFileFromVM(site) {
@@ -517,27 +508,54 @@ function ensureImagesExist(site, env) {
 }
 
 function recreateContainer(site, env) {
-    const { webContainer, composeDir, composeFile, project, profile, webServiceName } = site;
-    console.log(`   → Recreating ${webContainer} via compose (service ${webServiceName})...`);
-    let cmd = `cd ${composeDir} && sudo docker compose -p ${project} -f ${composeFile} --profile ${profile} up -d ${webServiceName} 2>&1`;
-    let result = remoteExecSilent(cmd, env);
-    if (result.success) {
-        console.log(`   ✅ ${webContainer} recreated and started.`);
-        return true;
+  const { webContainer, composeDir, composeFile, project, profile, webServiceName } = site;
+  console.log(`   → Recreating ${webContainer} via compose (service ${webServiceName})...`);
+  
+  // Run WITHOUT -d to see real-time output
+  let cmd = `cd ${composeDir} && sudo docker compose -p ${project} -f ${composeFile} --profile ${profile} up ${webServiceName} 2>&1`;
+  let result = remoteExecSilent(cmd, env);
+  
+  if (result.success) {
+    console.log(`   ✅ ${webContainer} started successfully.`);
+    // Still check if the container is actually running
+    const status = getContainerStatus(site);
+    if (!status.running) {
+      console.log(`   ⚠️  Container started but not running. Checking logs...`);
+      const logs = getContainerLogs(webContainer);
+      if (logs) console.log(`   Logs:\n${logs}`);
+      return false;
     }
-    console.log(`   → Single service up failed.`);
-    if (result.output) console.log(`   Error:\n${result.output}`);
-    // If single service fails, try full project up
-    console.log(`   → Trying full project up...`);
-    cmd = `cd ${composeDir} && sudo docker compose -p ${project} -f ${composeFile} --profile ${profile} up -d 2>&1`;
-    result = remoteExecSilent(cmd, env);
-    if (result.success) {
-        console.log(`   ✅ Full project recreated.`);
-        return true;
+    return true;
+  }
+  
+  console.log(`   → Single service up failed.`);
+  if (result.output) console.log(`   Error:\n${result.output}`);
+  
+  // If single service fails, try full project up (without -d)
+  console.log(`   → Trying full project up...`);
+  cmd = `cd ${composeDir} && sudo docker compose -p ${project} -f ${composeFile} --profile ${profile} up 2>&1`;
+  result = remoteExecSilent(cmd, env);
+  
+  if (result.success) {
+    console.log(`   ✅ Full project started.`);
+    const status = getContainerStatus(site);
+    if (!status.running) {
+      console.log(`   ⚠️  Container not running after full up. Checking logs...`);
+      const logs = getContainerLogs(webContainer);
+      if (logs) console.log(`   Logs:\n${logs}`);
+      return false;
     }
-    console.log(`   ❌ Failed to recreate ${webContainer} (even full project).`);
-    if (result.output) console.log(`   Error:\n${result.output}`);
-    return false;
+    return true;
+  }
+  
+  console.log(`   ❌ Failed to recreate ${webContainer} (even full project).`);
+  if (result.output) console.log(`   Error:\n${result.output}`);
+  
+  // Final attempt: check logs of the failed container
+  const logs = getContainerLogs(webContainer);
+  if (logs) console.log(`   Container logs:\n${logs}`);
+  
+  return false;
 }
 
 function startContainer(site, env) {

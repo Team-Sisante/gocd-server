@@ -1,0 +1,8 @@
+[
+  { "id": 1, "name": "CONTAINER MANAGEMENT" },
+  { "id": 2, "name": "PIPELINE MANAGEMENT" },
+  { "id": 3, "name": "AGENT MANAGEMENT" },
+  { "id": 4, "name": "SYSTEM UTILITIES" },
+  { "id": 5, "name": "TROUBLE-SHOOT CONTAINERS" },
+  { "id": 6, "name": "GCP VM SETUP" }
+]

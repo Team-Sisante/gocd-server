@@ -24,3 +24,4 @@ secrets/gcp-key.json
 .env.docker
 Scripts/setup-load-balancer*.log
 shared-tags/
+Scripts/health-checks/

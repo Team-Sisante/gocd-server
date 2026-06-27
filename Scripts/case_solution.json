@@ -1,0 +1,54 @@
+{
+  "cases": [
+    {
+      "id": "missing_container",
+      "description": "Web container does not exist (missing from docker ps -a)",
+      "detect": {
+        "container_status": "missing"
+      },
+      "fix_script": "fix_missing_container.js"
+    },
+    {
+      "id": "stopped_container",
+      "description": "Web container exists but is stopped (Exited state)",
+      "detect": {
+        "container_status": "stopped"
+      },
+      "fix_script": "fix_stopped_container.js"
+    },
+    {
+      "id": "collectstatic_failure",
+      "description": "HTTP 500 with TemplateSyntaxError or missing static files",
+      "detect": {
+        "http_status": 500,
+        "log_pattern": "TemplateSyntaxError|No module named"
+      },
+      "fix_script": "fix_collectstatic.js"
+    },
+    {
+      "id": "nginx_restart_needed",
+      "description": "Nginx logs show connection refused to backend",
+      "detect": {
+        "nginx_log_pattern": "connect() failed",
+        "container_restarting": true
+      },
+      "fix_script": "fix_nginx_restart.js"
+    },
+    {
+      "id": "image_pull_failed",
+      "description": "Docker pull failed due to network or missing tag",
+      "detect": {
+        "pull_error": "failed to resolve reference|TLS handshake timeout"
+      },
+      "fix_script": "fix_image_pull.js"
+    },
+    {
+      "id": "db_unreachable",
+      "description": "Database connection failure (timeout or refused)",
+      "detect": {
+        "log_pattern": "could not translate host name|Connection refused|timeout"
+      },
+      "fix_script": "fix_db_connectivity.js"
+    }
+  ]
+}

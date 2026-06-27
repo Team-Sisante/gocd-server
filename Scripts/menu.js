@@ -175,7 +175,8 @@ async function showMenu() {
       continue;
     }
 
-    const scriptPath = path.join(__dirname, 'options', `option_${choice}.js`);
+    const scriptName = `option_${choice.replace(/\./g, '_')}.js`;
+    const scriptPath = path.join(__dirname, 'options', scriptName);
     if (!fs.existsSync(scriptPath)) {
       console.log(`\x1b[31mOption script not found: option_${choice}.js\x1b[0m`);
       await pause();

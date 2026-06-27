@@ -77,5 +77,7 @@
   { "id": "6.34", "name": "Monitor certificate status", "section": 6 },
   { "id": "6.35", "name": "Show active certificate on HTTPS proxy", "section": 6 },
   { "id": "6.36", "name": "Certificate domain status (detailed)", "section": 6 },
-  { "id": "6.37", "name": "Show load balancer host rules", "section": 6 }
+  { "id": "6.37", "name": "Show load balancer host rules", "section": 6 },
+  { "id": "6.38", "name": "Reset GCP VM and run health checks", "script": "option_6_38.js", "section": 6 },
+  { "id": "6.39", "name": "Run health checks (with auto‑repair)", "script": "option_6_39.js", "section": 6 }
 ]

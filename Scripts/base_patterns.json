@@ -1,0 +1,15 @@
+[
+  "error",
+  "fail",
+  "fatal",
+  "exception",
+  "denied",
+  "caused\\s+by",
+  "invalid",
+  "wrapper stopped",
+  "gosu exited",
+  "exited with code",
+  "there are errors",
+  "could not connect",
+  "permission denied"
+]

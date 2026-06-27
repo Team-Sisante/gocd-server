@@ -16,6 +16,7 @@ const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
 const os = require('os');
+const https = require('https');   // ✅ Added
 
 // ----- Debug mode -----
 let SCRIPT_DEBUG = false;
@@ -177,14 +178,12 @@ function remoteExec(cmd) {
 
 function remoteExecSilent(cmd, env = null) {
     if (env) {
-        // We'll reuse the health-check's remoteExecWithEnv logic for env
         return remoteExecWithEnv(cmd, env);
     }
     return remoteExec(cmd);
 }
 
-// ----- Minimal implementation of fetchRequiredVars and remoteExecWithEnv -----
-// (copied from health-check for reuse)
+// ----- Helper functions (copied from health-check) -----
 function extractPlaceholders(templatePath, pattern) {
     if (!fs.existsSync(templatePath)) return [];
     const content = fs.readFileSync(templatePath, 'utf8');
@@ -225,6 +224,94 @@ function fetchRequiredVars(site) {
         gcpSecrets: [...new Set(gcpSecrets)],
         requiredVars: [...new Set(requiredVars)]
     };
+}
+
+function fetchGCPSecrets(appName, secretsList) {
+    console.log(`  Using GCP credentials from: ${process.env.GOOGLE_APPLICATION_CREDENTIALS || 'not set'}`);
+    const env = {};
+
+    if (process.env.GCP_SA_KEY_PATH) {
+        const keyPath = path.isAbsolute(process.env.GCP_SA_KEY_PATH)
+            ? process.env.GCP_SA_KEY_PATH
+            : path.join(PROJECT_ROOT, process.env.GCP_SA_KEY_PATH);
+        if (fs.existsSync(keyPath)) {
+            process.env.GOOGLE_APPLICATION_CREDENTIALS = keyPath;
+            console.log(`  🔑 Using service account: ${keyPath}`);
+        } else {
+            console.log(`  ⚠️  GCP_SA_KEY_PATH file not found: ${keyPath}`);
+        }
+    } else {
+        console.log(`  ⚠️  GCP_SA_KEY_PATH not set in environment.`);
+    }
+
+    const prefix = `${appName}_`;
+
+    for (const secret of secretsList) {
+        const fullSecretName = prefix + secret;
+        try {
+            const value = execSync(
+                `gcloud secrets versions access latest --secret="${fullSecretName}" --project=${GCP_PROJECT_ID}`,
+                { encoding: 'utf8', stdio: 'pipe' }
+            ).trim();
+            if (value) {
+                env[secret] = value;
+                console.log(`  🔐 ${secret} (from ${fullSecretName})`);
+            } else {
+                if (process.env[secret]) {
+                    env[secret] = process.env[secret];
+                    console.log(`  ℹ️  ${fullSecretName} returned empty, using process.env.${secret}: ${process.env[secret]}`);
+                } else {
+                    console.log(`  ⚠️  ${fullSecretName} empty and not in process.env.`);
+                }
+            }
+        } catch (err) {
+            console.log(`  ⚠️  ${fullSecretName} fetch failed: ${err.message}`);
+            if (err.stderr) console.log(`  stderr: ${err.stderr.toString().trim()}`);
+            if (process.env[secret]) {
+                env[secret] = process.env[secret];
+                console.log(`  ℹ️  using process.env.${secret}: ${process.env[secret]}`);
+            } else {
+                console.log(`  ⚠️  ${fullSecretName} not in process.env.`);
+            }
+        }
+    }
+    return env;
+}
+
+function fetchGitHubVars(repo, environment, token) {
+    return new Promise((resolve, reject) => {
+        const url = `https://api.github.com/repos/${repo}/environments/${environment}/variables`;
+        const options = {
+            hostname: 'api.github.com',
+            path: url,
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Accept': 'application/vnd.github+json',
+                'User-Agent': 'Node.js/health-check',
+            },
+        };
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                if (res.statusCode === 200) {
+                    try {
+                        const vars = JSON.parse(data);
+                        const env = {};
+                        vars.variables.forEach(v => { env[v.name] = v.value; });
+                        resolve(env);
+                    } catch (e) {
+                        reject(e);
+                    }
+                } else {
+                    reject(new Error(`HTTP ${res.statusCode}: ${data}`));
+                }
+            });
+        });
+        req.on('error', reject);
+        req.end();
+    });
 }
 
 function remoteExecWithEnv(cmd, env, site) {
@@ -275,6 +362,68 @@ function remoteExecWithEnv(cmd, env, site) {
     return result;
 }
 
+function remoteExecLive(cmd, env, site) {
+    const { requiredVars } = fetchRequiredVars(site);
+    const envPairs = Object.entries(env)
+        .filter(([key]) => {
+            if (!requiredVars.includes(key)) return false;
+            return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key);
+        })
+        .map(([key, value]) => `${key}=${String(value).replace(/"/g, '\\"')}`);
+
+    if (envPairs.length === 0) {
+        console.log('   No required env vars. Running command without env file.');
+        return remoteExec(cmd);
+    }
+
+    const envContent = envPairs.join('\n');
+    const tempFileLocal = path.join(os.tmpdir(), `live_env_${Date.now()}.env`);
+    const tempFileRemote = `/tmp/live_env_${Date.now()}.env`;
+
+    fs.writeFileSync(tempFileLocal, envContent, 'utf8');
+
+    const scpArgs = [
+        '-i', SSH_KEY_PATH,
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'UserKnownHostsFile=/dev/null',
+        '-o', 'ConnectTimeout=15',
+        '-o', 'LogLevel=ERROR',
+        tempFileLocal,
+        `${SSH_USER}@${VM_IP}:${tempFileRemote}`
+    ];
+    try {
+        execFileSync('scp', scpArgs, { stdio: 'pipe' });
+        if (SCRIPT_DEBUG) console.log(`   ✅ Copied env file to VM: ${tempFileRemote}`);
+    } catch (err) {
+        console.error(`   ❌ Failed to copy env file to VM: ${err.message}`);
+        try { fs.unlinkSync(tempFileLocal); } catch (_) {}
+        return { success: false, output: err.message };
+    }
+
+    try { fs.unlinkSync(tempFileLocal); } catch (_) {}
+
+    const fullCmd = cmd.replace(/(docker compose(?:-)?)/, `$1 --env-file ${tempFileRemote}`);
+    try {
+        const args = [
+            '-i', SSH_KEY_PATH,
+            '-o', 'StrictHostKeyChecking=no',
+            '-o', 'UserKnownHostsFile=/dev/null',
+            '-o', 'ConnectTimeout=15',
+            '-o', 'LogLevel=ERROR',
+            '-o', 'KexAlgorithms=+diffie-hellman-group14-sha256',
+            `${SSH_USER}@${VM_IP}`,
+            fullCmd,
+        ];
+        execFileSync('ssh', args, { stdio: 'inherit' });
+        remoteExec(`rm -f ${tempFileRemote}`);
+        return { success: true };
+    } catch (err) {
+        console.error(`   ❌ Command failed: ${err.message}`);
+        remoteExec(`rm -f ${tempFileRemote}`);
+        return { success: false, output: err.message };
+    }
+}
+
 // ----- Fetch variables for a site (same as health-check's fetchAllVars) -----
 async function fetchAllVars(site) {
     const { appName, target, templateDir } = site;
@@ -282,15 +431,31 @@ async function fetchAllVars(site) {
 
     const env = {};
 
-    // Fetch from GCP and GitHub (simplified – we can reuse the logic from health-check)
-    // For brevity, we'll assume the env is already in the report or we can fetch again.
-    // We'll just use process.env and local files as fallback for treatment.
-    // A proper implementation would call the full fetch logic, but we'll keep it minimal.
+    console.log(`📦 Fetching variables for ${appName} (${target})...`);
 
-    // Reuse the fetch logic from health-check by importing or copying.
-    // Since we are in a separate file, we'll copy the necessary parts or just rely on the report's env? Actually we need env to run compose commands.
-    // We'll implement a simplified fetch that reads local .env files.
-    const envObj = { ...process.env };
+    // 1. GCP secrets
+    if (GCP_PROJECT_ID) {
+        console.log('  Fetching GCP secrets...');
+        const { gcpSecrets } = fetchRequiredVars(site);
+        const secrets = fetchGCPSecrets(appName, gcpSecrets);
+        Object.assign(env, secrets);
+        console.log(`  Added ${Object.keys(secrets).length} secrets from GCP.`);
+    }
+
+    // 2. GitHub Environment variables
+    if (GITHUB_TOKEN) {
+        console.log('  Fetching GitHub Environment variables...');
+        try {
+            const githubVars = await fetchGitHubVars(repo, target, GITHUB_TOKEN);
+            Object.assign(env, githubVars);
+            console.log(`  Added ${Object.keys(githubVars).length} variables from GitHub.`);
+        } catch (e) {
+            console.log(`  ⚠️  Failed to fetch GitHub variables: ${e.message}`);
+        }
+    }
+
+    // 3. Fallback: read local .env files (ONLY for variables that are still missing)
+    console.log('  Reading local .env files as fallback...');
     const localEnvFiles = [
         path.join(templateDir, `.env.${target}`),
         path.join(templateDir, '.env.common')
@@ -299,6 +464,7 @@ async function fetchAllVars(site) {
         if (fs.existsSync(file)) {
             const content = fs.readFileSync(file, 'utf8');
             const lines = content.split('\n');
+            let loaded = 0;
             for (const line of lines) {
                 const trimmed = line.trim();
                 if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
@@ -308,14 +474,40 @@ async function fetchAllVars(site) {
                     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
                         value = value.slice(1, -1);
                     }
-                    if (!envObj[key]) {
-                        envObj[key] = value;
+                    if (!env[key]) {
+                        env[key] = value;
+                        loaded++;
                     }
                 }
             }
+            if (loaded > 0) {
+                console.log(`  Loaded ${loaded} variables from local ${path.basename(file)}`);
+            }
         }
     }
-    return envObj;
+
+    // 4. DO NOT merge process.env – it contains system variables that override
+    // (We'll skip that to keep values from local files)
+
+    // 5. Ensure IMAGE_TAG is set (if still missing)
+    if (!env.IMAGE_TAG) {
+        env.IMAGE_TAG = 'latest';
+        console.log(`  IMAGE_TAG set to: ${env.IMAGE_TAG}`);
+    }
+
+    // 6. Remove internal Node variables (already filtered in health-check)
+    const internalPrefixes = ['npm_', 'TERM_', 'XDG_', 'SSH_', 'LC_', 'LS_COLORS', 'DBUS_', 'DISPLAY', 'LANGUAGE', 'WINDOW', 'COLORTERM', 'PAGER', 'EDITOR', 'VISUAL'];
+    const internalKeys = ['PATH', 'HOME', 'PWD', 'SHELL', 'HOSTNAME', '_', 'OLDPWD', 'SHLVL', 'LOGNAME', 'USER', 'TERM', 'LANG', 'MAIL', 'PROMPT_COMMAND', 'PS1', 'PS2', 'PS4', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'TERM_SESSION_ID', 'WINDOWID'];
+    for (const key of Object.keys(env)) {
+        if (internalKeys.includes(key) || internalPrefixes.some(p => key.startsWith(p))) {
+            delete env[key];
+        }
+    }
+
+    console.log(`  Final variable count: ${Object.keys(env).length}`);
+    console.log(`  POSTGRES_HOST = ${env.POSTGRES_HOST || 'MISSING'}`);
+
+    return env;
 }
 
 // ----- Repair functions (same as health-check) -----
@@ -363,7 +555,7 @@ function repairNginx(nginxContainer) {
 
 function ensureImagesExist(site, env) {
     const { composeDir, composeFile, project, profile, webServiceName } = site;
-    const composeCmd = 'docker compose'; // assume available, could detect
+    const composeCmd = 'docker compose';
     console.log(`   → Ensuring images are up-to-date via compose pull...`);
     const pullCmd = `cd ${composeDir} && docker compose -p ${project} -f ${composeFile} --profile ${profile} pull ${webServiceName} 2>&1`;
     const result = remoteExecLive(pullCmd, env, site);
@@ -389,21 +581,43 @@ function recreateContainer(site, env) {
     console.log(`   ✅ Compose file is valid.`);
 
     console.log(`   → Recreating ${webContainer} via compose (service ${webServiceName})...`);
-    let cmd = `cd ${composeDir} && docker compose -p ${project} -f ${composeFile} --profile ${profile} up ${webServiceName} 2>&1`;
+    // 👇 THIS IS THE FIRST LINE
+    let cmd = `cd ${composeDir} && docker compose -p ${project} -f ${composeFile} --profile ${profile} up -d ${webServiceName} 2>&1`;
     let result = remoteExecLive(cmd, env, site);
 
     if (result.output) console.log(`   Output:\n${result.output}`);
     if (result.success) {
-        console.log(`   ✅ ${webContainer} started.`);
+        console.log(`   ✅ ${webContainer} started (detached).`);
+        // Wait a bit for the container to settle
+        execSync('sleep 5', { stdio: 'pipe' });
+        // Verify container is running
+        const status = getContainerStatus(site);
+        if (!status.running) {
+            console.log(`   ⚠️  Container not running after start. Logs:`);
+            const logs = getContainerLogs(webContainer);
+            if (logs) console.log(logs);
+            return false;
+        }
+        console.log(`   ✅ ${webContainer} is running.`);
         return true;
     }
 
     console.log(`   → Single service up failed. Trying full project...`);
-    cmd = `cd ${composeDir} && docker compose -p ${project} -f ${composeFile} --profile ${profile} up 2>&1`;
+    // 👇 THIS IS THE SECOND LINE
+    cmd = `cd ${composeDir} && docker compose -p ${project} -f ${composeFile} --profile ${profile} up -d 2>&1`;
     result = remoteExecWithEnv(cmd, env, site);
     if (result.output) console.log(`   Output:\n${result.output}`);
     if (result.success) {
         console.log(`   ✅ Full project started.`);
+        execSync('sleep 5', { stdio: 'pipe' });
+        const status = getContainerStatus(site);
+        if (!status.running) {
+            console.log(`   ⚠️  Container not running after full start. Logs:`);
+            const logs = getContainerLogs(webContainer);
+            if (logs) console.log(logs);
+            return false;
+        }
+        console.log(`   ✅ ${webContainer} is running.`);
         return true;
     }
 
@@ -440,70 +654,17 @@ function updateHealthCheckTimeout(healthCheck) {
     }
 }
 
-function remoteExecLive(cmd, env, site) {
-    // Write env file
-    const { requiredVars } = fetchRequiredVars(site);
-    const envPairs = Object.entries(env)
-        .filter(([key]) => {
-            if (!requiredVars.includes(key)) return false;
-            return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key);
-        })
-        .map(([key, value]) => `${key}=${String(value).replace(/"/g, '\\"')}`);
-
-    if (envPairs.length === 0) {
-        console.log('   No required env vars. Running command without env file.');
-        return remoteExec(cmd);
+function getContainerStatus(site) {
+    const { webContainer } = site;
+    const cmd = `sudo docker ps -a --filter name=${webContainer} --format '{{.Status}}'`;
+    const result = remoteExecSilent(cmd);
+    if (!result.success || !result.output) {
+        return { exists: false, running: false, status: null };
     }
-
-    const envContent = envPairs.join('\n');
-    const tempFileLocal = path.join(os.tmpdir(), `live_env_${Date.now()}.env`);
-    const tempFileRemote = `/tmp/live_env_${Date.now()}.env`;
-
-    fs.writeFileSync(tempFileLocal, envContent, 'utf8');
-
-    const scpArgs = [
-        '-i', SSH_KEY_PATH,
-        '-o', 'StrictHostKeyChecking=no',
-        '-o', 'UserKnownHostsFile=/dev/null',
-        '-o', 'ConnectTimeout=15',
-        '-o', 'LogLevel=ERROR',
-        tempFileLocal,
-        `${SSH_USER}@${VM_IP}:${tempFileRemote}`
-    ];
-    try {
-        execFileSync('scp', scpArgs, { stdio: 'pipe' });
-        if (SCRIPT_DEBUG) console.log(`   ✅ Copied env file to VM: ${tempFileRemote}`);
-    } catch (err) {
-        console.error(`   ❌ Failed to copy env file to VM: ${err.message}`);
-        try { fs.unlinkSync(tempFileLocal); } catch (_) {}
-        return { success: false, output: err.message };
-    }
-
-    try { fs.unlinkSync(tempFileLocal); } catch (_) {}
-
-    // Inject --env-file into the command
-    const fullCmd = cmd.replace(/(docker compose(?:-)?)/, `$1 --env-file ${tempFileRemote}`);
-    // Run with stdio: 'inherit' to stream output live
-    try {
-        const args = [
-            '-i', SSH_KEY_PATH,
-            '-o', 'StrictHostKeyChecking=no',
-            '-o', 'UserKnownHostsFile=/dev/null',
-            '-o', 'ConnectTimeout=15',
-            '-o', 'LogLevel=ERROR',
-            '-o', 'KexAlgorithms=+diffie-hellman-group14-sha256',
-            `${SSH_USER}@${VM_IP}`,
-            fullCmd,
-        ];
-        execFileSync('ssh', args, { stdio: 'inherit' });
-        // Clean up remote file
-        remoteExec(`rm -f ${tempFileRemote}`);
-        return { success: true };
-    } catch (err) {
-        console.error(`   ❌ Command failed: ${err.message}`);
-        remoteExec(`rm -f ${tempFileRemote}`);
-        return { success: false, output: err.message };
-    }
+    const status = result.output.trim();
+    const running = status.includes('Up');
+    const unhealthy = status.includes('unhealthy');
+    return { exists: true, running, unhealthy, status };
 }
 
 // ----- Main treatment -----
@@ -514,7 +675,6 @@ async function main() {
         console.log('🐞 Debug mode enabled.');
     }
 
-    // Read report
     if (!fs.existsSync(REPORT_FILE)) {
         console.error('❌ No health report found. Run health-check (menu 6.39) first.');
         process.exit(1);
@@ -540,7 +700,6 @@ async function main() {
         process.exit(0);
     }
 
-    // Apply fixes for each site
     for (const siteEntry of unhealthySites) {
         const site = SITES.find(s => s.id === siteEntry.id);
         if (!site) {
@@ -580,7 +739,9 @@ async function main() {
                     remoteExecSilent,
                     remoteExecWithEnv,
                     remoteExec,
-                    // ... (other helpers needed)
+                    remoteExecLive,
+                    fetchAllVars,
+                    getContainerStatus,
                 };
                 const result = await fixFunction(site, env, helpers);
                 if (result) {
@@ -595,16 +756,13 @@ async function main() {
             }
         }
 
-        // Update report entry
         siteEntry.treated_at = new Date().toISOString();
         siteEntry.treatment_status = allFixed ? 'TREATED' : 'PARTIAL';
-        siteEntry.status = allFixed ? 'HEALTHY' : 'UNHEALTHY'; // assume fixed if all successful
+        siteEntry.status = allFixed ? 'HEALTHY' : 'UNHEALTHY';
     }
 
-    // Write updated report
     fs.writeFileSync(REPORT_FILE, JSON.stringify(report, null, 2), 'utf8');
     console.log(`\n📄 Report updated: ${REPORT_FILE}`);
-
     console.log('\n✅ Treatment complete.');
 }
 

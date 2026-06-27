@@ -86,6 +86,7 @@ const dotenv = require('dotenv');
 dotenv.config({ path: path.join(__dirname, '..', '.env.docker') });
 
 console.log(`📝 Logging to: ${logFilePath}`);
+console.log('GCP_SA_KEY_PATH from env:', process.env.GCP_SA_KEY_PATH);
 
 // ----- Load case_solution.json -----
 let caseSolutions = { cases: [] };
@@ -265,62 +266,57 @@ function fetchRequiredVars(site) {
 
 // ----- Helper: fetch secrets from GCP (with app prefix) -----
 function fetchGCPSecrets(appName, secretsList) {
+  console.log(`  Using GCP credentials from: ${process.env.GOOGLE_APPLICATION_CREDENTIALS || 'not set'}`);  
   const env = {};
-  const prefix = `${appName}_`;
 
-  // 1. Authenticate gcloud if GCP_SA_KEY_PATH is set (same as deploy.js)
+  // ----- Set up GCP credentials -----
   if (process.env.GCP_SA_KEY_PATH) {
-    try {
-      const keyPath = path.isAbsolute(process.env.GCP_SA_KEY_PATH)
-        ? process.env.GCP_SA_KEY_PATH
-        : path.join(PROJECT_ROOT, process.env.GCP_SA_KEY_PATH);
-      if (fs.existsSync(keyPath)) {
-        console.log('  🔑 Authenticating gcloud with service account...');
-        execSync(`gcloud auth activate-service-account --key-file="${keyPath}" --project=${GCP_PROJECT_ID}`, {
-          stdio: 'pipe',
-          encoding: 'utf8'
-        });
-      } else {
-        console.log(`  ⚠️  Service account key file not found: ${keyPath}`);
-      }
-    } catch (e) {
-      console.log(`  ⚠️  Failed to authenticate gcloud: ${e.message}`);
+    const keyPath = path.isAbsolute(process.env.GCP_SA_KEY_PATH)
+      ? process.env.GCP_SA_KEY_PATH
+      : path.join(PROJECT_ROOT, process.env.GCP_SA_KEY_PATH);
+    if (fs.existsSync(keyPath)) {
+      process.env.GOOGLE_APPLICATION_CREDENTIALS = keyPath;
+      console.log(`  🔑 Using service account: ${keyPath}`);
+    } else {
+      console.log(`  ⚠️  GCP_SA_KEY_PATH file not found: ${keyPath}`);
     }
   } else {
-    // Fallback: try to use application default credentials
-    try {
-      execSync('gcloud auth application-default login --quiet', { stdio: 'pipe', encoding: 'utf8' });
-    } catch (e) {
-      console.log('  ⚠️  No GCP_SA_KEY_PATH set and application-default login failed.');
-    }
+    console.log(`  ⚠️  GCP_SA_KEY_PATH not set in environment.`);
   }
 
-  // 2. Fetch secrets
+  const prefix = `${appName}_`;
+
   for (const secret of secretsList) {
     const fullSecretName = prefix + secret;
     try {
+      // Remove 2>/dev/null to see the actual error
       const value = execSync(
-        `gcloud secrets versions access latest --secret="${fullSecretName}" --project=${GCP_PROJECT_ID} 2>/dev/null`,
+        `gcloud secrets versions access latest --secret="${fullSecretName}" --project=${GCP_PROJECT_ID}`,
         { encoding: 'utf8', stdio: 'pipe' }
       ).trim();
       if (value) {
         env[secret] = value;
         console.log(`  🔐 ${secret} (from ${fullSecretName})`);
       } else {
-        // Fallback to process.env
+        // If value is empty (shouldn't happen), fallback
         if (process.env[secret]) {
           env[secret] = process.env[secret];
-          console.log(`  ℹ️  ${fullSecretName} empty, using process.env.${secret}: ${process.env[secret]}`);
+          console.log(`  ℹ️  ${fullSecretName} returned empty, using process.env.${secret}: ${process.env[secret]}`);
         } else {
           console.log(`  ⚠️  ${fullSecretName} empty and not in process.env.`);
         }
       }
     } catch (err) {
+      // Log the full error message for debugging
+      console.log(`  ⚠️  ${fullSecretName} fetch failed: ${err.message}`);
+      // Also print stderr if available
+      if (err.stderr) console.log(`  stderr: ${err.stderr.toString().trim()}`);
+      // Fallback to process.env
       if (process.env[secret]) {
         env[secret] = process.env[secret];
-        console.log(`  ℹ️  ${fullSecretName} not found, using process.env.${secret}: ${process.env[secret]}`);
+        console.log(`  ℹ️  using process.env.${secret}: ${process.env[secret]}`);
       } else {
-        console.log(`  ⚠️  ${fullSecretName} not found (GCP fetch failed) and not in process.env.`);
+        console.log(`  ⚠️  ${fullSecretName} not in process.env.`);
       }
     }
   }

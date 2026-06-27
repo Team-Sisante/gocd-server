@@ -34,7 +34,7 @@
   { "id": "4.10", "name": "Update .env.docker password from GoCD container", "section": 4 },
   { "id": "4.11", "name": "Display & test GoCD admin credentials", "section": 4 },
   { "id": "4.12", "name": "Create SSL certs", "section": 4 },
-
+  
   { "id": "5.1", "name": "Rebuild and Re-start gocd-server container", "section": 5 },
   { "id": "5.2", "name": "Rebuild and Re-start gocd-agent-1 container", "section": 5 },
   { "id": "5.3", "name": "Rebuild and Re-start gocd-agent-2 container", "section": 5 },

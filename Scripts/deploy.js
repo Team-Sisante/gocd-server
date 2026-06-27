@@ -2,16 +2,28 @@
 /**
  * deploy.js – Unified staging / production deployment for all Django apps.
  *
- * Runs on the GoCD agent. Loads required variables from GitHub Environments
- * and GCP Secret Manager. A temporary .env file is created, used, and deleted
- * immediately – no secrets remain on the VM.
+ * Runs on the GoCD agent. It:
+ * 1. Loads required variables from GitHub Environments and GCP Secret Manager
+ *    into the process environment (on the agent).
+ * 2. Validates that all required variables are present.
+ * 3. Copies necessary deployment files (docker-compose.vm.yml, nginx configs,
+ *    certificates, etc.) to the target VM via SCP.
+ * 4. Determines the correct image tag (from artifacts shared file or GHCR).
+ * 5. Pulls the target image on the VM, stops and removes the old web container.
+ * 6. Injects all environment variables into the remote shell via `export`
+ *    commands, then runs `docker compose up -d` with the new image.
+ * 7. After deployment, updates the GCP health check to use the correct host
+ *    and timeout/interval settings.
+ * 8. Verifies that the POSTE_PROTOCOL variable is present inside the container.
+ *
+ * No secrets are written to disk on the target VM; they are passed directly
+ * via environment variables in the remote SSH command.
  *
  * Usage:
  *   node deploy.js <app_name> <target> <github_token>
  *   app_name:   badminton_court | humrine_site
  *   target:     staging | production
  */
-
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');

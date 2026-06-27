@@ -810,7 +810,8 @@ function getContainerStatus(site) {
     }
     const status = result.output.trim();
     const running = status.includes('Up');
-    return { exists: true, running, status };
+    const unhealthy = status.includes('unhealthy');
+    return { exists: true, running, unhealthy, status };
 }
 
 function getNginxLogs(nginxContainer, lines = 20) {
@@ -843,6 +844,8 @@ function detectCase(siteStatus, logs, nginxLogs, env) {
             const status = detect.container_status;
             if (status === 'missing' && siteStatus.containerExists) matches = false;
             if (status === 'stopped' && (siteStatus.containerRunning || !siteStatus.containerExists)) matches = false;
+            if (status === 'running' && !siteStatus.containerRunning) matches = false;
+            if (status === 'unhealthy' && !siteStatus.containerUnhealthy) matches = false;
         }
         if (detect.http_status && siteStatus.httpStatus !== detect.http_status) matches = false;
         if (detect.log_pattern && logs) {
@@ -891,6 +894,7 @@ async function checkAndRepair(site, fix) {
     const siteStatus = {
         containerExists: containerInfo.exists,
         containerRunning: containerInfo.running,
+        containerUnhealthy: containerInfo.unhealthy || false,
         containerRestarting: containerInfo.exists && !containerInfo.running && containerInfo.status && containerInfo.status.includes('Restarting'),
         httpStatus,
         gcpHealthy,

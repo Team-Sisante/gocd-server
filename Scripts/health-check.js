@@ -34,7 +34,7 @@ const fs = require('fs');
 const https = require('https');
 
 // ----- Setup logging -----
-const LOG_DIR = __dirname; // Scripts/ directory
+const LOG_DIR = path.join(__dirname, "health-check"); // Scripts/ directory
 const now = new Date();
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const monthAbbr = months[now.getMonth()];
@@ -113,6 +113,7 @@ if (!GCP_PROJECT_ID) {
 // ----- Sites Configuration -----
 const SITES = [
     {
+        id: 'humrine-staging',
         appName: 'humrine_site',
         name: 'Humrine Staging',
         backend: 'humrine-staging-backend',
@@ -130,6 +131,7 @@ const SITES = [
         templateDir: path.join(PROJECT_ROOT, 'humrine_site'),
     },
     {
+        id: 'humrine-production',
         appName: 'humrine_site',
         name: 'Humrine Production',
         backend: 'humrine-backend',
@@ -147,6 +149,7 @@ const SITES = [
         templateDir: path.join(PROJECT_ROOT, 'humrine_site'),
     },
     {
+        id: 'badminton-staging',
         appName: 'badminton_court',
         name: 'Badminton Staging',
         backend: 'court-staging-backend',
@@ -164,6 +167,7 @@ const SITES = [
         templateDir: path.join(PROJECT_ROOT, 'badminton_court'),
     },
     {
+        id: 'badminton-production',
         appName: 'badminton_court',
         name: 'Badminton Production',
         backend: 'court-backend',
@@ -181,6 +185,49 @@ const SITES = [
         templateDir: path.join(PROJECT_ROOT, 'badminton_court'),
     },
 ];
+
+async function selectSites(args) {
+  const allIds = SITES.map(s => s.id);
+  // Check if --all is passed
+  if (args.includes('--all')) return SITES;
+
+    if (args.includes('--help') || args.includes('-h')) {
+        console.log(`Usage: node health-check.js [options] [site-id ...]
+Options:
+  --fix         Automatically repair issues
+  --all         Run all sites (default if no selection)
+  --help        Show this help
+
+Site IDs:
+${SITES.map(s => `  ${s.id}`).join('\n')}`);
+        process.exit(0);
+    }
+  // Check for specific site IDs in args
+  const requested = args.filter(arg => allIds.includes(arg));
+  if (requested.length > 0) {
+    return SITES.filter(s => requested.includes(s.id));
+  }
+
+  // Interactive selection
+  console.log('\nAvailable sites:');
+  SITES.forEach((s, idx) => {
+    console.log(`  ${idx + 1}. ${s.name} (${s.id})`);
+  });
+  console.log('  a. All sites');
+  console.log('  q. Quit\n');
+
+  const answer = ask('Enter numbers (comma-separated, e.g., 1,3) or "a" for all: ');
+  if (answer.toLowerCase() === 'q') process.exit(0);
+  if (answer.toLowerCase() === 'a') return SITES;
+
+  const indices = answer.split(',').map(n => parseInt(n.trim()));
+  const selected = indices.filter(i => i >= 1 && i <= SITES.length).map(i => SITES[i - 1]);
+  if (selected.length === 0) {
+    console.log('No valid selection. Running all sites.');
+    return SITES;
+  }
+  return selected;
+}
 
 // ----- Helper: extract <?secret?> and <?var?> from template files -----
 function extractPlaceholders(templatePath, pattern) {
@@ -669,158 +716,169 @@ function detectCase(siteStatus, logs, nginxLogs, env) {
 
 // ----- Main check and repair -----
 async function checkAndRepair(site, fix) {
-    const { name, backend, webContainer, nginxContainer, url, gcpHealthCheck } = site;
+  const { name, backend, webContainer, url } = site;
 
-    // Fetch environment variables once for this site
-    const env = await fetchAllVars(site);
-    if (Object.keys(env).length === 0) {
-        console.log(`❌ No environment variables fetched for ${name}. Aborting repair.`);
-        return false;
+  // Fetch env (only once per site)
+  const env = await fetchAllVars(site);
+  if (Object.keys(env).length === 0) {
+    console.log(`❌ No environment variables fetched for ${name}. Aborting.`);
+    return false;
+  }
+
+  console.log(`\n🔍 Checking ${name} (${backend})...`);
+
+  // 1. Gather status
+  const gcpHealth = runGcloud(backend);
+  const gcpHealthy = gcpHealth && gcpHealth.includes('HEALTHY');
+  console.log(`   → GCP backend: ${gcpHealthy ? '✅ HEALTHY' : '❌ UNHEALTHY'}`);
+
+  const containerInfo = getContainerStatus(site);
+  console.log(`   → Container ${webContainer}: ${containerInfo.exists ? containerInfo.status : 'MISSING'}`);
+
+  const httpStatus = checkSiteResponse(url, name);
+  const siteOK = httpStatus !== null && httpStatus >= 200 && httpStatus < 400;
+
+  const logs = getContainerLogs(webContainer);
+  const nginxLogs = site.nginxContainer ? getNginxLogs(site.nginxContainer) : null;
+
+  const siteStatus = {
+    containerExists: containerInfo.exists,
+    containerRunning: containerInfo.running,
+    containerRestarting: containerInfo.exists && !containerInfo.running && containerInfo.status && containerInfo.status.includes('Restarting'),
+    httpStatus,
+    gcpHealthy,
+    logs,
+    nginxLogs,
+  };
+
+  // 2. Detect all matching cases
+  const detectedCases = [];
+  for (const caseDef of caseSolutions.cases) {
+    const detect = caseDef.detect;
+    let matches = true;
+
+    if (detect.container_status) {
+      const status = detect.container_status;
+      if (status === 'missing' && siteStatus.containerExists) matches = false;
+      if (status === 'stopped' && (siteStatus.containerRunning || !siteStatus.containerExists)) matches = false;
     }
-
-    console.log(`\n🔍 Checking ${name} (${backend})...`);
-
-    // 1. GCP backend health
-    const health = runGcloud(backend);
-    const gcpHealthy = health && health.includes('HEALTHY');
-    console.log(`   → GCP backend: ${gcpHealthy ? '✅ HEALTHY' : '❌ UNHEALTHY'}`);
-
-    // 2. Container status
-    const containerInfo = getContainerStatus(site);
-    const containerExists = containerInfo.exists;
-    const containerRunning = containerInfo.running;
-    console.log(`   → Container ${webContainer}: ${containerExists ? containerInfo.status : 'MISSING'}`);
-
-    // 3. Site response
-    const httpStatus = checkSiteResponse(url, name);
-    const siteOK = httpStatus !== null && httpStatus >= 200 && httpStatus < 400;
-
-    // 4. Get logs (for detection)
-    const logs = getContainerLogs(webContainer);
-    const nginxLogs = nginxContainer ? getNginxLogs(nginxContainer) : null;
-
-    // 5. Build status object for case detection
-    const siteStatus = {
-        containerExists,
-        containerRunning,
-        containerRestarting: containerExists && !containerRunning && containerInfo.status && containerInfo.status.includes('Restarting'),
-        httpStatus,
-        gcpHealthy,
-        pullError: null, // we don't have this in the current check, but could be extended
-    };
-
-    if (siteOK && gcpHealthy && containerRunning) {
-        console.log(`   ✅ Site is fully healthy.`);
-        return true;
+    if (detect.http_status && siteStatus.httpStatus !== detect.http_status) matches = false;
+    if (detect.log_pattern && siteStatus.logs) {
+      const regex = new RegExp(detect.log_pattern, 'i');
+      if (!regex.test(siteStatus.logs)) matches = false;
     }
-
-    if (!fix) {
-        console.log(`   ℹ️  Use --fix to attempt repairs.`);
-        return false;
+    if (detect.nginx_log_pattern && siteStatus.nginxLogs) {
+      const regex = new RegExp(detect.nginx_log_pattern, 'i');
+      if (!regex.test(siteStatus.nginxLogs)) matches = false;
     }
+    if (detect.container_restarting && !siteStatus.containerRestarting) matches = false;
 
-    // ----- Detect case -----
-    const matchedCase = detectCase(siteStatus, logs, nginxLogs, env);
-    if (matchedCase) {
-        console.log(`   🔍 Detected case: ${matchedCase.description} (${matchedCase.id})`);
-        const fixScriptPath = path.join(__dirname, 'fixes', matchedCase.fix_script);
-        if (fs.existsSync(fixScriptPath)) {
-            try {
-                const fixFunction = require(fixScriptPath);
-                const helpers = {
-                    recreateContainer,
-                    startContainer,
-                    repairCollectStatic,
-                    repairNginx,
-                    ensureImagesExist,
-                    updateHealthCheckTimeout,
-                    getContainerLogs,
-                    remoteExecSilent,
-                    remoteExecWithEnv,
-                    remoteExec,
-                    buildExportString,
-                };
-                const result = await fixFunction(site, env, helpers);
-                if (result) {
-                    console.log(`   ✅ Fix applied successfully.`);
-                } else {
-                    console.log(`   ❌ Fix failed.`);
-                }
-            } catch (err) {
-                console.error(`   ❌ Error executing fix script: ${err.message}`);
-            }
+    if (matches) detectedCases.push(caseDef);
+  }
+
+  if (detectedCases.length === 0) {
+    console.log(`   ✅ No issues detected.`);
+    return true;
+  }
+
+  console.log(`   🔍 Detected ${detectedCases.length} issue(s):`);
+  detectedCases.forEach(c => console.log(`     - ${c.description} (${c.id})`));
+
+  // 3. If --fix is not provided, just report
+  if (!fix) {
+    console.log(`   ℹ️  Use --fix to attempt repairs.`);
+    return false;
+  }
+
+  // 4. Apply fixes in order (case order as in JSON)
+  let allFixed = true;
+  for (const caseDef of detectedCases) {
+    const fixScriptPath = path.join(__dirname, 'fixes', caseDef.fix_script);
+    if (fs.existsSync(fixScriptPath)) {
+      console.log(`   🔧 Applying fix for ${caseDef.id}...`);
+      try {
+        const fixFunction = require(fixScriptPath);
+        const helpers = {
+          recreateContainer,
+          startContainer,
+          repairCollectStatic,
+          repairNginx,
+          ensureImagesExist,
+          updateHealthCheckTimeout,
+          getContainerLogs,
+          remoteExecSilent,
+          remoteExecWithEnv,
+          remoteExec,
+          buildExportString,
+          getContainerStatus,
+          checkSiteResponse,
+          runGcloud,
+        };
+        const result = await fixFunction(site, env, helpers);
+        if (result) {
+          console.log(`   ✅ Fix applied successfully.`);
         } else {
-            console.log(`   ⚠️  Fix script not found: ${fixScriptPath}`);
-            // Fallback to generic repair (existing logic)
-            console.log(`   → Falling back to generic repair...`);
-            await genericRepair(site, env);
+          console.log(`   ❌ Fix failed for ${caseDef.id}.`);
+          allFixed = false;
         }
+      } catch (err) {
+        console.error(`   ❌ Error executing fix script: ${err.message}`);
+        allFixed = false;
+      }
     } else {
-        console.log(`   ⚠️  No matching case found. Falling back to generic repair...`);
-        await genericRepair(site, env);
+      console.log(`   ⚠️  Fix script not found: ${fixScriptPath}`);
+      allFixed = false;
     }
+  }
 
-    // ----- Wait and re-check -----
-    console.log(`   ⏳ Waiting 30 seconds for services to settle...`);
-    execSync('sleep 30', { stdio: 'pipe' });
+  // 5. Wait and re-check
+  console.log(`   ⏳ Waiting 30 seconds for services to settle...`);
+  execSync('sleep 30', { stdio: 'pipe' });
 
-    // Re-check GCP
-    const recheckGCP = runGcloud(backend);
-    const gcpOK = recheckGCP && recheckGCP.includes('HEALTHY');
-    console.log(`   → GCP after repair: ${gcpOK ? '✅ HEALTHY' : '❌ UNHEALTHY'}`);
+  // Re-check GCP
+  const recheckGCP = runGcloud(backend);
+  const gcpOK = recheckGCP && recheckGCP.includes('HEALTHY');
+  console.log(`   → GCP after repair: ${gcpOK ? '✅ HEALTHY' : '❌ UNHEALTHY'}`);
 
-    // Re-check site
-    const newStatus = checkSiteResponse(url, name);
-    const newOK = newStatus !== null && newStatus >= 200 && newStatus < 400;
-    console.log(`   → Site after repair: ${newOK ? `✅ HTTP ${newStatus}` : `❌ HTTP ${newStatus}`}`);
+  // Re-check site
+  const newStatus = checkSiteResponse(url, name);
+  const newOK = newStatus !== null && newStatus >= 200 && newStatus < 400;
+  console.log(`   → Site after repair: ${newOK ? `✅ HTTP ${newStatus}` : `❌ HTTP ${newStatus}`}`);
 
-    if (gcpOK && newOK) {
-        console.log(`   ✅ Site is now HEALTHY.`);
-        return true;
-    } else {
-        console.log(`   ❌ Site is still UNHEALTHY after repairs.`);
-        const logsAfter = getContainerLogs(webContainer);
-        if (logsAfter) console.log(`   Recent logs:\n${logsAfter}`);
-        return false;
-    }
+  if (gcpOK && newOK) {
+    console.log(`   ✅ Site is now HEALTHY.`);
+    return true;
+  } else {
+    console.log(`   ❌ Site is still UNHEALTHY after repairs.`);
+    const logsAfter = getContainerLogs(webContainer);
+    if (logsAfter) console.log(`   Recent logs:\n${logsAfter}`);
+    return false;
+  }
 }
-
-// ----- Generic repair (fallback) -----
-async function genericRepair(site, env) {
-    console.log(`   → Running generic repair...`);
-    await ensureImagesExist(site, env);
-    const status = getContainerStatus(site);
-    if (!status.exists) {
-        await recreateContainer(site, env);
-    } else if (!status.running) {
-        await startContainer(site, env);
-    }
-    await repairCollectStatic(site, env);
-    if (site.nginxContainer) await repairNginx(site.nginxContainer);
-    updateHealthCheckTimeout(site.gcpHealthCheck);
-}
-
+ 
 // ----- Main -----
 async function main() {
-    const args = process.argv.slice(2);
-    const fix = args.includes('--fix');
+  const args = process.argv.slice(2);
+  const fix = args.includes('--fix');
+  const selectedSites = await selectSites(args);
 
-    console.log(`🏥 Running health checks${fix ? ' with auto-repair' : ''}...\n`);
+  console.log(`🏥 Running health checks${fix ? ' with auto-repair' : ''}...`);
+  console.log(`📋 Selected sites: ${selectedSites.map(s => s.name).join(', ')}\n`);
 
-    let allHealthy = true;
-    for (const site of SITES) {
-        const ok = await checkAndRepair(site, fix);
-        if (!ok) allHealthy = false;
-    }
+  let allHealthy = true;
+  for (const site of selectedSites) {
+    const ok = await checkAndRepair(site, fix);
+    if (!ok) allHealthy = false;
+  }
 
-    console.log('\n' + '='.repeat(50));
-    if (allHealthy) {
-        console.log('✅ All sites are HEALTHY.');
-        process.exit(0);
-    } else {
-        console.log('❌ Some sites are UNHEALTHY. Please investigate further.');
-        process.exit(1);
-    }
+  console.log('\n' + '='.repeat(50));
+  if (allHealthy) {
+    console.log('✅ All selected sites are HEALTHY.');
+    process.exit(0);
+  } else {
+    console.log('❌ Some selected sites are UNHEALTHY. Please investigate further.');
+    process.exit(1);
+  }
 }
 
 main().catch(err => {

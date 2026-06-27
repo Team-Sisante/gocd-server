@@ -33,6 +33,7 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const readline = require('readline');
+const os = require('os');
 
 // ----- Setup logging -----
 const LOG_DIR = path.join(__dirname, "health-checks"); // Scripts/health-checks/ directory
@@ -190,48 +191,60 @@ const SITES = [
 
 // ----- Interactive prompt (using readline) -----
 function ask(question) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-  return new Promise(resolve => {
-    rl.question(question, answer => {
-      rl.close();
-      resolve(answer.trim());
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
     });
-  });
+    return new Promise(resolve => {
+        rl.question(question, answer => {
+            rl.close();
+            resolve(answer.trim());
+        });
+    });
 }
+
+function detectComposeCommand() {
+  // Try 'docker compose' first (newer), fallback to 'docker-compose'
+  const testCmd = 'docker compose version 2>&1';
+  const result = remoteExec(testCmd);
+  if (result.success) return 'docker compose';
+  const testCmd2 = 'docker-compose version 2>&1';
+  const result2 = remoteExec(testCmd2);
+  if (result2.success) return 'docker-compose';
+  return null;
+}
+
 async function selectSites(args) {
-  const allIds = SITES.map(s => s.id);
+    const allIds = SITES.map(s => s.id);
 
-  // Check if --all is passed
-  if (args.includes('--all')) return SITES;
+    // Check if --all is passed
+    if (args.includes('--all')) return SITES;
 
-  // Check for specific site IDs in args
-  const requested = args.filter(arg => allIds.includes(arg));
-  if (requested.length > 0) {
-    return SITES.filter(s => requested.includes(s.id));
-  }
+    // Check for specific site IDs in args
+    const requested = args.filter(arg => allIds.includes(arg));
+    if (requested.length > 0) {
+        return SITES.filter(s => requested.includes(s.id));
+    }
 
-  // Interactive selection
-  console.log('\nAvailable sites:');
-  SITES.forEach((s, idx) => {
-    console.log(`  ${idx + 1}. ${s.name} (${s.id})`);
-  });
-  console.log('  a. All sites');
-  console.log('  q. Quit\n');
+    // Interactive selection
+    console.log('\nAvailable sites:');
+    SITES.forEach((s, idx) => {
+        console.log(`  ${idx + 1}. ${s.name} (${s.id})`);
+    });
+    console.log('  a. All sites');
+    console.log('  q. Quit\n');
 
-  const answer = await ask('Enter numbers (comma-separated, e.g., 1,3) or "a" for all: ');
-  if (answer.toLowerCase() === 'q') process.exit(0);
-  if (answer.toLowerCase() === 'a') return SITES;
+    const answer = await ask('Enter numbers (comma-separated, e.g., 1,3) or "a" for all: ');
+    if (answer.toLowerCase() === 'q') process.exit(0);
+    if (answer.toLowerCase() === 'a') return SITES;
 
-  const indices = answer.split(',').map(n => parseInt(n.trim()));
-  const selected = indices.filter(i => i >= 1 && i <= SITES.length).map(i => SITES[i - 1]);
-  if (selected.length === 0) {
-    console.log('No valid selection. Running all sites.');
-    return SITES;
-  }
-  return selected;
+    const indices = answer.split(',').map(n => parseInt(n.trim()));
+    const selected = indices.filter(i => i >= 1 && i <= SITES.length).map(i => SITES[i - 1]);
+    if (selected.length === 0) {
+        console.log('No valid selection. Running all sites.');
+        return SITES;
+    }
+    return selected;
 }
 
 // ----- Helper: extract <?secret?> and <?var?> from template files -----
@@ -266,61 +279,61 @@ function fetchRequiredVars(site) {
 
 // ----- Helper: fetch secrets from GCP (with app prefix) -----
 function fetchGCPSecrets(appName, secretsList) {
-  console.log(`  Using GCP credentials from: ${process.env.GOOGLE_APPLICATION_CREDENTIALS || 'not set'}`);  
-  const env = {};
+    console.log(`  Using GCP credentials from: ${process.env.GOOGLE_APPLICATION_CREDENTIALS || 'not set'}`);
+    const env = {};
 
-  // ----- Set up GCP credentials -----
-  if (process.env.GCP_SA_KEY_PATH) {
-    const keyPath = path.isAbsolute(process.env.GCP_SA_KEY_PATH)
-      ? process.env.GCP_SA_KEY_PATH
-      : path.join(PROJECT_ROOT, process.env.GCP_SA_KEY_PATH);
-    if (fs.existsSync(keyPath)) {
-      process.env.GOOGLE_APPLICATION_CREDENTIALS = keyPath;
-      console.log(`  🔑 Using service account: ${keyPath}`);
-    } else {
-      console.log(`  ⚠️  GCP_SA_KEY_PATH file not found: ${keyPath}`);
-    }
-  } else {
-    console.log(`  ⚠️  GCP_SA_KEY_PATH not set in environment.`);
-  }
-
-  const prefix = `${appName}_`;
-
-  for (const secret of secretsList) {
-    const fullSecretName = prefix + secret;
-    try {
-      // Remove 2>/dev/null to see the actual error
-      const value = execSync(
-        `gcloud secrets versions access latest --secret="${fullSecretName}" --project=${GCP_PROJECT_ID}`,
-        { encoding: 'utf8', stdio: 'pipe' }
-      ).trim();
-      if (value) {
-        env[secret] = value;
-        console.log(`  🔐 ${secret} (from ${fullSecretName})`);
-      } else {
-        // If value is empty (shouldn't happen), fallback
-        if (process.env[secret]) {
-          env[secret] = process.env[secret];
-          console.log(`  ℹ️  ${fullSecretName} returned empty, using process.env.${secret}: ${process.env[secret]}`);
+    // ----- Set up GCP credentials -----
+    if (process.env.GCP_SA_KEY_PATH) {
+        const keyPath = path.isAbsolute(process.env.GCP_SA_KEY_PATH)
+            ? process.env.GCP_SA_KEY_PATH
+            : path.join(PROJECT_ROOT, process.env.GCP_SA_KEY_PATH);
+        if (fs.existsSync(keyPath)) {
+            process.env.GOOGLE_APPLICATION_CREDENTIALS = keyPath;
+            console.log(`  🔑 Using service account: ${keyPath}`);
         } else {
-          console.log(`  ⚠️  ${fullSecretName} empty and not in process.env.`);
+            console.log(`  ⚠️  GCP_SA_KEY_PATH file not found: ${keyPath}`);
         }
-      }
-    } catch (err) {
-      // Log the full error message for debugging
-      console.log(`  ⚠️  ${fullSecretName} fetch failed: ${err.message}`);
-      // Also print stderr if available
-      if (err.stderr) console.log(`  stderr: ${err.stderr.toString().trim()}`);
-      // Fallback to process.env
-      if (process.env[secret]) {
-        env[secret] = process.env[secret];
-        console.log(`  ℹ️  using process.env.${secret}: ${process.env[secret]}`);
-      } else {
-        console.log(`  ⚠️  ${fullSecretName} not in process.env.`);
-      }
+    } else {
+        console.log(`  ⚠️  GCP_SA_KEY_PATH not set in environment.`);
     }
-  }
-  return env;
+
+    const prefix = `${appName}_`;
+
+    for (const secret of secretsList) {
+        const fullSecretName = prefix + secret;
+        try {
+            // Remove 2>/dev/null to see the actual error
+            const value = execSync(
+                `gcloud secrets versions access latest --secret="${fullSecretName}" --project=${GCP_PROJECT_ID}`,
+                { encoding: 'utf8', stdio: 'pipe' }
+            ).trim();
+            if (value) {
+                env[secret] = value;
+                console.log(`  🔐 ${secret} (from ${fullSecretName})`);
+            } else {
+                // If value is empty (shouldn't happen), fallback
+                if (process.env[secret]) {
+                    env[secret] = process.env[secret];
+                    console.log(`  ℹ️  ${fullSecretName} returned empty, using process.env.${secret}: ${process.env[secret]}`);
+                } else {
+                    console.log(`  ⚠️  ${fullSecretName} empty and not in process.env.`);
+                }
+            }
+        } catch (err) {
+            // Log the full error message for debugging
+            console.log(`  ⚠️  ${fullSecretName} fetch failed: ${err.message}`);
+            // Also print stderr if available
+            if (err.stderr) console.log(`  stderr: ${err.stderr.toString().trim()}`);
+            // Fallback to process.env
+            if (process.env[secret]) {
+                env[secret] = process.env[secret];
+                console.log(`  ℹ️  using process.env.${secret}: ${process.env[secret]}`);
+            } else {
+                console.log(`  ⚠️  ${fullSecretName} not in process.env.`);
+            }
+        }
+    }
+    return env;
 }
 
 // ----- Helper: fetch variables from GitHub Environment -----
@@ -391,7 +404,56 @@ async function fetchAllVars(site) {
         }
     }
 
-    // 3. Override with .env file from the VM (if exists)
+    // 3. Ensure IMAGE_TAG is set (for docker compose)
+    if (!env.IMAGE_TAG) {
+        // Try to read from artifacts shared file (if running on GoCD agent)
+        const depLabelVar = `GO_DEPENDENCY_LABEL_${appName.toUpperCase().replace(/-/g, '_')}_ARTIFACTS`;
+        const depLabel = process.env[depLabelVar];
+        if (depLabel) {
+            const tagFile = `/shared-tags/${appName}-tag-${depLabel}.txt`;
+            try {
+                const tagContent = fs.readFileSync(tagFile, 'utf8').trim();
+                if (tagContent) {
+                    env.IMAGE_TAG = `sha-${tagContent}`;
+                    console.log(`  Read IMAGE_TAG from artifacts: ${env.IMAGE_TAG}`);
+                }
+            } catch (e) {
+                console.log(`  Could not read tag file: ${e.message}`);
+            }
+        }
+        // If still not set, try to query GHCR
+        if (!env.IMAGE_TAG) {
+            const token = process.env.GITHUB_TOKEN;
+            if (token) {
+                try {
+                    const tagsOutput = execSync(
+                        `curl -s -H "Authorization: Bearer ${token}" https://ghcr.io/v2/Team-Sisante/${appName}-web/tags/list`,
+                        { encoding: 'utf8', stdio: 'pipe' }
+                    );
+                    const tags = JSON.parse(tagsOutput).tags || [];
+                    const shaTag = tags.find(t => t.startsWith('sha-'));
+                    if (shaTag) {
+                        env.IMAGE_TAG = shaTag;
+                        console.log(`  Found latest SHA tag from GHCR: ${env.IMAGE_TAG}`);
+                    } else {
+                        env.IMAGE_TAG = 'latest';
+                        console.log(`  No SHA tags found, using 'latest'`);
+                    }
+                } catch (e) {
+                    env.IMAGE_TAG = 'latest';
+                    console.log(`  GHCR query failed, using 'latest'`);
+                }
+            } else {
+                env.IMAGE_TAG = 'latest';
+                console.log(`  GITHUB_TOKEN not set, using 'latest' for IMAGE_TAG`);
+            }
+        }
+        console.log(`  IMAGE_TAG set to: ${env.IMAGE_TAG}`);
+    } else {
+        console.log(`  IMAGE_TAG already set: ${env.IMAGE_TAG}`);
+    }
+
+    // 4. Override with .env file from the VM (if exists)
     console.log('  Reading .env file from VM (if present)...');
     const vmEnv = readEnvFileFromVM(site);
     if (Object.keys(vmEnv).length > 0) {
@@ -401,7 +463,7 @@ async function fetchAllVars(site) {
         console.log('  No VM .env file found or empty.');
     }
 
-    // 4. Remove internal Node.js variables that are not needed
+    // 5. Remove internal Node.js variables that are not needed
     const internalPrefixes = ['npm_', 'TERM_', 'XDG_', 'SSH_', 'LC_', 'LS_COLORS', 'DBUS_', 'DISPLAY', 'LANGUAGE', 'WINDOW', 'COLORTERM', 'PAGER', 'EDITOR', 'VISUAL'];
     const internalKeys = ['PATH', 'HOME', 'PWD', 'SHELL', 'HOSTNAME', '_', 'OLDPWD', 'SHLVL', 'LOGNAME', 'USER', 'TERM', 'LANG', 'MAIL', 'PROMPT_COMMAND', 'PS1', 'PS2', 'PS4', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'TERM_SESSION_ID', 'WINDOWID'];
     for (const key of Object.keys(env)) {
@@ -413,15 +475,21 @@ async function fetchAllVars(site) {
     console.log(`  Final variable count: ${Object.keys(env).length}`);
 
     // Diagnostic: print some key variables (mask secrets)
-    const diagnosticKeys = ['DEBUG', 'SECRET_KEY', 'SITE_HEADER', 'ALLOWED_HOSTS', 'POSTE_PROTOCOL'];
+    const diagnosticKeys = ['DEBUG', 'SECRET_KEY', 'SITE_HEADER', 'ALLOWED_HOSTS', 'POSTE_PROTOCOL', 'IMAGE_TAG'];
     console.log('  Diagnostic variables:');
     diagnosticKeys.forEach(key => {
         const val = env[key];
         if (val === undefined) {
             console.log(`    ${key}: MISSING`);
         } else {
-            // Show actual value for debugging (or mask if preferred)
-            console.log(`    ${key}: ${val}`);
+            // Mask secrets: show only first 4 chars for sensitive values
+            const secretPattern = /(PASSWORD|SECRET|KEY|TOKEN|PASS|ENCRYPT|PRIVATE|SIGNING|AUTHTOKEN)/i;
+            if (secretPattern.test(key)) {
+                const masked = val.length > 4 ? val.substring(0, 4) + '****' : '****';
+                console.log(`    ${key}: ${masked}`);
+            } else {
+                console.log(`    ${key}: ${val}`);
+            }
         }
     });
 
@@ -432,6 +500,9 @@ async function fetchAllVars(site) {
 function buildExportString(env) {
     const lines = [];
     for (const [key, value] of Object.entries(env)) {
+        // Skip keys that are comments or empty
+        if (key.startsWith('#') || key.trim() === '') continue;
+        // Skip internal Node variables (already filtered, but just in case)
         const safeValue = String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         lines.push(`export ${key}="${safeValue}"`);
     }
@@ -439,26 +510,89 @@ function buildExportString(env) {
 }
 
 // ----- Remote execution with fetched env -----
-function remoteExecWithEnv(cmd, env) {
-  const exportStr = buildExportString(env);
-  // Log a sample of exported variables
-  const sampleKeys = ['DEBUG', 'SECRET_KEY', 'SITE_HEADER', 'ALLOWED_HOSTS', 'POSTE_PROTOCOL'];
-  const sample = sampleKeys.filter(k => env[k] !== undefined);
-  console.log(`  🔧 Exporting ${Object.keys(env).length} variables (sample: ${sample.join(', ')})`);
-  const fullCmd = `${exportStr} && ${cmd}`;
-  return remoteExec(fullCmd);
+function remoteExecWithEnv(cmd, env, site) {
+  // Filter out comment lines and empty keys
+  const envPairs = Object.entries(env)
+    .filter(([key]) => !key.startsWith('#') && key.trim() !== '')
+    .map(([key, value]) => `${key}=${String(value).replace(/"/g, '\\"')}`);
+
+  if (envPairs.length === 0) {
+    console.log('   No environment variables to write. Running command without env file.');
+    return remoteExec(cmd);
+  }
+
+  const envContent = envPairs.join('\n');
+  const tempFileLocal = path.join(os.tmpdir(), `health_env_${Date.now()}.env`);
+  const tempFileRemote = `/tmp/health_env_${Date.now()}.env`;
+
+  // Write local temp file
+  fs.writeFileSync(tempFileLocal, envContent, 'utf8');
+
+  // SCP the file to the VM
+  const scpArgs = [
+    '-i', SSH_KEY_PATH,
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', 'UserKnownHostsFile=/dev/null',
+    '-o', 'ConnectTimeout=15',
+    '-o', 'LogLevel=ERROR',
+    tempFileLocal,
+    `${SSH_USER}@${VM_IP}:${tempFileRemote}`
+  ];
+  try {
+    execFileSync('scp', scpArgs, { stdio: 'pipe' });
+    console.log(`   ✅ Copied env file to VM: ${tempFileRemote}`);
+  } catch (err) {
+    console.error(`   ❌ Failed to copy env file to VM: ${err.message}`);
+    // Clean up local file
+    try { fs.unlinkSync(tempFileLocal); } catch (_) {}
+    return { success: false, output: err.message };
+  }
+
+  // Clean up local file
+  try { fs.unlinkSync(tempFileLocal); } catch (_) {}
+
+  // Inject --env-file into the command
+  const fullCmd = cmd.replace(/(docker compose(?:-)?)/, `$1 --env-file ${tempFileRemote}`);
+  const result = remoteExec(fullCmd);
+
+  // Clean up the remote temp file
+  remoteExec(`rm -f ${tempFileRemote}`);
+
+  return result;
 }
 
 function remoteExec(cmd) {
-  const args = [ /* ... ssh args ... */, cmd ];
+  const args = [
+    '-i', SSH_KEY_PATH,
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', 'UserKnownHostsFile=/dev/null',
+    '-o', 'ConnectTimeout=15',
+    '-o', 'LogLevel=ERROR',
+    '-o', 'KexAlgorithms=+diffie-hellman-group14-sha256',
+    `${SSH_USER}@${VM_IP}`,
+    cmd,
+  ];
+
+  // Debug: print the full SSH command (without exposing the key path)
+  console.log(`   DEBUG SSH: ssh -i [key] ${SSH_USER}@${VM_IP} "${cmd}"`);
+
   try {
     const output = execFileSync('ssh', args, { encoding: 'utf8', stdio: 'pipe' });
-    return { success: true, output: output.trim() };
+    return { success: true, stdout: output.trim(), stderr: '', output: output.trim(), code: 0 };
   } catch (err) {
+    // Log everything from the error object
+    console.log(`   DEBUG: err.code = ${err.code}`);
+    console.log(`   DEBUG: err.status = ${err.status}`);
+    console.log(`   DEBUG: err.signal = ${err.signal}`);
+    console.log(`   DEBUG: err.stdout = ${err.stdout ? err.stdout.toString().trim() : '(empty)'}`);
+    console.log(`   DEBUG: err.stderr = ${err.stderr ? err.stderr.toString().trim() : '(empty)'}`);
+    console.log(`   DEBUG: err.message = ${err.message}`);
+    console.log(`   DEBUG: err.cmd = ${err.cmd}`);
+
     const stdout = err.stdout ? err.stdout.toString().trim() : '';
     const stderr = err.stderr ? err.stderr.toString().trim() : '';
     const combined = stdout + (stderr ? '\n' + stderr : '');
-    return { success: false, output: combined };
+    return { success: false, stdout, stderr, output: combined, code: err.status };
   }
 }
 
@@ -541,67 +675,84 @@ function repairNginx(nginxContainer) {
 }
 
 function ensureImagesExist(site, env) {
-    const { composeDir, composeFile, project, profile, webServiceName } = site;
-    console.log(`   → Ensuring images are up-to-date via compose pull...`);
-    const pullCmd = `cd ${composeDir} && sudo docker compose -p ${project} -f ${composeFile} --profile ${profile} pull ${webServiceName} 2>&1`;
-    const result = remoteExecSilent(pullCmd, env);
-    if (result.success) {
-        console.log(`   ✅ Images pulled.`);
-        return true;
-    }
-    console.log(`   ❌ Failed to pull images.`);
-    if (result.output) console.log(`   Error:\n${result.output}`);
+  const { composeDir, composeFile, project, profile, webServiceName } = site;
+  const composeCmd = detectComposeCommand();
+  if (!composeCmd) {
+    console.log(`   ❌ docker compose not available.`);
     return false;
+  }
+  console.log(`   → Ensuring images are up-to-date via compose pull...`);
+  const pullCmd = `cd ${composeDir} && ${composeCmd} -p ${project} -f ${composeFile} --profile ${profile} pull ${webServiceName} 2>&1`;
+  const result = remoteExecWithEnv(validateCmd, env, site);
+  if (result.output) console.log(`   Output:\n${result.output}`);
+  if (result.success) {
+    console.log(`   ✅ Images pulled.`);
+    return true;
+  }
+  console.log(`   ❌ Failed to pull images.`);
+  return false;
 }
 
 function recreateContainer(site, env) {
   const { webContainer, composeDir, composeFile, project, profile, webServiceName } = site;
+
+  // Detect compose command
+  const composeCmd = detectComposeCommand();
+  if (!composeCmd) {
+    console.log(`   ❌ docker compose not available on VM.`);
+    return false;
+  }
+
+  console.log(`   → Using compose command: ${composeCmd}`);
+
+  // Validate compose file
+  console.log(`   → Validating compose file...`);
+  const validateCmd = `cd ${composeDir} && ${composeCmd} -p ${project} -f ${composeFile} --profile ${profile} config 2>&1`;
+  const validateResult = remoteExecWithEnv(validateCmd, env, site);
+  if (!validateResult.success) {
+    console.log(`   ❌ Compose file validation failed:\n${validateResult.output}`);
+    return false;
+  }
+  console.log(`   ✅ Compose file is valid.`);
+
+  // Run up
   console.log(`   → Recreating ${webContainer} via compose (service ${webServiceName})...`);
-  
-  // Run WITHOUT -d to see real-time output
-  let cmd = `cd ${composeDir} && sudo docker compose -p ${project} -f ${composeFile} --profile ${profile} up ${webServiceName} 2>&1`;
-  let result = remoteExecSilent(cmd, env);
-  
+  let cmd = `cd ${composeDir} && ${composeCmd} -p ${project} -f ${composeFile} --profile ${profile} up ${webServiceName} 2>&1`;
+  let result = remoteExecWithEnv(cmd, env);
+
+  if (result.output) console.log(`   Output:\n${result.output}`);
   if (result.success) {
-    console.log(`   ✅ ${webContainer} started successfully.`);
-    // Still check if the container is actually running
+    console.log(`   ✅ ${webContainer} started.`);
     const status = getContainerStatus(site);
     if (!status.running) {
-      console.log(`   ⚠️  Container started but not running. Checking logs...`);
+      console.log(`   ⚠️  Container not running. Logs:`);
       const logs = getContainerLogs(webContainer);
-      if (logs) console.log(`   Logs:\n${logs}`);
+      if (logs) console.log(logs);
       return false;
     }
     return true;
   }
-  
+
   console.log(`   → Single service up failed.`);
-  if (result.output) console.log(`   Error:\n${result.output}`);
-  
-  // If single service fails, try full project up (without -d)
   console.log(`   → Trying full project up...`);
-  cmd = `cd ${composeDir} && sudo docker compose -p ${project} -f ${composeFile} --profile ${profile} up 2>&1`;
-  result = remoteExecSilent(cmd, env);
-  
+  cmd = `cd ${composeDir} && ${composeCmd} -p ${project} -f ${composeFile} --profile ${profile} up 2>&1`;
+  result = remoteExecWithEnv(cmd, env);
+  if (result.output) console.log(`   Output:\n${result.output}`);
   if (result.success) {
     console.log(`   ✅ Full project started.`);
     const status = getContainerStatus(site);
     if (!status.running) {
-      console.log(`   ⚠️  Container not running after full up. Checking logs...`);
+      console.log(`   ⚠️  Container not running. Logs:`);
       const logs = getContainerLogs(webContainer);
-      if (logs) console.log(`   Logs:\n${logs}`);
+      if (logs) console.log(logs);
       return false;
     }
     return true;
   }
-  
-  console.log(`   ❌ Failed to recreate ${webContainer} (even full project).`);
-  if (result.output) console.log(`   Error:\n${result.output}`);
-  
-  // Final attempt: check logs of the failed container
+
+  console.log(`   ❌ Failed to recreate ${webContainer}.`);
   const logs = getContainerLogs(webContainer);
   if (logs) console.log(`   Container logs:\n${logs}`);
-  
   return false;
 }
 
@@ -716,169 +867,169 @@ function detectCase(siteStatus, logs, nginxLogs, env) {
 
 // ----- Main check and repair -----
 async function checkAndRepair(site, fix) {
-  const { name, backend, webContainer, url } = site;
+    const { name, backend, webContainer, url } = site;
 
-  // Fetch env (only once per site)
-  const env = await fetchAllVars(site);
-  if (Object.keys(env).length === 0) {
-    console.log(`❌ No environment variables fetched for ${name}. Aborting.`);
-    return false;
-  }
-
-  console.log(`\n🔍 Checking ${name} (${backend})...`);
-
-  // 1. Gather status
-  const gcpHealth = runGcloud(backend);
-  const gcpHealthy = gcpHealth && gcpHealth.includes('HEALTHY');
-  console.log(`   → GCP backend: ${gcpHealthy ? '✅ HEALTHY' : '❌ UNHEALTHY'}`);
-
-  const containerInfo = getContainerStatus(site);
-  console.log(`   → Container ${webContainer}: ${containerInfo.exists ? containerInfo.status : 'MISSING'}`);
-
-  const httpStatus = checkSiteResponse(url, name);
-  const siteOK = httpStatus !== null && httpStatus >= 200 && httpStatus < 400;
-
-  const logs = getContainerLogs(webContainer);
-  const nginxLogs = site.nginxContainer ? getNginxLogs(site.nginxContainer) : null;
-
-  const siteStatus = {
-    containerExists: containerInfo.exists,
-    containerRunning: containerInfo.running,
-    containerRestarting: containerInfo.exists && !containerInfo.running && containerInfo.status && containerInfo.status.includes('Restarting'),
-    httpStatus,
-    gcpHealthy,
-    logs,
-    nginxLogs,
-  };
-
-  // 2. Detect all matching cases
-  const detectedCases = [];
-  for (const caseDef of caseSolutions.cases) {
-    const detect = caseDef.detect;
-    let matches = true;
-
-    if (detect.container_status) {
-      const status = detect.container_status;
-      if (status === 'missing' && siteStatus.containerExists) matches = false;
-      if (status === 'stopped' && (siteStatus.containerRunning || !siteStatus.containerExists)) matches = false;
+    // Fetch env (only once per site)
+    const env = await fetchAllVars(site);
+    if (Object.keys(env).length === 0) {
+        console.log(`❌ No environment variables fetched for ${name}. Aborting.`);
+        return false;
     }
-    if (detect.http_status && siteStatus.httpStatus !== detect.http_status) matches = false;
-    if (detect.log_pattern && siteStatus.logs) {
-      const regex = new RegExp(detect.log_pattern, 'i');
-      if (!regex.test(siteStatus.logs)) matches = false;
-    }
-    if (detect.nginx_log_pattern && siteStatus.nginxLogs) {
-      const regex = new RegExp(detect.nginx_log_pattern, 'i');
-      if (!regex.test(siteStatus.nginxLogs)) matches = false;
-    }
-    if (detect.container_restarting && !siteStatus.containerRestarting) matches = false;
 
-    if (matches) detectedCases.push(caseDef);
-  }
+    console.log(`\n🔍 Checking ${name} (${backend})...`);
 
-  if (detectedCases.length === 0) {
-    console.log(`   ✅ No issues detected.`);
-    return true;
-  }
+    // 1. Gather status
+    const gcpHealth = runGcloud(backend);
+    const gcpHealthy = gcpHealth && gcpHealth.includes('HEALTHY');
+    console.log(`   → GCP backend: ${gcpHealthy ? '✅ HEALTHY' : '❌ UNHEALTHY'}`);
 
-  console.log(`   🔍 Detected ${detectedCases.length} issue(s):`);
-  detectedCases.forEach(c => console.log(`     - ${c.description} (${c.id})`));
+    const containerInfo = getContainerStatus(site);
+    console.log(`   → Container ${webContainer}: ${containerInfo.exists ? containerInfo.status : 'MISSING'}`);
 
-  // 3. If --fix is not provided, just report
-  if (!fix) {
-    console.log(`   ℹ️  Use --fix to attempt repairs.`);
-    return false;
-  }
+    const httpStatus = checkSiteResponse(url, name);
+    const siteOK = httpStatus !== null && httpStatus >= 200 && httpStatus < 400;
 
-  // 4. Apply fixes in order (case order as in JSON)
-  let allFixed = true;
-  for (const caseDef of detectedCases) {
-    const fixScriptPath = path.join(__dirname, 'fixes', caseDef.fix_script);
-    if (fs.existsSync(fixScriptPath)) {
-      console.log(`   🔧 Applying fix for ${caseDef.id}...`);
-      try {
-        const fixFunction = require(fixScriptPath);
-        const helpers = {
-          recreateContainer,
-          startContainer,
-          repairCollectStatic,
-          repairNginx,
-          ensureImagesExist,
-          updateHealthCheckTimeout,
-          getContainerLogs,
-          remoteExecSilent,
-          remoteExecWithEnv,
-          remoteExec,
-          buildExportString,
-          getContainerStatus,
-          checkSiteResponse,
-          runGcloud,
-        };
-        const result = await fixFunction(site, env, helpers);
-        if (result) {
-          console.log(`   ✅ Fix applied successfully.`);
-        } else {
-          console.log(`   ❌ Fix failed for ${caseDef.id}.`);
-          allFixed = false;
+    const logs = getContainerLogs(webContainer);
+    const nginxLogs = site.nginxContainer ? getNginxLogs(site.nginxContainer) : null;
+
+    const siteStatus = {
+        containerExists: containerInfo.exists,
+        containerRunning: containerInfo.running,
+        containerRestarting: containerInfo.exists && !containerInfo.running && containerInfo.status && containerInfo.status.includes('Restarting'),
+        httpStatus,
+        gcpHealthy,
+        logs,
+        nginxLogs,
+    };
+
+    // 2. Detect all matching cases
+    const detectedCases = [];
+    for (const caseDef of caseSolutions.cases) {
+        const detect = caseDef.detect;
+        let matches = true;
+
+        if (detect.container_status) {
+            const status = detect.container_status;
+            if (status === 'missing' && siteStatus.containerExists) matches = false;
+            if (status === 'stopped' && (siteStatus.containerRunning || !siteStatus.containerExists)) matches = false;
         }
-      } catch (err) {
-        console.error(`   ❌ Error executing fix script: ${err.message}`);
-        allFixed = false;
-      }
-    } else {
-      console.log(`   ⚠️  Fix script not found: ${fixScriptPath}`);
-      allFixed = false;
+        if (detect.http_status && siteStatus.httpStatus !== detect.http_status) matches = false;
+        if (detect.log_pattern && siteStatus.logs) {
+            const regex = new RegExp(detect.log_pattern, 'i');
+            if (!regex.test(siteStatus.logs)) matches = false;
+        }
+        if (detect.nginx_log_pattern && siteStatus.nginxLogs) {
+            const regex = new RegExp(detect.nginx_log_pattern, 'i');
+            if (!regex.test(siteStatus.nginxLogs)) matches = false;
+        }
+        if (detect.container_restarting && !siteStatus.containerRestarting) matches = false;
+
+        if (matches) detectedCases.push(caseDef);
     }
-  }
 
-  // 5. Wait and re-check
-  console.log(`   ⏳ Waiting 30 seconds for services to settle...`);
-  execSync('sleep 30', { stdio: 'pipe' });
+    if (detectedCases.length === 0) {
+        console.log(`   ✅ No issues detected.`);
+        return true;
+    }
 
-  // Re-check GCP
-  const recheckGCP = runGcloud(backend);
-  const gcpOK = recheckGCP && recheckGCP.includes('HEALTHY');
-  console.log(`   → GCP after repair: ${gcpOK ? '✅ HEALTHY' : '❌ UNHEALTHY'}`);
+    console.log(`   🔍 Detected ${detectedCases.length} issue(s):`);
+    detectedCases.forEach(c => console.log(`     - ${c.description} (${c.id})`));
 
-  // Re-check site
-  const newStatus = checkSiteResponse(url, name);
-  const newOK = newStatus !== null && newStatus >= 200 && newStatus < 400;
-  console.log(`   → Site after repair: ${newOK ? `✅ HTTP ${newStatus}` : `❌ HTTP ${newStatus}`}`);
+    // 3. If --fix is not provided, just report
+    if (!fix) {
+        console.log(`   ℹ️  Use --fix to attempt repairs.`);
+        return false;
+    }
 
-  if (gcpOK && newOK) {
-    console.log(`   ✅ Site is now HEALTHY.`);
-    return true;
-  } else {
-    console.log(`   ❌ Site is still UNHEALTHY after repairs.`);
-    const logsAfter = getContainerLogs(webContainer);
-    if (logsAfter) console.log(`   Recent logs:\n${logsAfter}`);
-    return false;
-  }
+    // 4. Apply fixes in order (case order as in JSON)
+    let allFixed = true;
+    for (const caseDef of detectedCases) {
+        const fixScriptPath = path.join(__dirname, 'fixes', caseDef.fix_script);
+        if (fs.existsSync(fixScriptPath)) {
+            console.log(`   🔧 Applying fix for ${caseDef.id}...`);
+            try {
+                const fixFunction = require(fixScriptPath);
+                const helpers = {
+                    recreateContainer,
+                    startContainer,
+                    repairCollectStatic,
+                    repairNginx,
+                    ensureImagesExist,
+                    updateHealthCheckTimeout,
+                    getContainerLogs,
+                    remoteExecSilent,
+                    remoteExecWithEnv,
+                    remoteExec,
+                    buildExportString,
+                    getContainerStatus,
+                    checkSiteResponse,
+                    runGcloud,
+                };
+                const result = await fixFunction(site, env, helpers);
+                if (result) {
+                    console.log(`   ✅ Fix applied successfully.`);
+                } else {
+                    console.log(`   ❌ Fix failed for ${caseDef.id}.`);
+                    allFixed = false;
+                }
+            } catch (err) {
+                console.error(`   ❌ Error executing fix script: ${err.message}`);
+                allFixed = false;
+            }
+        } else {
+            console.log(`   ⚠️  Fix script not found: ${fixScriptPath}`);
+            allFixed = false;
+        }
+    }
+
+    // 5. Wait and re-check
+    console.log(`   ⏳ Waiting 30 seconds for services to settle...`);
+    execSync('sleep 30', { stdio: 'pipe' });
+
+    // Re-check GCP
+    const recheckGCP = runGcloud(backend);
+    const gcpOK = recheckGCP && recheckGCP.includes('HEALTHY');
+    console.log(`   → GCP after repair: ${gcpOK ? '✅ HEALTHY' : '❌ UNHEALTHY'}`);
+
+    // Re-check site
+    const newStatus = checkSiteResponse(url, name);
+    const newOK = newStatus !== null && newStatus >= 200 && newStatus < 400;
+    console.log(`   → Site after repair: ${newOK ? `✅ HTTP ${newStatus}` : `❌ HTTP ${newStatus}`}`);
+
+    if (gcpOK && newOK) {
+        console.log(`   ✅ Site is now HEALTHY.`);
+        return true;
+    } else {
+        console.log(`   ❌ Site is still UNHEALTHY after repairs.`);
+        const logsAfter = getContainerLogs(webContainer);
+        if (logsAfter) console.log(`   Recent logs:\n${logsAfter}`);
+        return false;
+    }
 }
- 
+
 // ----- Main -----
 async function main() {
-  const args = process.argv.slice(2);
-  const fix = args.includes('--fix');
-  const selectedSites = await selectSites(args);
+    const args = process.argv.slice(2);
+    const fix = args.includes('--fix');
+    const selectedSites = await selectSites(args);
 
-  console.log(`🏥 Running health checks${fix ? ' with auto-repair' : ''}...`);
-  console.log(`📋 Selected sites: ${selectedSites.map(s => s.name).join(', ')}\n`);
+    console.log(`🏥 Running health checks${fix ? ' with auto-repair' : ''}...`);
+    console.log(`📋 Selected sites: ${selectedSites.map(s => s.name).join(', ')}\n`);
 
-  let allHealthy = true;
-  for (const site of selectedSites) {
-    const ok = await checkAndRepair(site, fix);
-    if (!ok) allHealthy = false;
-  }
+    let allHealthy = true;
+    for (const site of selectedSites) {
+        const ok = await checkAndRepair(site, fix);
+        if (!ok) allHealthy = false;
+    }
 
-  console.log('\n' + '='.repeat(50));
-  if (allHealthy) {
-    console.log('✅ All selected sites are HEALTHY.');
-    process.exit(0);
-  } else {
-    console.log('❌ Some selected sites are UNHEALTHY. Please investigate further.');
-    process.exit(1);
-  }
+    console.log('\n' + '='.repeat(50));
+    if (allHealthy) {
+        console.log('✅ All selected sites are HEALTHY.');
+        process.exit(0);
+    } else {
+        console.log('❌ Some selected sites are UNHEALTHY. Please investigate further.');
+        process.exit(1);
+    }
 }
 
 main().catch(err => {

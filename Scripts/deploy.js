@@ -464,6 +464,28 @@ if (fs.existsSync(posteRelayScript)) {
 }
 
 // ---------------------------------------------------------------
+// Copy the Cypress build context, if this app has one. Needed because
+// docker-compose.vm.yml's cypress-staging/cypress-production services
+// build a local image via `Dockerfile.cypress` rather than pulling a
+// pre-built one from GHCR — so the files have to actually be on the VM.
+// Generic existence checks (not app-name branching) so this is a no-op
+// for apps that don't have a Cypress setup, like badminton_court today.
+// ---------------------------------------------------------------
+const cypressFiles = ['Dockerfile.cypress', 'package.json', 'package-lock.json', 'cypress.config.js'];
+const cypressDirs = ['cypress', 'scripts'];
+
+const missingCypressFiles = cypressFiles.filter(f => !fs.existsSync(f));
+const missingCypressDirs = cypressDirs.filter(d => !fs.existsSync(d));
+
+if (missingCypressFiles.length === 0 && missingCypressDirs.length === 0) {
+  console.log('Copying Cypress build context to VM...');
+  cypressFiles.forEach(f => execSync(`${scpBase} ${f} ${vmDest}`, { stdio: 'inherit' }));
+  cypressDirs.forEach(d => execSync(`${scpBase} -r ${d} ${vmDest}`, { stdio: 'inherit' }));
+} else {
+  console.log(`\x1b[33mSkipping Cypress build context copy — missing: ${[...missingCypressFiles, ...missingCypressDirs].join(', ')}\x1b[0m`);
+}
+
+// ---------------------------------------------------------------
 // 8. Determine the exact image tag to deploy
 // ---------------------------------------------------------------
 let imageTag = process.env.IMAGE_TAG;

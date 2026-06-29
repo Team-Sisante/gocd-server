@@ -535,10 +535,24 @@ if (!imageTag || imageTag === 'latest') {
 const expectedImage = `${webImageName}:${imageTag}`;
 
 // ------------------------------------------------------------------
-// 9. Pre‑deploy: force pull the exact image and remove old web container
+// 9. Pre‑deploy: log in to ghcr.io on the VM, force pull the exact
+//    image, then remove the old web container.
+//    LOGIN MUST COME BEFORE PULL — the VM has no credentials until we
+//    do this, which is why `docker pull` was failing with "denied".
 // ------------------------------------------------------------------
+console.log('Logging into ghcr.io on VM before pull...');
+const prePullTokenFile = '/tmp/gh_token_prepull';
+fs.writeFileSync(prePullTokenFile, token, { mode: 0o600 });
+
+execSync(
+  `ssh -i ${sshKeyPath} ${SSH_OPTS} -o LogLevel=ERROR ${SSH_USER}@${vmIP} ` +
+  `"export DOCKER_CONFIG=${'/root/.docker'} && sudo -E docker login ghcr.io -u ${GIT_REPO_USERNAME} --password-stdin" < ${prePullTokenFile}`,
+  { stdio: 'inherit' }
+);
+try { fs.unlinkSync(prePullTokenFile); } catch (_) {}
+
 console.log(`Pulling and verifying ${expectedImage}...`);
-const pullCmd = `sudo docker pull ${expectedImage}`;
+const pullCmd = `export DOCKER_CONFIG=${'/root/.docker'} && sudo -E docker pull ${expectedImage}`;
 execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "${pullCmd}"`, { stdio: 'inherit' });
 
 const webContainerName = appConf.webContainer[target];

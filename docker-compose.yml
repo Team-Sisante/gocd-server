@@ -79,29 +79,29 @@ services:
     depends_on:
       - gocd-server
 
-  gocd-agent-3:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent.solvpn
-    container_name: gocd-agent-3
-    restart: unless-stopped
-    dns: 8.8.8.8
-    env_file:
-      - .env.docker
-    environment:
-      - GO_SERVER_URL=http://gocd-server:8153/go
-      - AGENT_AUTO_REGISTER_KEY=default
-      - AGENT_AUTO_REGISTER_RESOURCES=docker,linux,solvpn
-      - AGENT_AUTO_REGISTER_HOSTNAME=agent-3
-      - AGENT_BOOTSTRAP_ARGS=-Dgo.agent.ssl.verify=false
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./certs/ca.crt:/usr/local/share/ca-certificates/ca.crt:ro
-      - ../solvpn:/solvpn:rw
-      - ./secrets:/secret:ro
-      - ./certs:/certs:ro
-    depends_on:
-      - gocd-server
+  # gocd-agent-3:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.agent.solvpn
+  #   container_name: gocd-agent-3
+  #   restart: unless-stopped
+  #   dns: 8.8.8.8
+  #   env_file:
+  #     - .env.docker
+  #   environment:
+  #     - GO_SERVER_URL=http://gocd-server:8153/go
+  #     - AGENT_AUTO_REGISTER_KEY=default
+  #     - AGENT_AUTO_REGISTER_RESOURCES=docker,linux,solvpn
+  #     - AGENT_AUTO_REGISTER_HOSTNAME=agent-3
+  #     - AGENT_BOOTSTRAP_ARGS=-Dgo.agent.ssl.verify=false
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #     - ./certs/ca.crt:/usr/local/share/ca-certificates/ca.crt:ro
+  #     - ../solvpn:/solvpn:rw
+  #     - ./secrets:/secret:ro
+  #     - ./certs:/certs:ro
+  #   depends_on:
+  #     - gocd-server
 
   gocd-agent-4:
     build:

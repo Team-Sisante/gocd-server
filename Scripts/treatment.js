@@ -62,7 +62,7 @@ function repairCollectStatic(site, env) {
     const { webContainer } = site;
     console.log(`   → Running collectstatic on ${webContainer}...`);
     let cmd = `sudo docker exec ${webContainer} /app/humrine_site_linux collectstatic --noinput 2>&1`;
-    let result = remoteExecSilent(cmd, env);
+    let result = remoteExecSilent(cmd, env, site);
     if (result.success && result.output && !result.output.includes('No such file')) {
         console.log(`   ✅ Static files collected.`);
         return true;
@@ -163,7 +163,7 @@ function startContainer(site, env) {
     const { webContainer } = site;
     console.log(`   → Starting ${webContainer} via docker start...`);
     let cmd = `sudo docker start ${webContainer} 2>&1`;
-    let result = remoteExecSilent(cmd, env);
+    let result = remoteExecSilent(cmd, env, site);
     if (result.success) {
         console.log(`   ✅ ${webContainer} started.`);
         return true;

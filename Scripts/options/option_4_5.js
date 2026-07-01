@@ -3,5 +3,4 @@
 module.exports = async function (helpers) {
   const { ctx } = helpers;
   ctx.sh('docker system prune -f');
-  await ctx.pause();
 };

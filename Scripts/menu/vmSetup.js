@@ -150,11 +150,10 @@ module.exports = {
     // 6.21 – Connect to VM via SSH (interactive shell)
     '6.21': sshToVM,
     // 6.22 – Create new VM & run full setup (one‑step)
-    '6.22': async (ctx) => { ctx.sh('node Scripts/create-deploy-vm.js'); await ctx.pause(); },
+    '6.22': async (ctx) => { ctx.sh('node Scripts/create-deploy-vm.js'); },
     // 6.23 – List all VMs (project-wide)
     '6.23': async (ctx) => {
         ctx.sh(`gcloud compute instances list --project=${ctx.GCP_PROJECT_ID} --format="table(name,zone,status,machineType,networkInterfaces[0].accessConfigs[0].natIP)"`);
-        await ctx.pause();
     },
     // 6.24 – Clean up Docker disk space on staging VM
     '6.24': async (ctx) => {
@@ -167,7 +166,6 @@ module.exports = {
             log('❌ Cleanup failed.', '\x1b[31m');
             console.error(err.message);
         }
-        await pause();
     },
     // 6.25 – Open production app in browser
     '6.25': openProductionApp,
@@ -194,7 +192,6 @@ module.exports = {
         } catch (err) {
             console.error('\x1b[31mSetup failed:\x1b[0m', err.message);
         }
-        await ctx.ask('\x1b[33m\nPress Enter to continue...\x1b[0m');
     },
     // 6.31 – Validate Social Media Configs
     '6.31': async (ctx) => {
@@ -222,7 +219,6 @@ module.exports = {
         } catch (err) {
             console.error('\x1b[31mValidation failed:\x1b[0m', err.message);
         }
-        await ctx.ask('\x1b[33m\nPress Enter to continue...\x1b[0m');
     },
     // 6.37 – Show load balancer host rules
     '6.37': async (ctx) => {

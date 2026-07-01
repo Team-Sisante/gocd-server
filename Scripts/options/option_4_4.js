@@ -3,5 +3,4 @@
 module.exports = async function (helpers) {
   const { ctx } = helpers;
   ctx.sh('docker stats --no-stream');
-  await ctx.pause();
 };

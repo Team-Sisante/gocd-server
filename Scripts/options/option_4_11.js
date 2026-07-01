@@ -45,5 +45,4 @@ module.exports = async function (helpers) {
     ctx.log('❌ Pipelines command failed.', '\x1b[31m');
   }
 
-  await ctx.pause();
 };

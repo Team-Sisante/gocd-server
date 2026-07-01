@@ -3,5 +3,4 @@
 module.exports = async function (helpers) {
   const { ctx } = helpers;
   ctx.openUrl(`${ctx.GOCD_BASE}/go`);
-  await ctx.pause();
 };

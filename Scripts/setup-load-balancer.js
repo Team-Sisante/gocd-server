@@ -131,6 +131,18 @@ if (!appName) {
 const configPath = path.join(__dirname, 'loadbalancer.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
+// Ensure all errors are written to the log file
+process.on('uncaughtException', (err) => {
+  logStream.write(`[FATAL] ${err.stack}\n`);
+  logStream.end();
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  logStream.write(`[FATAL] Unhandled rejection: ${reason}\n`);
+  logStream.end();
+  process.exit(1);
+});
+
 function interpolate(obj) {
   for (const key in obj) {
     const val = obj[key];
@@ -184,6 +196,11 @@ function run(cmd, opts = {}) {
   try {
     return (execSync(cmd, { encoding: 'utf8', stdio, ...opts }) || '').trim();
   } catch (e) {
+    // Capture both stdout and stderr from the failed command
+    const stdout = e.stdout ? e.stdout.toString().trim() : '';
+    const stderr = e.stderr ? e.stderr.toString().trim() : '';
+    if (stdout) console.log('[stdout] ' + stdout);
+    if (stderr) console.error('[stderr] ' + stderr);
     if (opts.ignoreError) return null;
     if (opts.silent) return null;
     console.error(`\x1b[31m[${elapsed()}] Command failed: ${cmd}\x1b[0m`);
@@ -206,8 +223,11 @@ async function ask(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise(resolve => {
     rl.question(`\x1b[33m${question}\x1b[0m`, answer => {
+      const trimmed = answer.trim().toLowerCase();
+      // Log the user's response to the log file (not to console)
+      logStream.write(`[USER INPUT] ${question} ${trimmed || '(empty)'}\n`);
       rl.close();
-      resolve(answer.trim().toLowerCase());
+      resolve(trimmed);
     });
   });
 }

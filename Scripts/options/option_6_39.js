@@ -25,6 +25,4 @@ module.exports = async function (helpers) {
   } else {
     console.log('\x1b[32m✅ Health checks completed.\x1b[0m');
   }
-
-  await pause();
 };

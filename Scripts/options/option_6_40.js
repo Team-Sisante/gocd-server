@@ -24,6 +24,4 @@ module.exports = async function (helpers) {
   } else {
     console.log('\x1b[32m✅ Treatment completed.\x1b[0m');
   }
-
-  await pause();
 };

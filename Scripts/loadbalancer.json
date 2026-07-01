@@ -50,7 +50,7 @@
         "namedPort": "production",
         "port": "${WEB_HTTPS_PORT_PRODUCTION}",
         "healthCheck": "production-health-check",
-        "host": "app.${HUMRINE_DOMAIN}",
+        "host": "${HUMRINE_DOMAIN}",
         "pathMatcher": "production-matcher"
       }
     ]

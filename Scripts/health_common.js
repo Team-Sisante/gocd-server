@@ -345,8 +345,11 @@ function remoteExecLive(cmd, env, site) {
 }
 
 // Simple wrapper
-function remoteExecSilent(cmd, env = null) {
-    if (env) return remoteExecWithEnv(cmd, env);
+function remoteExecSilent(cmd, env = null, site = null) {
+    if (env) {
+        if (site) return remoteExecWithEnv(cmd, env, site);
+        return remoteExecWithEnv(cmd, env); // fallback (will still break if site needed)
+    }
     return remoteExec(cmd);
 }
 

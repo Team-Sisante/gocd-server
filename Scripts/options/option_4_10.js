@@ -26,5 +26,4 @@ module.exports = async function (helpers) {
     ctx.log('❌ Could not retrieve password from container.', '\x1b[31m');
   }
 
-  await ctx.pause();
 };

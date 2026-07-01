@@ -6,5 +6,4 @@ module.exports = async function (helpers) {
   if (featureBranch) {
     ctx.sh(`node Scripts/master-feature-git-sync.js ${featureBranch}`);
   }
-  await ctx.pause();
 };

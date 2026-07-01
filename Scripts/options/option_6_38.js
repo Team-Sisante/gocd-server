@@ -45,5 +45,4 @@ module.exports = async function (helpers) {
     console.log('Skipping health checks. You can run them later via the menu (6.26 or 6.39).');
   }
 
-  await pause();
 };

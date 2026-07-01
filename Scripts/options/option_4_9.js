@@ -41,5 +41,4 @@ module.exports = async function (helpers) {
     ctx.log('❌ GoCD did not become ready in time. Check the container manually.', '\x1b[31m');
   }
 
-  await ctx.pause();
 };

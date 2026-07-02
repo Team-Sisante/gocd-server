@@ -89,11 +89,16 @@ const APP_CONFIG = {
     projectPrefix: 'badminton',
     workDir:       '/badminton_court',
     deployDir:     '/opt/badminton_court',
+    mailContainer: {
+      staging:    'badminton-staging-mail-staging-1',
+      production: 'badminton-production-mail-production-1',
+    },
   },
   humrine_site: {
     projectPrefix: 'humrine',
     workDir:       '/humrine_site',
     deployDir:     '/opt/humrine_site',
+    // mailContainer not used for humrine
   },
 };
 
@@ -125,21 +130,6 @@ if (missing.length > 0) {
 const GCP_PROJECT_ID = process.env.GCP_PROJECT_ID;
 const GIT_REPO_USERNAME = process.env.GIT_REPO_USERNAME;
 const SSH_USER = process.env.VM_SSH_USER;
-
-// ------------------------------------------------------------------
-// Ensure the shared Docker network exists on the VM
-// ------------------------------------------------------------------
-function ensureSharedNetwork(vmIP) {
-  console.log('Ensuring shared Docker network "shared-net" exists on VM...');
-  const cmd = `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker network inspect shared-net >/dev/null 2>&1 || sudo docker network create shared-net"`;
-  try {
-    execSync(cmd, { stdio: 'inherit' });
-    console.log('✅ Shared network "shared-net" is ready.');
-  } catch (err) {
-    console.error(`\x1b[33mWarning: Failed to ensure shared network: ${err.message}\x1b[0m`);
-    // Non‑fatal – continue, but log it.
-  }
-}
 
 // ---------------------------------------------------------------
 // Helper: read health‑check info from loadbalancer.json
@@ -326,19 +316,24 @@ if (target === 'staging' || target === 'production') {
     const nginxTemplate = fs.readFileSync(nginxTemplatePath, 'utf8');
     const webBackendService = `web-${target}`;
 
-    // Determine the Badminton service name (only relevant for humrine_site)
+    // Determine the Badminton service names (only relevant for humrine_site)
     let badmintonBackend = '';
+    let badmintonStagingBackend = '';
     if (appName === 'humrine_site') {
-      badmintonBackend = target === 'production'
-        ? 'web-production'   // service name in badminton compose
-        : 'web-staging';
+      badmintonBackend = target === 'production' ? 'web-production' : 'web-staging';
+      badmintonStagingBackend = 'web-staging';  // staging uses the same service
     }
+
+    // Get nginx server name from environment (default to _)
+    const nginxServerName = process.env.NGINX_SERVER_NAME || '_';
 
     const nginxConf = nginxTemplate
       .replace(/__WEB_HOST_PORT__/g, webHttpsPort)
       .replace(/__BACKEND_SERVICE__/g, webBackendService)
       .replace(/__BADMINTON_BACKEND__/g, badmintonBackend)
-      .replace(/__BADMINTON_STAGING_BACKEND__/g, badmintonBackend);
+      .replace(/__BADMINTON_STAGING_BACKEND__/g, badmintonStagingBackend)
+      .replace(/__NGINX_SERVER_NAME__/g, nginxServerName)
+      .replace(/__FORWARDED_PORT__/g, process.env.APP_PORT || '443');   // <-- ADD THIS
 
     const nginxConfFile = `nginx-${target}.conf`;
     fs.writeFileSync(nginxConfFile, nginxConf);
@@ -384,7 +379,21 @@ execSync(`sed -i 's/\\r$//' ${composeFile}`, { stdio: 'inherit' });
 const vmIP = process.env.GCP_VM_IP;
 if (!vmIP) waitAndExit('ERROR: GCP_VM_IP is not set in environment.');
 
-// Ensure shared network exists (for cross‑app communication)
+// ------------------------------------------------------------------
+// Ensure the shared Docker network exists on the VM
+// (idempotent – required for cross‑project container name resolution)
+// ------------------------------------------------------------------
+function ensureSharedNetwork(vmIP) {
+  console.log('Ensuring shared Docker network "shared-net" exists on VM...');
+  const cmd = `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker network inspect shared-net >/dev/null 2>&1 || sudo docker network create shared-net"`;
+  try {
+    execSync(cmd, { stdio: 'inherit' });
+    console.log('✅ Shared network "shared-net" is ready.');
+  } catch (err) {
+    console.error(`\x1b[33mWarning: Failed to ensure shared network: ${err.message}\x1b[0m`);
+    // Non‑fatal – continue, but log it.
+  }
+}
 ensureSharedNetwork(vmIP);
 
 // ------------------------------------------------------------------
@@ -561,7 +570,9 @@ try { fs.unlinkSync(prePullTokenFile); } catch (_) {}
 console.log(`Pulling and verifying ${expectedImage}...`);
 const pullCmd = `export DOCKER_CONFIG=${'/root/.docker'} && sudo -E docker pull ${expectedImage}`;
 execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "${pullCmd}"`, { stdio: 'inherit' });
- 
+
+// No manual stop/rm of web container – compose handles it.
+
 // ------------------------------------------------------------------
 // 10. Deploy command with temporary .env file via SCP
 // ------------------------------------------------------------------
@@ -620,7 +631,6 @@ try {
 try { fs.unlinkSync(tempFileLocal); } catch (_) {}
 
 // Remote deploy command – uses --env-file
-const nginxContainerName = appConf.nginxContainer[target];
 const mailContainerName = appConf.mailContainer ? appConf.mailContainer[target] : null;
 const remoteLockFile = `/tmp/${appName}_deploy.lock`;
 
@@ -689,6 +699,7 @@ if (success) {
     }
   }
 
+  // Post-deploy health check using service name (works with scaling)
   try {
     const checkCmd = `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "cd ${deployDir} && sudo docker compose -p ${projectName} -f ${composeFile} exec -T web-${target} printenv POSTE_PROTOCOL"`;
     const output = execSync(checkCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();

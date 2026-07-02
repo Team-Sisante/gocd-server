@@ -211,7 +211,34 @@ templateFiles.forEach(file => {
 const REQUIRED_VARS = [...new Set(requiredVars)];
 
 // ---------------------------------------------------------------
-// 1. Fetch secrets from GCP (with app‑specific prefix)
+// 1. Fetch GitHub Environment variables FIRST (lower priority)
+// ---------------------------------------------------------------
+console.log('\x1b[33mFetching variables from GitHub Environments...\x1b[0m');
+try {
+  const repoFull = `${process.env.GIT_REPO_USERNAME}/${process.env.GIT_REPO_REPONAME}`;
+  const stdout = execSync(
+    `node Scripts/getGitHubVars.js ${repoFull} ${target} ${token}`,
+    { encoding: 'utf8', stdio: 'pipe' }
+  );
+  const variables = JSON.parse(stdout);
+  variables.forEach(v => {
+    if (v.name) {
+      if (v.value === '' || v.value === undefined || v.value === null) {
+        // keep any existing value from env if new is empty
+        if (process.env[v.name] && process.env[v.name] !== '') return;
+        delete process.env[v.name];
+        return;
+      }
+      process.env[v.name] = v.value;
+    }
+  });
+  console.log(`Fetched ${variables.length} variables from GitHub.`);
+} catch (e) {
+  console.log(`\x1b[33mWarning: Could not fetch GitHub variables: ${e.message}\x1b[0m`);
+}
+
+// ---------------------------------------------------------------
+// 2. Fetch secrets from GCP SECOND (higher priority – overrides GitHub)
 // ---------------------------------------------------------------
 console.log('\x1b[33mFetching secrets from GCP Secret Manager...\x1b[0m');
 const certFile = process.env.CLOUDSDK_CA_CERTS_FILE;
@@ -240,34 +267,6 @@ for (const secret of SECRETS_TO_FETCH) {
   } catch (err) {
     console.log(`  ⚠️  ${fullSecretName} not found or empty`);
   }
-}
-
-// ---------------------------------------------------------------
-// 2. Fetch GitHub Environment variables (ALL config)
-// ---------------------------------------------------------------
-console.log('\x1b[33mFetching variables from GitHub Environments...\x1b[0m');
-try {
-  const repoFull = `${process.env.GIT_REPO_USERNAME}/${process.env.GIT_REPO_REPONAME}`;
-  const stdout = execSync(
-    `node Scripts/getGitHubVars.js ${repoFull} ${target} ${token}`,
-    { encoding: 'utf8', stdio: 'pipe' }
-  );
-  const variables = JSON.parse(stdout);
-  variables.forEach(v => {
-    if (v.name) {
-      if (v.value === '' || v.value === undefined || v.value === null) {
-        if (process.env[v.name] && process.env[v.name] !== '') {
-          return;
-        }
-        delete process.env[v.name];
-        return;
-      }
-      process.env[v.name] = v.value;
-    }
-  });
-  console.log(`Fetched ${variables.length} variables from GitHub.`);
-} catch (e) {
-  console.log(`\x1b[33mWarning: Could not fetch GitHub variables: ${e.message}\x1b[0m`);
 }
 
 // ---------------------------------------------------------------
@@ -594,6 +593,14 @@ const envContent = envContentLines.join('\n');
 // Write local .env file
 const tempFileLocal = path.join(os.tmpdir(), `deploy_env_${Date.now()}.env`);
 fs.writeFileSync(tempFileLocal, envContent, 'utf8');
+
+// Log .env file content (masked for sensitive values)
+const envContentLinesDebug = envContentLines.map(line => {
+  const [key, ...rest] = line.split('=');
+  const value = rest.join('=');
+  return `${key}=${value.substring(0,4)}...`;  // only show first 4 chars
+});
+console.log('DEBUG .env file content:\n' + envContentLinesDebug.join('\n'));
 
 // SCP it to the VM
 const tempFileRemote = `/tmp/deploy_env_${Date.now()}.env`;

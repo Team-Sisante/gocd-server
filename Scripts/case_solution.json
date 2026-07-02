@@ -68,6 +68,25 @@
         "container_status": "running"
       },
       "fix_script": "fix_db_connectivity.js"
+    },
+    {
+      "id": "db_stopped",
+      "description": "Database container is missing or stopped",
+      "detect": {
+        "container_status": "missing_or_stopped",
+        "container_name": "${DB_CONTAINER}"   
+      },
+      "fix_script": "fix_db_stopped.js",
+      "severity": "critical"
+    },
+    {
+      "id": "registry_auth_missing",
+      "description": "Docker registry authentication missing on VM",
+      "detect": {
+        "custom_check": "check_registry_auth"
+      },
+      "fix_script": "fix_registry_auth.js",
+      "severity": "critical"
     }
   ]
 }

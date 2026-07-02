@@ -155,9 +155,38 @@ function runGcloud(cmd) {
     } catch (error) { return null; }
 }
 
+/**
+ * Checks if the database container for a site is up.
+ * DB container name is always 'db-<target>' (e.g. db-staging, db-production).
+ */
+function getDBContainerStatus(site) {
+    const dbContainer = `db-${site.target}`;
+    const cmd = `sudo docker ps -a --filter name=${dbContainer} --format '{{.Status}}'`;
+    const result = remoteExecSilent(cmd);
+    if (!result.success || !result.output) {
+        return { exists: false, running: false };
+    }
+    const status = result.output.trim();
+    return { exists: true, running: status.startsWith('Up') };
+}
+
+/**
+ * Checks if the VM is authenticated to ghcr.io.
+ * Returns false if pull fails with "unauthorized" or "denied", true otherwise.
+ */
+function checkRegistryAuth(env) {
+    const testImage = `ghcr.io/${env.GIT_REPO_USERNAME || 'team-sisante'}/${env.GIT_REPO_REPONAME || 'humrine_site'}-web:latest`;
+    const cmd = `sudo docker pull ${testImage} 2>&1`;
+    const result = remoteExecSilent(cmd, null);
+    if (!result.success || (result.output && (result.output.includes('unauthorized') || result.output.includes('denied')))) {
+        return false;
+    }
+    return true;
+}
+
 // ----- Main check (detection only) -----
 async function checkSite(site, rl) {
-    const { name, backend, webContainer, url, nginxContainer } = site;
+    const { name, backend, webContainer, url, nginxContainer, target } = site;
 
     // Pass rl so the user is asked about cache
     const env = await common.fetchAllVars(site, false, rl);
@@ -171,6 +200,11 @@ async function checkSite(site, rl) {
     const gcpHealth = runGcloud(backend);
     const gcpHealthy = gcpHealth && gcpHealth.includes('HEALTHY');
     console.log(`   → GCP backend: ${gcpHealthy ? '✅ HEALTHY' : '❌ UNHEALTHY'}`);
+
+    // ---- NEW: check database container ----
+    const dbInfo = getDBContainerStatus(site);
+    const dbRunning = dbInfo.exists && dbInfo.running;
+    console.log(`   → Database container db-${target}: ${dbRunning ? 'UP' : 'DOWN/MISSING'}`);
 
     const containerInfo = common.getContainerStatus(site);
     console.log(`   → Container ${webContainer}: ${containerInfo.exists ? containerInfo.status : 'MISSING'}`);
@@ -189,9 +223,28 @@ async function checkSite(site, rl) {
         gcpHealthy,
         logs,
         nginxLogs,
+        dbRunning,
     };
 
     const detectedCases = [];
+
+    // ---- NEW: detect database container issues ----
+    if (!dbRunning) {
+        detectedCases.push({
+            id: 'db_stopped',
+            description: 'Database container is missing or stopped',
+        });
+    }
+
+    // ---- NEW: detect registry authentication issues ----
+    if (!checkRegistryAuth(env)) {
+        detectedCases.push({
+            id: 'registry_auth_missing',
+            description: 'Docker registry (ghcr.io) authentication missing on VM',
+        });
+    }
+
+    // ---- existing case detection from case_solution.json ----
     for (const caseDef of caseSolutions.cases) {
         const detect = caseDef.detect;
         let matches = true;
@@ -233,7 +286,7 @@ async function checkSite(site, rl) {
         detected_cases: detectedCases.map(c => ({
             case_id: c.id,
             description: c.description,
-            log_sample: (c.detect.log_pattern && siteStatus.logs) ? siteStatus.logs.slice(0, 200) : null,
+            log_sample: (c.detect && c.detect.log_pattern && siteStatus.logs) ? siteStatus.logs.slice(0, 200) : null,
         })),
         treated_at: null,
         treatment_status: 'PENDING'

@@ -89,32 +89,11 @@ const APP_CONFIG = {
     projectPrefix: 'badminton',
     workDir:       '/badminton_court',
     deployDir:     '/opt/badminton_court',
-    webContainer: {
-      staging:    'badminton-staging-web-staging-1',
-      production: 'badminton-production-web-production-1',
-    },
-    nginxContainer: {
-      staging:    'badminton_court-nginx-staging',
-      production: 'badminton_court-nginx-production',
-    },
-    mailContainer: {
-      staging:    'badminton-staging-mail-staging-1',
-      production: 'badminton-production-mail-production-1',
-    },
   },
   humrine_site: {
     projectPrefix: 'humrine',
     workDir:       '/humrine_site',
     deployDir:     '/opt/humrine_site',
-    webContainer: {
-      staging:    'humrine-web-staging',
-      production: 'humrine-web-production',
-    },
-    nginxContainer: {
-      staging:    'humrine-nginx-staging',
-      production: 'humrine-nginx-production',
-    },
-    // mailContainer not used for humrine
   },
 };
 
@@ -146,6 +125,21 @@ if (missing.length > 0) {
 const GCP_PROJECT_ID = process.env.GCP_PROJECT_ID;
 const GIT_REPO_USERNAME = process.env.GIT_REPO_USERNAME;
 const SSH_USER = process.env.VM_SSH_USER;
+
+// ------------------------------------------------------------------
+// Ensure the shared Docker network exists on the VM
+// ------------------------------------------------------------------
+function ensureSharedNetwork(vmIP) {
+  console.log('Ensuring shared Docker network "shared-net" exists on VM...');
+  const cmd = `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker network inspect shared-net >/dev/null 2>&1 || sudo docker network create shared-net"`;
+  try {
+    execSync(cmd, { stdio: 'inherit' });
+    console.log('✅ Shared network "shared-net" is ready.');
+  } catch (err) {
+    console.error(`\x1b[33mWarning: Failed to ensure shared network: ${err.message}\x1b[0m`);
+    // Non‑fatal – continue, but log it.
+  }
+}
 
 // ---------------------------------------------------------------
 // Helper: read health‑check info from loadbalancer.json
@@ -331,9 +325,20 @@ if (target === 'staging' || target === 'production') {
 
     const nginxTemplate = fs.readFileSync(nginxTemplatePath, 'utf8');
     const webBackendService = `web-${target}`;
+
+    // Determine the Badminton service name (only relevant for humrine_site)
+    let badmintonBackend = '';
+    if (appName === 'humrine_site') {
+      badmintonBackend = target === 'production'
+        ? 'web-production'   // service name in badminton compose
+        : 'web-staging';
+    }
+
     const nginxConf = nginxTemplate
       .replace(/__WEB_HOST_PORT__/g, webHttpsPort)
-      .replace(/__BACKEND_SERVICE__/g, webBackendService);
+      .replace(/__BACKEND_SERVICE__/g, webBackendService)
+      .replace(/__BADMINTON_BACKEND__/g, badmintonBackend)
+      .replace(/__BADMINTON_STAGING_BACKEND__/g, badmintonBackend);
 
     const nginxConfFile = `nginx-${target}.conf`;
     fs.writeFileSync(nginxConfFile, nginxConf);
@@ -378,6 +383,9 @@ execSync(`sed -i 's/\\r$//' ${composeFile}`, { stdio: 'inherit' });
 // 4. Get VM IP
 const vmIP = process.env.GCP_VM_IP;
 if (!vmIP) waitAndExit('ERROR: GCP_VM_IP is not set in environment.');
+
+// Ensure shared network exists (for cross‑app communication)
+ensureSharedNetwork(vmIP);
 
 // ------------------------------------------------------------------
 // 5. Pre‑deploy health checks
@@ -553,10 +561,7 @@ try { fs.unlinkSync(prePullTokenFile); } catch (_) {}
 console.log(`Pulling and verifying ${expectedImage}...`);
 const pullCmd = `export DOCKER_CONFIG=${'/root/.docker'} && sudo -E docker pull ${expectedImage}`;
 execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "${pullCmd}"`, { stdio: 'inherit' });
-
-const webContainerName = appConf.webContainer[target];
-execSync(`ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker stop ${webContainerName} 2>/dev/null || true; sudo docker rm ${webContainerName} 2>/dev/null || true"`, { stdio: 'inherit' });
-
+ 
 // ------------------------------------------------------------------
 // 10. Deploy command with temporary .env file via SCP
 // ------------------------------------------------------------------
@@ -634,7 +639,6 @@ const deployCmd =
   `flock ${remoteLockFile} bash -c '` +
     `export DOCKER_CONFIG=${DOCKER_CONFIG_DIR} && ` +
     `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --env-file ${tempFileRemote} --profile ${cfg.profile} down --remove-orphans && ` +
-    `sudo docker rm -f ${nginxContainerName} || true && ` +
     `IMAGE_TAG=${imageTag} sudo -E docker compose -p ${projectName} -f ${composeFile} --env-file ${tempFileRemote} --profile ${cfg.profile} up -d --pull always --force-recreate --remove-orphans` +
     (mailContainerName ? 
     ` && echo "Diagnostic: Network bindings in container:" && ` +
@@ -686,7 +690,7 @@ if (success) {
   }
 
   try {
-    const checkCmd = `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "sudo docker exec ${webContainerName} printenv POSTE_PROTOCOL"`;
+    const checkCmd = `ssh -i ${sshKeyPath} ${SSH_OPTS} ${SSH_USER}@${vmIP} "cd ${deployDir} && sudo docker compose -p ${projectName} -f ${composeFile} exec -T web-${target} printenv POSTE_PROTOCOL"`;
     const output = execSync(checkCmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
     if (!output) {
       console.error(`\x1b[31mWARNING: POSTE_PROTOCOL is empty inside the web container.\x1b[0m`);
